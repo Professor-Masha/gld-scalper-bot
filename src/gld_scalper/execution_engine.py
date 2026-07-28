@@ -90,9 +90,16 @@ class ExecutionEngine:
                     "symbol": plan.symbol,
                     "direction": plan.direction,
                     "source": "fast" if "FAST" in episode_id.upper() else "minute",
+                    "strategy_path": plan.strategy_path,
+                    "playbook": plan.playbook,
                     "planned_qty": plan.qty,
                     "opened_at": utc_now(),
-                    "details": {"reason": plan.reason, "tranche_count": len(tranches)},
+                    "details": {
+                        "reason": plan.reason,
+                        "tranche_count": len(tranches),
+                        "strategy_path": plan.strategy_path,
+                        "playbook": plan.playbook,
+                    },
                 }
             )
             for tranche, role in tranches:
@@ -121,14 +128,18 @@ class ExecutionEngine:
                     else:
                         order = client.submit_order(order_data=request)
                     self._persist_submission(tranche, order, submitted_at)
-                    self.database.record_execution_episode_order(
+                    parent_order_id = str(getattr(order, "id", "")) or None
+                    exit_side = "sell" if tranche.side == "buy" else "buy"
+                    self.database.record_execution_bracket_bundle(
                         episode_id,
-                        {
+                        entry={
                             "order_key": str(tranche.client_order_id),
-                            "alpaca_order_id": str(getattr(order, "id", "")) or None,
+                            "alpaca_order_id": parent_order_id,
                             "client_order_id": tranche.client_order_id,
                             "role": role,
                             "intent_type": "entry",
+                            "strategy_path": tranche.strategy_path,
+                            "playbook": tranche.playbook,
                             "side": tranche.side,
                             "qty": tranche.qty,
                             "filled_qty": getattr(order, "filled_qty", 0),
@@ -136,6 +147,32 @@ class ExecutionEngine:
                             "status": str(getattr(getattr(order, "status", None), "value", getattr(order, "status", "submitted"))),
                             "submitted_at": submitted_at,
                             "raw_json": _order_to_json(order),
+                        },
+                        stop={
+                            "order_key": f"{tranche.client_order_id}:expected-stop",
+                            "parent_order_id": parent_order_id,
+                            "role": "stop",
+                            "intent_type": "protective",
+                            "strategy_path": tranche.strategy_path,
+                            "playbook": tranche.playbook,
+                            "side": exit_side,
+                            "qty": tranche.qty,
+                            "status": "pending_activation",
+                            "submitted_at": submitted_at,
+                            "raw_json": {"expected_stop_price": tranche.stop_loss_price},
+                        },
+                        take_profit={
+                            "order_key": f"{tranche.client_order_id}:expected-take-profit",
+                            "parent_order_id": parent_order_id,
+                            "role": "take_profit",
+                            "intent_type": "protective",
+                            "strategy_path": tranche.strategy_path,
+                            "playbook": tranche.playbook,
+                            "side": exit_side,
+                            "qty": tranche.qty,
+                            "status": "pending_activation",
+                            "submitted_at": submitted_at,
+                            "raw_json": {"expected_take_profit_price": tranche.take_profit_price},
                         },
                     )
                     submitted.append(

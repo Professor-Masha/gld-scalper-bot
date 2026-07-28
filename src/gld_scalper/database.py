@@ -197,6 +197,7 @@ class Database:
             "client_order_id": "TEXT",
             "episode_id": "TEXT",
             "strategy_path": "TEXT",
+            "playbook": "TEXT",
             "submitted_price": "REAL",
             "bid_price": "REAL",
             "ask_price": "REAL",
@@ -252,8 +253,19 @@ class Database:
         self._ensure_column("trading_journal", "options_event_risk", "REAL")
         self._ensure_column("trading_journal", "signal_id", "INTEGER")
         self._ensure_column("trading_journal", "exploration_trade", "INTEGER DEFAULT 0")
+        self._ensure_column("trading_journal", "strategy_path", "TEXT")
+        self._ensure_column("trading_journal", "playbook", "TEXT")
         self._ensure_column("trade_outcomes", "exploration_trade", "INTEGER DEFAULT 0")
         self._ensure_column("orders", "parent_order_id", "TEXT")
+        self._ensure_column("execution_episodes", "strategy_path", "TEXT NOT NULL DEFAULT 'minute'")
+        self._ensure_column("execution_episodes", "playbook", "TEXT")
+        for column, definition in {
+            "parent_order_id": "TEXT",
+            "strategy_path": "TEXT",
+            "playbook": "TEXT",
+            "close_reason": "TEXT",
+        }.items():
+            self._ensure_column("execution_episode_orders", column, definition)
         self._ensure_column("model_predictions", "model_scope", "TEXT")
         for column, definition in {
             "model_scope": "TEXT NOT NULL DEFAULT 'entry:all'",
@@ -851,15 +863,18 @@ class Database:
             self.conn.execute(
                 """
                 INSERT OR IGNORE INTO execution_episodes(
-                    episode_id, symbol, direction, source, status, planned_qty, submitted_qty,
+                    episode_id, symbol, direction, source, strategy_path, playbook,
+                    status, planned_qty, submitted_qty,
                     filled_qty, remaining_qty, opened_at, details_json, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?, ?)
                 """,
                 (
                     str(record["episode_id"]),
                     str(record["symbol"]).upper(),
                     str(record["direction"]).upper(),
                     record.get("source", "unknown"),
+                    record.get("strategy_path", record.get("source", "minute")),
+                    record.get("playbook"),
                     record.get("status", "submitting"),
                     float(record.get("planned_qty") or 0.0),
                     utc_iso(now),
@@ -874,44 +889,91 @@ class Database:
         if not order_key:
             raise ValueError("Execution episode order requires a stable order key.")
         with self.conn:
-            self.conn.execute(
-                """
-                INSERT INTO execution_episode_orders(
-                    order_key, episode_id, alpaca_order_id, client_order_id, role, intent_type,
-                    side, qty, filled_qty, filled_avg_price, status, submitted_at, updated_at, raw_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(order_key) DO UPDATE SET
-                    alpaca_order_id=COALESCE(excluded.alpaca_order_id, execution_episode_orders.alpaca_order_id),
-                    client_order_id=COALESCE(excluded.client_order_id, execution_episode_orders.client_order_id),
-                    role=excluded.role,
-                    intent_type=excluded.intent_type,
-                    side=COALESCE(excluded.side, execution_episode_orders.side),
-                    qty=COALESCE(excluded.qty, execution_episode_orders.qty),
-                    filled_qty=MAX(execution_episode_orders.filled_qty, excluded.filled_qty),
-                    filled_avg_price=COALESCE(excluded.filled_avg_price, execution_episode_orders.filled_avg_price),
-                    status=excluded.status,
-                    submitted_at=COALESCE(execution_episode_orders.submitted_at, excluded.submitted_at),
-                    updated_at=excluded.updated_at,
-                    raw_json=COALESCE(excluded.raw_json, execution_episode_orders.raw_json)
-                """,
-                (
-                    order_key,
-                    str(episode_id),
-                    record.get("alpaca_order_id"),
-                    record.get("client_order_id"),
-                    record.get("role", "unknown"),
-                    record.get("intent_type", "entry"),
-                    record.get("side"),
-                    record.get("qty"),
-                    float(record.get("filled_qty") or 0.0),
-                    record.get("filled_avg_price"),
-                    record.get("status", "unknown"),
-                    utc_iso(record["submitted_at"]) if record.get("submitted_at") else None,
-                    utc_iso(now),
-                    _json(record.get("raw_json")),
-                ),
-            )
+            self._upsert_execution_episode_order_locked(str(episode_id), order_key, record, now)
             self._refresh_execution_episode_locked(str(episode_id), now)
+
+    def record_execution_bracket_bundle(
+        self,
+        episode_id: str,
+        *,
+        entry: Mapping[str, Any],
+        stop: Mapping[str, Any],
+        take_profit: Mapping[str, Any],
+    ) -> None:
+        """Persist a bracket root and both expected protective children in one transaction."""
+        now = entry.get("updated_at", utc_now())
+        records = (entry, stop, take_profit)
+        with self.conn:
+            for record in records:
+                order_key = str(
+                    record.get("order_key")
+                    or record.get("client_order_id")
+                    or record.get("alpaca_order_id")
+                )
+                if not order_key:
+                    raise ValueError("Bracket bundle orders require stable order keys.")
+                self._upsert_execution_episode_order_locked(str(episode_id), order_key, record, now)
+            self._refresh_execution_episode_locked(str(episode_id), now)
+
+    def _upsert_execution_episode_order_locked(
+        self,
+        episode_id: str,
+        order_key: str,
+        record: Mapping[str, Any],
+        now: datetime,
+    ) -> None:
+        episode = self.conn.execute(
+            "SELECT strategy_path, playbook FROM execution_episodes WHERE episode_id = ?",
+            (episode_id,),
+        ).fetchone()
+        strategy_path = record.get("strategy_path") or (episode["strategy_path"] if episode else None)
+        playbook = record.get("playbook") or (episode["playbook"] if episode else None)
+        self.conn.execute(
+            """
+            INSERT INTO execution_episode_orders(
+                order_key, episode_id, alpaca_order_id, client_order_id, parent_order_id,
+                role, intent_type, strategy_path, playbook, close_reason,
+                side, qty, filled_qty, filled_avg_price, status, submitted_at, updated_at, raw_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(order_key) DO UPDATE SET
+                alpaca_order_id=COALESCE(excluded.alpaca_order_id, execution_episode_orders.alpaca_order_id),
+                client_order_id=COALESCE(excluded.client_order_id, execution_episode_orders.client_order_id),
+                parent_order_id=COALESCE(excluded.parent_order_id, execution_episode_orders.parent_order_id),
+                role=excluded.role,
+                intent_type=excluded.intent_type,
+                strategy_path=COALESCE(excluded.strategy_path, execution_episode_orders.strategy_path),
+                playbook=COALESCE(excluded.playbook, execution_episode_orders.playbook),
+                close_reason=COALESCE(excluded.close_reason, execution_episode_orders.close_reason),
+                side=COALESCE(excluded.side, execution_episode_orders.side),
+                qty=COALESCE(excluded.qty, execution_episode_orders.qty),
+                filled_qty=MAX(execution_episode_orders.filled_qty, excluded.filled_qty),
+                filled_avg_price=COALESCE(excluded.filled_avg_price, execution_episode_orders.filled_avg_price),
+                status=excluded.status,
+                submitted_at=COALESCE(execution_episode_orders.submitted_at, excluded.submitted_at),
+                updated_at=excluded.updated_at,
+                raw_json=COALESCE(excluded.raw_json, execution_episode_orders.raw_json)
+            """,
+            (
+                order_key,
+                episode_id,
+                record.get("alpaca_order_id"),
+                record.get("client_order_id"),
+                record.get("parent_order_id"),
+                record.get("role", "unknown"),
+                record.get("intent_type", "entry"),
+                strategy_path,
+                playbook,
+                record.get("close_reason"),
+                record.get("side"),
+                record.get("qty"),
+                float(record.get("filled_qty") or 0.0),
+                record.get("filled_avg_price"),
+                record.get("status", "unknown"),
+                utc_iso(record["submitted_at"]) if record.get("submitted_at") else None,
+                utc_iso(now),
+                _json(record.get("raw_json")),
+            ),
+        )
 
     def finalize_execution_episode_submission(self, episode_id: str, *, partial: bool = False, failed: bool = False) -> None:
         status = "submit_failed" if failed else "partially_submitted" if partial else "submitted"
@@ -921,11 +983,21 @@ class Database:
                 """
                 UPDATE execution_episodes
                 SET status = CASE WHEN filled_qty > 0 THEN 'active' ELSE ? END,
+                    close_reason = CASE
+                        WHEN filled_qty <= 0 AND ? = 'submit_failed'
+                        THEN COALESCE(close_reason, 'submission_failed')
+                        ELSE close_reason
+                    END,
+                    closed_at = CASE
+                        WHEN filled_qty <= 0 AND ? = 'submit_failed'
+                        THEN COALESCE(closed_at, ?)
+                        ELSE closed_at
+                    END,
                     version = version + 1,
                     updated_at = ?
                 WHERE episode_id = ? AND status NOT IN ('closed', 'flattened')
                 """,
-                (status, utc_iso(now), str(episode_id)),
+                (status, status, status, utc_iso(now), utc_iso(now), str(episode_id)),
             )
 
     def _refresh_execution_episode_locked(self, episode_id: str, now: datetime) -> None:
@@ -959,18 +1031,35 @@ class Database:
             move = exit_avg - entry_avg
             realized_pnl = move * closed_qty if direction == "LONG" else -move * closed_qty
         status = "closed" if entry_filled > 0 and remaining <= 1e-9 else "active" if entry_filled > 0 else "submitting"
+        exit_row = self.conn.execute(
+            """
+            SELECT role, close_reason FROM execution_episode_orders
+            WHERE episode_id = ? AND intent_type = 'exit' AND filled_qty > 0
+            ORDER BY updated_at DESC, order_key DESC LIMIT 1
+            """,
+            (episode_id,),
+        ).fetchone()
+        close_reason = None
+        if status == "closed" and exit_row is not None:
+            role = str(exit_row["role"] or "")
+            close_reason = str(exit_row["close_reason"] or "") or {
+                "stop": "stop_loss",
+                "take_profit": "take_profit",
+                "safety_flatten": "safety_flatten",
+            }.get(role, role or "broker_exit")
         self.conn.execute(
             """
             UPDATE execution_episodes
             SET submitted_qty=?, filled_qty=?, remaining_qty=?, entry_avg_price=?, exit_avg_price=?,
                 realized_pnl=?, status=?,
                 closed_at=CASE WHEN ? = 'closed' THEN ? ELSE closed_at END,
+                close_reason=CASE WHEN ? = 'closed' THEN COALESCE(?, close_reason, 'broker_exit') ELSE close_reason END,
                 version=version+1, updated_at=?
             WHERE episode_id=?
             """,
             (
                 submitted, entry_filled, remaining, entry_avg, exit_avg, realized_pnl,
-                status, status, utc_iso(now), utc_iso(now), episode_id,
+                status, status, utc_iso(now), status, close_reason, utc_iso(now), episode_id,
             ),
         )
 
@@ -990,9 +1079,15 @@ class Database:
         with self.conn:
             self.conn.execute(
                 """
-                UPDATE execution_episodes SET status='flattened', remaining_qty=0, closed_at=?,
-                    close_reason=?, version=version+1, updated_at=?
-                WHERE symbol=? AND status NOT IN ('closed', 'flattened', 'submit_failed', 'canceled')
+                UPDATE execution_episodes
+                SET status=CASE WHEN status='closed' THEN status ELSE 'flattened' END,
+                    remaining_qty=0,
+                    closed_at=COALESCE(closed_at, ?),
+                    close_reason=COALESCE(close_reason, ?),
+                    version=version+1, updated_at=?
+                WHERE symbol=?
+                  AND status NOT IN ('submit_failed', 'canceled')
+                  AND (status NOT IN ('closed', 'flattened') OR close_reason IS NULL)
                 """,
                 (utc_iso(now), reason, utc_iso(now), str(symbol).upper()),
             )
@@ -1366,10 +1461,10 @@ class Database:
                 """
                 INSERT OR IGNORE INTO fills(
                     order_id, symbol, side, qty, price, timestamp, client_order_id, episode_id,
-                    strategy_path, expected_price, submitted_price, bid_price, ask_price, midpoint,
+                    strategy_path, playbook, expected_price, submitted_price, bid_price, ask_price, midpoint,
                     spread_at_entry, spread_pct, slippage, slippage_per_share, slippage_cost,
                     spread_cost, estimated_fee, estimated_live_cost, mode, raw_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.get("order_id"),
@@ -1381,6 +1476,7 @@ class Database:
                     record.get("client_order_id"),
                     record.get("episode_id"),
                     record.get("strategy_path"),
+                    record.get("playbook"),
                     record.get("expected_price"),
                     record.get("submitted_price"),
                     record.get("bid_price"),
@@ -1679,14 +1775,15 @@ class Database:
             cursor = self.conn.execute(
                 """
                 INSERT INTO trading_journal(timestamp, symbol, event_type, signal_id, decision, confidence, bullish_score,
-                    bearish_score, no_trade_score, regime, reason, risk_block_reason, model_version, model_prediction,
+                    strategy_path, playbook, bearish_score, no_trade_score, regime, reason, risk_block_reason,
+                    model_version, model_prediction,
                     probability_long, probability_short, probability_no_trade, order_id, client_order_id, side, qty,
                     price, notional, status, pnl, pattern_classification, pattern_quality, liquidity_score,
                     volatility_regime, missed_opportunity_label, reasoning_agents_json, macro_bias, macro_confidence,
                     target_exposure_pct, order_block_direction, order_block_timeframe, order_block_strength,
                     order_block_retest_active, options_bias, options_confidence, options_score_adjustment,
                     options_event_risk, exploration_trade, feature_snapshot_json, broker_snapshot_json, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     utc_iso(record["timestamp"]),
@@ -1696,6 +1793,8 @@ class Database:
                     record.get("decision"),
                     record.get("confidence"),
                     record.get("bullish_score"),
+                    record.get("strategy_path"),
+                    record.get("playbook"),
                     record.get("bearish_score"),
                     record.get("no_trade_score"),
                     record.get("regime"),

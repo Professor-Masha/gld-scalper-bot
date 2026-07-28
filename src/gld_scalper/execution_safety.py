@@ -45,6 +45,7 @@ class SafetySnapshot:
     database_episode_direction: str
     internal_episode_count: int | None
     protected_position: bool
+    protection_grace_active: bool
     unknown_order_count: int
     consistent: bool
     reasons: tuple[str, ...]
@@ -331,10 +332,11 @@ class ExecutionSafetySupervisor:
     def startup(self) -> SafetySnapshot:
         self.state.freeze("startup_reconciliation")
         self.coordinator.start()
-        snapshot = self.reconcile(startup=True)
-        if self._requires_residual_flatten(snapshot):
+        snapshot = self.reconcile(startup=True, record_failure=False)
+        confirmed = self._confirm_residual_snapshot(snapshot, startup=True)
+        if confirmed is not None:
             if not self.settings.execution_flatten_residual_positions:
-                raise RuntimeError(f"Residual GLD exposure requires manual intervention: {snapshot.reasons}")
+                raise RuntimeError(f"Residual GLD exposure requires manual intervention: {confirmed.reasons}")
             self.flatten_symbol("startup_residual_position", release_freeze=False)
             snapshot = self.reconcile(startup=True)
         if snapshot.consistent:
@@ -401,7 +403,7 @@ class ExecutionSafetySupervisor:
                 self.state.unfreeze("direction_switch")
         self.state.assert_entry_allowed()
 
-    def reconcile(self, *, startup: bool = False) -> SafetySnapshot:
+    def reconcile(self, *, startup: bool = False, record_failure: bool = True) -> SafetySnapshot:
         now = utc_now()
         position, open_orders, clock = self._load_broker_state()
         qty = _float(_field(position, "qty"))
@@ -413,8 +415,30 @@ class ExecutionSafetySupervisor:
             database_count = len(atomic) if atomic else int(legacy["count"])
             database_direction = _single_direction(atomic) if atomic else str(legacy["direction"])
             internal_ids = self._internal_episode_provider() if self._internal_episode_provider else None
-            unknown = [item for item in open_orders if not is_bot_managed_order(item, self.settings.bot_symbol, database)]
-            protected = position is None or _has_active_protective_stop(open_orders)
+            recent_episode_ids = _recent_execution_episode_ids(
+                atomic,
+                now,
+                self.settings.execution_bracket_grace_period_seconds,
+            )
+            protection_grace_active = bool(
+                position is not None
+                and recent_episode_ids
+                and not _has_active_protective_stop(open_orders)
+            )
+            unknown = [
+                item
+                for item in open_orders
+                if not is_bot_managed_order(item, self.settings.bot_symbol, database)
+                and not (
+                    protection_grace_active
+                    and _order_matches_episode_ids(item, recent_episode_ids)
+                )
+            ]
+            protected = (
+                position is None
+                or _has_active_protective_stop(open_orders)
+                or protection_grace_active
+            )
             reasons: list[str] = []
             if unknown:
                 reasons.append("unknown GLD open orders")
@@ -426,7 +450,12 @@ class ExecutionSafetySupervisor:
                 reasons.append("broker and database directions disagree")
             if position is not None and not protected:
                 reasons.append("broker position lacks an active protective stop")
-            if position is not None and internal_ids is not None and not internal_ids:
+            if (
+                position is not None
+                and internal_ids is not None
+                and not internal_ids
+                and not protection_grace_active
+            ):
                 reasons.append("broker position is absent from the position runtime")
             market_open, minutes_to_close = _clock_state(clock, now)
             snapshot = SafetySnapshot(
@@ -438,6 +467,7 @@ class ExecutionSafetySupervisor:
                 database_episode_direction=database_direction,
                 internal_episode_count=len(internal_ids) if internal_ids is not None else None,
                 protected_position=protected,
+                protection_grace_active=protection_grace_active,
                 unknown_order_count=len(unknown),
                 consistent=not reasons,
                 reasons=tuple(reasons),
@@ -449,15 +479,21 @@ class ExecutionSafetySupervisor:
                 {
                     **self.state.snapshot(),
                     "timestamp": now,
-                    "event_type": "RECONCILIATION",
-                    "severity": "INFO" if snapshot.consistent else "ERROR",
+                    "event_type": "RECONCILIATION_GRACE" if protection_grace_active else "RECONCILIATION",
+                    "severity": "INFO" if snapshot.consistent else "ERROR" if record_failure else "WARNING",
                     "broker_position_qty": qty,
                     "broker_position_direction": direction,
                     "broker_open_order_count": len(open_orders),
                     "database_episode_count": database_count,
                     "internal_episode_count": snapshot.internal_episode_count,
                     "reason": "; ".join(reasons) or "consistent",
-                    "details": {"startup": startup, "protected_position": protected},
+                    "details": {
+                        "startup": startup,
+                        "protected_position": protected,
+                        "protection_grace_active": protection_grace_active,
+                        "recent_episode_ids": sorted(recent_episode_ids),
+                        "confirmation_check": record_failure,
+                    },
                 }
             )
         finally:
@@ -465,9 +501,11 @@ class ExecutionSafetySupervisor:
         if snapshot.consistent:
             self.state.record_success("reconciliation")
             self.state.unfreeze("reconciliation_mismatch")
-        else:
+        elif record_failure:
             self.state.freeze("reconciliation_mismatch")
             self._trip("reconciliation", "; ".join(snapshot.reasons))
+        else:
+            self.state.freeze("reconciliation_mismatch")
         return snapshot
 
     def flatten_symbol(self, reason: str, *, release_freeze: bool = True) -> bool:
@@ -508,7 +546,13 @@ class ExecutionSafetySupervisor:
                 database = Database(settings=self.settings)
                 try:
                     if close_order is not None and active_episodes:
-                        self._record_flatten_exit_orders(database, active_episodes, close_order, position)
+                        self._record_flatten_exit_orders(
+                            database,
+                            active_episodes,
+                            close_order,
+                            position,
+                            reason,
+                        )
                     from .order_reconciler import PaperOrderReconciler
 
                     PaperOrderReconciler(self.settings, database, trading_client=self.trading_client).sync(utc_now())
@@ -553,6 +597,7 @@ class ExecutionSafetySupervisor:
         episodes: list[dict[str, Any]],
         close_order: Any,
         position: Any,
+        reason: str,
     ) -> None:
         close_order_id = _text(_field(close_order, "id")) or f"safety-close-{utc_now().timestamp()}"
         total_qty = abs(_float(_field(close_order, "filled_qty"))) or abs(_float(_field(position, "qty")))
@@ -571,8 +616,11 @@ class ExecutionSafetySupervisor:
                     "order_key": f"{close_order_id}:{episode['episode_id']}",
                     "alpaca_order_id": close_order_id,
                     "client_order_id": _text(_field(close_order, "client_order_id")) or None,
-                    "role": "safety_flatten",
-                    "intent_type": "exit",
+                        "role": "safety_flatten",
+                        "intent_type": "exit",
+                        "strategy_path": episode.get("strategy_path"),
+                        "playbook": episode.get("playbook"),
+                        "close_reason": reason,
                     "side": _text(_field(close_order, "side")) or None,
                     "qty": qty,
                     "filled_qty": qty,
@@ -587,8 +635,9 @@ class ExecutionSafetySupervisor:
     def _run(self) -> None:
         while not self._stop_event.wait(self.settings.execution_reconcile_interval_seconds):
             try:
-                snapshot = self.reconcile()
-                if self._requires_residual_flatten(snapshot) and self.settings.execution_flatten_residual_positions:
+                snapshot = self.reconcile(record_failure=False)
+                confirmed = self._confirm_residual_snapshot(snapshot)
+                if confirmed is not None and self.settings.execution_flatten_residual_positions:
                     self.flatten_symbol("unprotected_residual_position")
                     continue
                 self._apply_session_clock(snapshot)
@@ -700,10 +749,53 @@ class ExecutionSafetySupervisor:
         return False
 
     def _requires_residual_flatten(self, snapshot: SafetySnapshot) -> bool:
+        if snapshot.protection_grace_active:
+            return False
         return snapshot.unknown_order_count > 0 or (
             snapshot.broker_position_qty != 0
             and (not snapshot.protected_position or snapshot.database_episode_count == 0)
         )
+
+    def _confirm_residual_snapshot(
+        self,
+        snapshot: SafetySnapshot,
+        *,
+        startup: bool = False,
+    ) -> SafetySnapshot | None:
+        if not self._requires_residual_flatten(snapshot):
+            return None
+        delay = self.settings.execution_residual_confirmation_delay_seconds
+        if delay > 0:
+            if self._stop_event.wait(delay) and not startup:
+                return None
+        confirmation = self.reconcile(startup=startup, record_failure=True)
+        database = Database(settings=self.settings)
+        try:
+            confirmed = self._requires_residual_flatten(confirmation)
+            database.insert_execution_safety_event(
+                {
+                    **self.state.snapshot(),
+                    "event_type": "RESIDUAL_CONFIRMED" if confirmed else "RESIDUAL_CLEARED",
+                    "severity": "ERROR" if confirmed else "INFO",
+                    "broker_position_qty": confirmation.broker_position_qty,
+                    "broker_position_direction": confirmation.broker_position_direction,
+                    "broker_open_order_count": confirmation.broker_open_order_count,
+                    "database_episode_count": confirmation.database_episode_count,
+                    "internal_episode_count": confirmation.internal_episode_count,
+                    "reason": "; ".join(confirmation.reasons)
+                    if confirmed
+                    else "second broker check cleared provisional residual state",
+                    "details": {
+                        "first_check_at": snapshot.timestamp.isoformat(),
+                        "second_check_at": confirmation.timestamp.isoformat(),
+                        "delay_seconds": delay,
+                        "startup": startup,
+                    },
+                }
+            )
+        finally:
+            database.close()
+        return confirmation if confirmed else None
 
     def _trip(self, category: str, reason: str) -> None:
         tripped = self.state.record_failure(category, reason)
@@ -731,6 +823,33 @@ def _clock_state(clock: Any | None, now: datetime) -> tuple[bool, float | None]:
     if next_close is None:
         return market_open, None
     return market_open, (ensure_utc(next_close) - now).total_seconds() / 60
+
+
+def _recent_execution_episode_ids(
+    episodes: list[dict[str, Any]],
+    now: datetime,
+    grace_seconds: int,
+) -> set[str]:
+    recent: set[str] = set()
+    for episode in episodes:
+        opened_at = episode.get("opened_at")
+        if not opened_at:
+            continue
+        age = (now - ensure_utc(opened_at)).total_seconds()
+        if 0 <= age <= grace_seconds:
+            recent.add(str(episode["episode_id"]))
+    return recent
+
+
+def _order_matches_episode_ids(order: Any, episode_ids: set[str]) -> bool:
+    client_order_id = _text(_field(order, "client_order_id")).upper()
+    if not client_order_id:
+        return False
+    return any(
+        client_order_id == episode_id.upper()
+        or client_order_id.startswith(f"{episode_id.upper()}-")
+        for episode_id in episode_ids
+    )
 
 
 def _has_active_protective_stop(orders: list[Any]) -> bool:

@@ -83,6 +83,8 @@ def _settings(tmp_path, **overrides):
     return Settings(
         database_url=f"sqlite:///{tmp_path / 'safety.db'}",
         execution_reconcile_interval_seconds=1,
+        execution_bracket_grace_period_seconds=5,
+        execution_residual_confirmation_delay_seconds=0,
         execution_intent_timeout_seconds=5,
         execution_cancel_wait_seconds=2,
         execution_shutdown_timeout_seconds=2,
@@ -133,6 +135,69 @@ def test_startup_flattens_unprotected_residual_position_before_entries(tmp_path)
     assert client.close_calls == ["GLD"]
     supervisor.state.assert_entry_allowed()
     supervisor.stop(flatten=False)
+    coordinator.stop()
+
+
+def test_new_bracket_position_gets_grace_and_second_check_can_clear_residual(tmp_path):
+    settings = _settings(tmp_path)
+    db = Database(settings=settings)
+    db.init_db()
+    db.create_execution_episode(
+        {
+            "episode_id": "GLD-NEW-LONG",
+            "symbol": "GLD",
+            "direction": "LONG",
+            "source": "minute",
+            "strategy_path": "minute",
+            "playbook": "proper_breakout",
+            "planned_qty": 1,
+        }
+    )
+    db.record_execution_episode_order(
+        "GLD-NEW-LONG",
+        {
+            "order_key": "GLD-NEW-LONG",
+            "client_order_id": "GLD-NEW-LONG",
+            "role": "entry",
+            "intent_type": "entry",
+            "qty": 1,
+            "filled_qty": 1,
+            "status": "filled",
+        },
+    )
+    client = FakeSafetyClient()
+    client.positions = [SimpleNamespace(symbol="GLD", qty="1", side="long")]
+    client.orders = [
+        SimpleNamespace(
+            id="entry-new",
+            client_order_id="GLD-NEW-LONG",
+            symbol="GLD",
+            status="filled",
+            type="limit",
+            legs=[],
+        )
+    ]
+    coordinator = OrderIntentCoordinator(settings, client)
+    supervisor = ExecutionSafetySupervisor(settings, client, coordinator)
+
+    first = supervisor.reconcile(record_failure=False)
+
+    assert first.consistent
+    assert first.protection_grace_active
+    assert not supervisor._requires_residual_flatten(first)
+    client.orders = [
+        SimpleNamespace(
+            id="stop-new",
+            client_order_id="GLD-NEW-LONG-STOP",
+            symbol="GLD",
+            status="new",
+            type="stop",
+            position_intent="sell_to_close",
+            parent_order_id="entry-new",
+        )
+    ]
+    assert supervisor._confirm_residual_snapshot(first) is None
+    assert client.close_calls == []
     coordinator.stop()
 
 

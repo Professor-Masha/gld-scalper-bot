@@ -3859,87 +3859,9 @@ The most important design rule is:
 
 ### Complete Runtime Architecture
 
-```mermaid
-flowchart TD
-    A["Alpaca market-data WebSocket<br/>quotes, trades, bars, corrections"] --> B["Live stream handlers"]
-    A2["Alpaca historical-data API<br/>bars, quotes, trades, news"] --> C["Historical and research collectors"]
-    A3["Economic calendar, FRED, local files"] --> C
+![GLD Scalper Bot complete runtime architecture](docs/architecture/runtime-architecture.jpg)
 
-    B --> D["Raw market-data persistence"]
-    C --> D
-    D --> DB[("SQLite<br/>paper, historical, and live databases are separated")]
-
-    B --> E["Freshness and stream diagnostics<br/>message age, quote age, trade age, bar age, gaps"]
-    B --> F["Feature engine"]
-    DB --> F
-
-    F --> F1["Technical indicators<br/>EMA, SMA, RSI, ATR, VWAP, MACD,<br/>ADX, Bollinger, OBV, MFI, SAR"]
-    F --> F2["Price-action and structure<br/>buildup, compression, proper/false break,<br/>pullback, support/resistance, order blocks,<br/>Fibonacci, fair-value-gap context"]
-    F --> F3["Microstructure<br/>spread, quote imbalance, trade intensity,<br/>signed pressure, volatility burst, liquidity"]
-    F --> F4["Gold and session context<br/>related assets, time of day, volatility cycle,<br/>macro, news, options intelligence"]
-
-    F1 --> G["Deterministic reasoning agents"]
-    F2 --> G
-    F3 --> G
-    F4 --> G
-    G --> G1["IndicatorAgent"]
-    G --> G2["PatternAgent"]
-    G --> G3["TrendAgent"]
-    G --> G4["RiskAgent"]
-
-    DB --> H1["Classical ML predictor<br/>logistic regression, Gaussian NB,<br/>random forest, gradient boosting"]
-    DB --> H2["Sequence-model service<br/>small causal Transformer"]
-    F --> H1
-    F --> H2
-    H2 --> H3["Asynchronous shadow/advisory result<br/>LONG, SHORT, NO_TRADE,<br/>returns, cost, uncertainty"]
-
-    G1 --> I["Strategy and playbook fusion"]
-    G2 --> I
-    G3 --> I
-    G4 --> I
-    H1 --> I
-    H3 --> I
-    I --> I1["Separate playbooks<br/>proper breakout, false-break reversal,<br/>pullback continuation, compression breakout,<br/>trend continuation, spread capture, news event,<br/>filtered EMA cross"]
-    I1 --> J["Target exposure<br/>negative = short, zero = flat, positive = long"]
-
-    E --> K["Hard safety and risk engine"]
-    J --> K
-    K --> K1{"All mandatory gates pass?"}
-    K1 -- "No" --> NT["NO_TRADE / risk block<br/>reason saved"]
-    K1 -- "Yes" --> L["Position sizing and order geometry<br/>quantity, limit, stop, target, breakeven"]
-
-    L --> M["Single synchronized order-intent coordinator"]
-    M --> N["Idempotency, episode ownership,<br/>direction-switch and timeout controls"]
-    N --> O["Alpaca paper broker"]
-    O --> P["Order updates and fills"]
-    P --> Q["Broker reconciliation<br/>positions, open orders, SQLite episodes"]
-    Q --> M
-
-    P --> R["Trading journal and episode accounting"]
-    NT --> R
-    R --> DB
-    R --> S["Outcome maturation<br/>1m, 3m, 5m, 15m, MFE, MAE,<br/>cost, missed opportunity"]
-    S --> DB
-
-    DB --> T["Hourly CSV exports and reports"]
-    DB --> U["After-hours model training"]
-    U --> U1["Chronological holdout"]
-    U1 --> U2["Purged walk-forward tests"]
-    U2 --> U3["Calibration, cost, latency,<br/>regime and stability checks"]
-    U3 --> U4{"Strict promotion gates pass?"}
-    U4 -- "No" --> U5["Retain as rejected candidate"]
-    U4 -- "Yes" --> U6["Versioned champion registry<br/>fingerprint and rollback metadata"]
-    U6 --> H1
-    U6 --> H2
-
-    K0["Knowledge folder, journal, CSV exports,<br/>news, model and feature reports"] --> V["Local RAG context builder"]
-    DB --> V
-    V --> W["Ollama / llama3.2:1b<br/>offline research coach"]
-    W --> W1["Journal reviews, news labels,<br/>missed-opportunity explanations,<br/>training advice and macro summaries"]
-    W1 --> DB
-    W1 --> U
-    W -. "No direct broker or order access" .-> X["Safety boundary"]
-```
+The editable renderer is [tools/render_architecture_diagrams.py](tools/render_architecture_diagrams.py). Regenerate the JPEG whenever architecture labels or connections change.
 
 The diagram contains two feedback loops:
 
@@ -3955,37 +3877,9 @@ submit, cancel, replace, or close an Alpaca order.
 
 ### Decision And Order Flow
 
-```mermaid
-flowchart TD
-    A["New quote, trade, fast snapshot,<br/>or completed one-minute bar"] --> B["Validate timestamps and session"]
-    B --> C{"Stream and required data fresh?"}
-    C -- "No" --> Z["Block entry and journal exact reason"]
-    C -- "Yes" --> D["Build technical, pattern,<br/>microstructure and context features"]
-    D --> E["Evaluate the relevant playbook"]
-    E --> F["Collect agent votes and rule scores"]
-    F --> G["Read current approved model advice<br/>or abstention"]
-    G --> H["Calculate bullish, bearish,<br/>NO_TRADE and confidence scores"]
-    H --> I{"Direction clears score,<br/>opposition and abstention rules?"}
-    I -- "No" --> J{"Controlled paper exploration eligible?"}
-    J -- "No" --> Z
-    J -- "Yes" --> K["Small tagged exploration intent"]
-    I -- "Yes" --> L["Normal strategy intent"]
-    K --> M
-    L --> M["RiskAgent and hard-risk gates"]
-    M --> N{"Liquidity, spread, volatility,<br/>freshness, cooldown, exposure,<br/>loss and close-window rules pass?"}
-    N -- "No" --> Z
-    N -- "Yes" --> O["Calculate economic breakeven,<br/>stop distance, target and quantity"]
-    O --> P{"Opposite broker exposure exists?"}
-    P -- "Yes" --> Q["Cancel orders, flatten, reconcile,<br/>briefly wait, then re-evaluate"]
-    P -- "No" --> R["Create idempotent episode and intent"]
-    Q --> R
-    R --> S["Order coordinator submits to Alpaca"]
-    S --> T["Track acknowledgements, fills,<br/>partials, rejects and timeouts"]
-    T --> U["Manage stop, target, breakeven,<br/>trailing profit and maximum giveback"]
-    U --> V["Close episode"]
-    V --> W["Verify broker and database are flat<br/>or correctly reflect residual exposure"]
-    W --> X["Journal outcome and mature labels"]
-```
+![GLD Scalper Bot decision and order flow](docs/architecture/decision-and-order-flow.jpg)
+
+The editable renderer is [tools/render_architecture_diagrams.py](tools/render_architecture_diagrams.py). Regenerate the JPEG whenever architecture labels or connections change.
 
 There are two entry routes:
 
@@ -3996,7 +3890,72 @@ There are two entry routes:
 Both routes converge before execution. Neither route can bypass the centralized
 risk engine, reconciliation, close freeze, circuit breaker, or order coordinator.
 
+### Execution Integrity And Clean Learning
+
+Every accepted order plan creates one **root execution episode**. The episode
+owns the intended direction, strategy path, playbook, planned quantity, entry
+orders, protective children, fills, costs, exit orders, realized P/L, and final
+close reason. Partial-profit tranches remain children of that root; performance
+reports must not count them as independent strategies.
+
+Bracket submission and reconciliation now follow this sequence:
+
+1. Create the root episode before contacting Alpaca.
+2. Submit a tranche with an idempotent client-order identifier.
+3. Persist the returned parent plus expected stop and take-profit associations
+   in one SQLite transaction.
+4. Allow `EXECUTION_BRACKET_GRACE_PERIOD_SECONDS` for Alpaca to expose newly
+   activated bracket children.
+5. If a position still appears unprotected, wait
+   `EXECUTION_RESIDUAL_CONFIRMATION_DELAY_SECONDS` and read broker position and
+   open orders a second time.
+6. Declare residual exposure only when that independent second read confirms
+   the mismatch. The safety supervisor may then protect or flatten it according
+   to configured policy.
+7. Reconciliation associates actual parent and child IDs with the episode,
+   imports fills once, preserves strategy/playbook metadata, and derives a
+   normal close reason such as `take_profit`, `stop_loss`, trailing exit, or
+   invalidation.
+8. A closed episode produces one root `trade_outcomes` record with after-cost
+   P/L. It also produces journal evidence and can mature into 1, 3, 5, and
+   15-minute supervised labels.
+
+Safety-created exits such as startup residual flattening, unprotected residual
+flattening, process shutdown, and abrupt session close are retained for audit
+but excluded from normal entry-model training. Scheduled retraining requires at
+least `RETRAIN_MIN_CLEAN_EPISODES` trustworthy closed episodes. This prevents
+the model from learning that an execution failure was a valid market setup.
+
 ### Core Market Mathematics
+
+#### How To Read The Equations
+
+GitHub renders each display equation below as centered mathematical notation.
+Every equation family is followed by an explanation of its variables and its
+role in the bot. Subscripts are time indexes, not multiplication.
+
+**Common symbols**
+
+- **\(t\):** the decision timestamp. A value with subscript \(t\) must be known
+  at that timestamp; otherwise it would leak future information.
+- **\(h\):** a forward horizon such as 1, 3, 5, or 15 minutes.
+- **\(n\):** the number of historical observations in a rolling lookback.
+- **\(P_t\):** the selected price at time \(t\), normally close or midpoint
+  depending on the feature.
+- **\(O_t,H_t,L_t,C_t\):** open, high, low, and close for the bar ending at
+  time \(t\).
+- **\(V_t\):** traded volume for the observation ending at \(t\).
+- **\(\sum\):** add all indexed observations in the stated range.
+- **\(\max\) and \(\min\):** select the largest or smallest candidate value.
+- **\(\mu\) and \(\sigma\):** arithmetic mean and standard deviation.
+- **\(\epsilon\):** a small positive number used to prevent division by zero.
+- **\(\hat{p}\):** an estimated, calibrated probability rather than a
+  guaranteed outcome.
+
+**Important interpretation:** an indicator equation creates evidence. It does
+not create broker authority. A trade still needs a confirmed playbook, fresh
+data, acceptable microstructure, risk approval, broker reconciliation, and an
+idempotent protected order intent.
 
 Let \(P_t\) be the latest price, \(H_t\), \(L_t\), and \(C_t\) be high, low, and
 close, \(V_t\) be volume, and \(n\) be a lookback length.
@@ -4005,15 +3964,31 @@ close, \(V_t\) be volume, and \(n\) be a lookback length.
 
 The simple forward or backward return is:
 
-\[
+$$
 r_{t,h} = \frac{P_{t+h}}{P_t} - 1
-\]
+$$
 
 For a short position, the directional return is approximately:
 
-\[
+$$
 r^{short}_{t,h} = -r_{t,h}
-\]
+$$
+
+**Breaking down the variables**
+
+- **\(r_{t,h}\):** price return over horizon \(h\), measured from decision time
+  \(t\).
+- **\(P_t\):** causal entry reference price known at the decision timestamp.
+- **\(P_{t+h}\):** observed price when the forward horizon matures.
+- **\(h\):** the outcome window. The project normally records 1, 3, 5, and
+  15-minute horizons separately.
+- **\(r^{short}_{t,h}\):** direction-adjusted short return. A falling future
+  price produces a positive short return.
+
+**What the equation means:** dividing the later price by the initial price
+normalizes the move, and subtracting one converts that ratio to a return. It is
+an outcome measurement, not a promise that the executable fill achieved the
+same return.
 
 Training labels subtract spread, slippage, fees, and the configured minimum edge
 before deciding whether a future move was a useful long, useful short, or
@@ -4021,17 +3996,17 @@ NO_TRADE observation.
 
 #### Simple and exponential moving averages
 
-\[
+$$
 SMA_n(t) = \frac{1}{n}\sum_{i=0}^{n-1} P_{t-i}
-\]
+$$
 
-\[
+$$
 \alpha = \frac{2}{n+1}
-\]
+$$
 
-\[
+$$
 EMA_n(t) = \alpha P_t + (1-\alpha)EMA_n(t-1)
-\]
+$$
 
 The bot uses moving-average order and slope as trend evidence. For example,
 \(EMA_9 > EMA_{21}\) supports a bullish case, but it does not independently
@@ -4041,23 +4016,23 @@ authorize an order.
 
 For period \(n\), separate positive and negative price changes:
 
-\[
+$$
 Gain_t = \max(P_t-P_{t-1},0)
-\]
+$$
 
-\[
+$$
 Loss_t = \max(P_{t-1}-P_t,0)
-\]
+$$
 
 After Wilder smoothing:
 
-\[
+$$
 RS = \frac{AverageGain_n}{AverageLoss_n}
-\]
+$$
 
-\[
+$$
 RSI = 100 - \frac{100}{1+RS}
-\]
+$$
 
 RSI contributes momentum, overbought/oversold, pivot, and divergence evidence.
 A bullish divergence means price makes a lower low while RSI makes a higher low;
@@ -4066,53 +4041,53 @@ standalone order command.
 
 #### True range and ATR
 
-\[
+$$
 TR_t = \max\left(H_t-L_t,\left|H_t-C_{t-1}\right|,
 \left|L_t-C_{t-1}\right|\right)
-\]
+$$
 
-\[
+$$
 ATR_n(t) = WilderAverage_n(TR)
-\]
+$$
 
 ATR normalizes volatility, helps classify regimes, validates breakout strength,
 and defines structure-aware stop and target distances.
 
 #### VWAP
 
-\[
+$$
 VWAP_t = \frac{\sum_{i=1}^{t} P_iV_i}{\sum_{i=1}^{t}V_i}
-\]
+$$
 
 Price above VWAP supports bullish intraday structure; price below supports
 bearish structure. Repeated crossings around VWAP are treated as chop.
 
 #### MACD
 
-\[
+$$
 MACD_t = EMA_{12}(t)-EMA_{26}(t)
-\]
+$$
 
-\[
+$$
 Signal_t = EMA_9(MACD_t)
-\]
+$$
 
-\[
+$$
 Histogram_t = MACD_t-Signal_t
-\]
+$$
 
 The sign and direction of the histogram are used as momentum confirmation.
 
 #### Bollinger Bands
 
-\[
+$$
 Middle_t=SMA_{20}(t)
-\]
+$$
 
-\[
+$$
 Upper_t=Middle_t+2\sigma_{20}(t), \qquad
 Lower_t=Middle_t-2\sigma_{20}(t)
-\]
+$$
 
 Band width helps identify compression and expansion. Compression can precede a
 breakout, but direction still requires structure, volume, spread, and freshness
@@ -4120,9 +4095,9 @@ confirmation.
 
 #### Relative volume
 
-\[
+$$
 RVOL_t = \frac{V_t}{SMA_{20}(V_t)}
-\]
+$$
 
 Values above 1 mean current volume is above its recent baseline. Low relative
 volume weakens breakouts and may move the regime toward poor liquidity.
@@ -4131,21 +4106,21 @@ volume weakens breakouts and may move the regime toward poor liquidity.
 
 For best bid \(B\), best ask \(A\), bid size \(Q_b\), and ask size \(Q_a\):
 
-\[
+$$
 Mid = \frac{A+B}{2}
-\]
+$$
 
-\[
+$$
 Spread = A-B
-\]
+$$
 
-\[
+$$
 SpreadPct = \frac{A-B}{Mid}
-\]
+$$
 
-\[
+$$
 QuoteImbalance = \frac{Q_b-Q_a}{Q_b+Q_a}
-\]
+$$
 
 Quote imbalance is bounded to \([-1,1]\). Positive values indicate more displayed
 bid size; negative values indicate more displayed ask size. It is only a short
@@ -4162,53 +4137,53 @@ The implemented spread regimes are:
 Trade intensity is the count of prints in the last 60 seconds and the per-minute
 average over the last five minutes:
 
-\[
+$$
 I_{60}=N(\text{trades in last 60 seconds})
-\]
+$$
 
-\[
+$$
 I_{5m}=\frac{N(\text{trades in last 5 minutes})}{5}
-\]
+$$
 
 The volatility-burst score combines short-to-long realized-volatility expansion
 and short-to-long range expansion:
 
-\[
+$$
 VolRatio=\frac{\sigma_{short}}{\sigma_{long}}, \qquad
 RangeRatio=\frac{\overline{Range}_{5}}{\overline{Range}_{30}}
-\]
+$$
 
-\[
+$$
 Burst =
 clip\left(\frac{VolRatio-1}{1.4},0,0.60\right)
 +clip\left(\frac{RangeRatio-1}{2.0},0,0.40\right)
 +\mathbb{1}[\sigma_{short}>0.055]\cdot0.15
-\]
+$$
 
 The final value is clipped to \([0,1]\). A burst flag is raised at 0.65.
 
 The implemented liquidity score is:
 
-\[
+$$
 DepthScore=clip\left(\frac{Q_b+Q_a}{400},0,1\right)
-\]
+$$
 
-\[
+$$
 IntensityScore=\max\left(
 clip\left(\frac{I_{60}}{15},0,1\right),
 clip\left(\frac{N_{5m}}{50},0,1\right)\right)
-\]
+$$
 
-\[
+$$
 BurstPenalty=clip(1-0.55\cdot Burst,0.35,1)
-\]
+$$
 
-\[
+$$
 Liquidity =
 clip\left(
 (0.42S_{spread}+0.22S_{depth}+0.26S_{intensity}+0.10)
 \cdot BurstPenalty,0,1\right)
-\]
+$$
 
 Here \(S_{spread}\) starts at 1.00 for tight, 0.72 for normal, 0.18 for wide,
 and 0.45 when unknown, and is further limited by the measured spread percentage.
@@ -4237,9 +4212,9 @@ signals:
 
 For a confirmed swing from \(P_0\) to \(P_1\), a Fibonacci level \(f\) is:
 
-\[
+$$
 Fib(f)=P_1+(P_0-P_1)f
-\]
+$$
 
 Common retracement values include \(0.236,0.382,0.5,0.618,\) and \(0.786\).
 Extensions such as \(1.272,1.618,\) and \(2.618\) can provide target context.
@@ -4255,30 +4230,30 @@ broker mismatches remain absolute vetoes.
 
 The deterministic strategy computes three competing values:
 
-\[
+$$
 S_{bull},\quad S_{bear},\quad S_{no\_trade}
-\]
+$$
 
 Its displayed confidence is:
 
-\[
+$$
 Confidence_{rule}=
 clip\left(\frac{\max(S_{bull},S_{bear})}{100},0,1\right)
-\]
+$$
 
 A normal LONG requires all of the following:
 
-\[
+$$
 S_{bull}\ge T_{bull}
-\]
+$$
 
-\[
+$$
 S_{bear}\le T_{opposing}
-\]
+$$
 
-\[
+$$
 S_{no\_trade}<T_{no\_trade}
-\]
+$$
 
 A normal SHORT uses the symmetric conditions. If no approved champion is
 available, the directional rule score must also clear the configured
@@ -4303,20 +4278,20 @@ liquidity, reconciliation, circuit-breaker, or close-window protections.
 If account equity is \(E\), maximum fractional risk per trade is \(\rho\), entry
 price is \(P\), and stop distance is \(D_{stop}\):
 
-\[
+$$
 MaximumLoss=E\rho
-\]
+$$
 
-\[
+$$
 Quantity_{risk}=
 \left\lfloor\frac{MaximumLoss}{D_{stop}}\right\rfloor
-\]
+$$
 
 Equivalently, with stop distance as a percentage:
 
-\[
+$$
 MaximumNotional=\frac{E\rho}{StopDistancePct}
-\]
+$$
 
 The engine then applies bounded multipliers for model quality, liquidity, spread,
 volatility, stale data, recent losses, event risk, pattern cleanliness, and
@@ -4326,9 +4301,9 @@ Buying power alone never defines position size.
 
 Economic breakeven is:
 
-\[
+$$
 BE_{pct}=SpreadPct+2\cdot SlippagePct+FeePct+SafetyBufferPct
-\]
+$$
 
 A position has not produced economic profit merely because its mark is one cent
 above a long entry. It must recover the round-trip execution cost and safety
@@ -4336,66 +4311,66 @@ buffer.
 
 For structure-aware geometry:
 
-\[
+$$
 D_{stop}=\max(D_{structure},D_{ATR},P\cdot BE_{floor},D_{minimum})
-\]
+$$
 
-\[
+$$
 D_{target}=\max(P\cdot TargetPct,\;R\cdot D_{stop},\;
 1.5P\cdot BE_{pct})
-\]
+$$
 
 where \(R\) is a playbook-specific reward-to-risk requirement. A long uses:
 
-\[
+$$
 Stop=P-D_{stop},\qquad Target=P+D_{target}
-\]
+$$
 
 A short reverses those signs.
 
 For the filtered EMA-cross route, the default structural idea is:
 
-\[
+$$
 D_{stop}=1.5\cdot ATR,\qquad D_{target}=3.0\cdot ATR
-\]
+$$
 
 subject to all global risk caps and cost floors.
 
 For a long entered at \(P_e\), current directional return is:
 
-\[
+$$
 PnL_{pct}=\frac{P_t-P_e}{P_e}
-\]
+$$
 
 For a short:
 
-\[
+$$
 PnL_{pct}=\frac{P_e-P_t}{P_e}
-\]
+$$
 
 Maximum favorable and adverse excursions are:
 
-\[
+$$
 MFE_t=\max_{\tau\le t}(PnL_{\tau}),\qquad
 MAE_t=\min_{\tau\le t}(PnL_{\tau})
-\]
+$$
 
 Profit giveback is:
 
-\[
+$$
 Giveback_t=MFE_t-PnL_t
-\]
+$$
 
 After the trade has cleared economic breakeven, the bot may exit when giveback
 exceeds a configured fraction of MFE. The trailing levels are approximately:
 
-\[
+$$
 TrailLong=HighWater(1-d_{trail})
-\]
+$$
 
-\[
+$$
 TrailShort=LowWater(1+d_{trail})
-\]
+$$
 
 Trades can also close because of a protective stop, target, trailing profit,
 maximum giveback, setup invalidation, extreme drawdown protection, direction
@@ -4411,14 +4386,14 @@ supervised classifiers over labeled LONG, SHORT, and NO_TRADE examples.
 
 For class \(k\):
 
-\[
+$$
 z_k=\beta_{0,k}+\boldsymbol{\beta}_k^\top\mathbf{x}
-\]
+$$
 
-\[
+$$
 P(y=k\mid\mathbf{x})=
 \frac{e^{z_k}}{\sum_j e^{z_j}}
-\]
+$$
 
 The coefficients are fitted by minimizing class-weighted cross-entropy with
 regularization. Features are standardized first. The trainer searches multiple
@@ -4426,12 +4401,12 @@ regularization values.
 
 #### Gaussian Naive Bayes
 
-\[
+$$
 P(y=k\mid\mathbf{x})\propto
 P(y=k)\prod_j
 \frac{1}{\sqrt{2\pi\sigma_{kj}^2}}
 \exp\left[-\frac{(x_j-\mu_{kj})^2}{2\sigma_{kj}^2}\right]
-\]
+$$
 
 It is fast and useful as a simple probabilistic baseline, although its
 conditional-independence and Gaussian assumptions are strong.
@@ -4440,25 +4415,25 @@ conditional-independence and Gaussian assumptions are strong.
 
 A decision tree commonly evaluates impurity with:
 
-\[
+$$
 Gini=1-\sum_k p_k^2
-\]
+$$
 
 A random forest trains many trees on randomized samples and feature subsets:
 
-\[
+$$
 P(y=k\mid\mathbf{x})=
 \frac{1}{M}\sum_{m=1}^{M}P_m(y=k\mid\mathbf{x})
-\]
+$$
 
 This captures nonlinear interactions and is the principal robust fallback when
 the Transformer is unavailable or not promoted.
 
 #### Gradient boosting
 
-\[
+$$
 F_m(\mathbf{x})=F_{m-1}(\mathbf{x})+\eta h_m(\mathbf{x})
-\]
+$$
 
 Each small tree \(h_m\) attempts to correct the current ensemble's errors.
 Class scores are converted to probabilities with softmax.
@@ -4469,13 +4444,13 @@ The model does not have to choose LONG or SHORT. Let \(p_{(1)}\) and \(p_{(2)}\)
 be the largest and second-largest class probabilities. A directional prediction
 is accepted only when:
 
-\[
+$$
 p_{(1)}\ge T_{confidence}
-\]
+$$
 
-\[
+$$
 p_{(1)}-p_{(2)}\ge T_{margin}
-\]
+$$
 
 Otherwise the model abstains with NO_TRADE. The trainer searches confidence
 thresholds \(0.40,0.46,0.52,0.58,0.64,0.70\) and margins
@@ -4484,9 +4459,9 @@ thresholds \(0.40,0.46,0.52,0.58,0.64,0.70\) and margins
 Probability calibration uses a held-out chronological calibration segment.
 For the Transformer, temperature scaling produces:
 
-\[
+$$
 P(y=k)=softmax\left(\frac{z_k}{T}\right)
-\]
+$$
 
 where \(T\) is selected to reduce held-out cross-entropy without changing the
 ordering of the logits.
@@ -4504,25 +4479,25 @@ The sequence model is intentionally small for an 8 GB laptop:
 
 For input matrix \(X\):
 
-\[
+$$
 Q=XW_Q,\qquad K=XW_K,\qquad V=XW_V
-\]
+$$
 
-\[
+$$
 Attention(Q,K,V)=
 softmax\left(\frac{QK^\top}{\sqrt{d_k}}+M_{causal}\right)V
-\]
+$$
 
 The causal mask sets attention to future positions to negative infinity before
 softmax. Positional encoding is:
 
-\[
+$$
 PE(pos,2i)=\sin\left(\frac{pos}{10000^{2i/d}}\right)
-\]
+$$
 
-\[
+$$
 PE(pos,2i+1)=\cos\left(\frac{pos}{10000^{2i/d}}\right)
-\]
+$$
 
 The final valid sequence representation feeds four heads:
 
@@ -4533,26 +4508,26 @@ The final valid sequence representation feeds four heads:
 
 The training loss is:
 
-\[
+$$
 \mathcal{L}=
 \mathcal{L}_{class}
 +0.50\mathcal{L}_{return}
 +0.20\mathcal{L}_{cost}
-\]
+$$
 
 Class loss is weighted cross-entropy:
 
-\[
+$$
 \mathcal{L}_{class}=-w_y\log P(y)
-\]
+$$
 
 The heteroscedastic return loss for predicted mean \(\mu\), target \(r\), and
 predicted log variance \(s\) is:
 
-\[
+$$
 \mathcal{L}_{return}=
 \frac{1}{2}\left(e^{-s}(r-\mu)^2+s\right)
-\]
+$$
 
 Cost uses Smooth L1 loss. Training uses AdamW, gradient clipping at 1.0, early
 stopping on chronological validation loss, and temperature calibration.
@@ -4575,59 +4550,59 @@ calibration, latency, stability, and paper checks.
 
 For one class:
 
-\[
+$$
 Precision=\frac{TP}{TP+FP}
-\]
+$$
 
-\[
+$$
 Recall=\frac{TP}{TP+FN}
-\]
+$$
 
-\[
+$$
 F1=\frac{2\cdot Precision\cdot Recall}{Precision+Recall}
-\]
+$$
 
 Balanced accuracy is the mean recall across classes. Macro F1 is the unweighted
 mean F1 across LONG, SHORT, and NO_TRADE, preventing the large NO_TRADE class
 from hiding weak directional behavior.
 
-\[
+$$
 LogLoss=-\frac{1}{N}\sum_{i=1}^{N}\log p_{i,y_i}
-\]
+$$
 
-\[
+$$
 Brier=\frac{1}{N}\sum_i\sum_k(p_{i,k}-\mathbb{1}[y_i=k])^2
-\]
+$$
 
 Expected calibration error groups predictions by confidence and compares mean
 confidence with observed accuracy:
 
-\[
+$$
 ECE=\sum_b\frac{|B_b|}{N}
 \left|Accuracy(B_b)-Confidence(B_b)\right|
-\]
+$$
 
 Trading metrics are calculated after estimated costs:
 
-\[
+$$
 ProfitFactor=
 \frac{\sum positive\ returns}
 {\left|\sum negative\ returns\right|}
-\]
+$$
 
-\[
+$$
 Expectancy=
 WinRate\cdot AverageWin
 -(1-WinRate)\cdot AverageLoss
-\]
+$$
 
-\[
+$$
 MaxDrawdown=\max_t(PeakEquity_t-Equity_t)
-\]
+$$
 
 The implemented candidate selection score combines:
 
-\[
+$$
 \begin{aligned}
 Score={}&0.25\cdot BalancedAccuracy
 +0.20\cdot MacroF1\\
@@ -4637,7 +4612,7 @@ Score={}&0.25\cdot BalancedAccuracy
 -\min(ECE,0.25)
 -LatencyPenalty
 \end{aligned}
-\]
+$$
 
 This ranking score chooses which candidate deserves deeper evaluation; it does
 not by itself promote a model. Promotion requires the independent strict gates
@@ -4645,37 +4620,9 @@ described earlier.
 
 ### Learning And Promotion Architecture
 
-```mermaid
-flowchart LR
-    A["Raw historical and paper data"] --> B["Validate coverage, timestamps,<br/>duplicates, sessions and gaps"]
-    B --> C["Build features using only information<br/>available at decision time"]
-    C --> D["Mature 1m, 3m, 5m, 15m outcomes<br/>and subtract expected costs"]
-    D --> E["Create immutable artifact<br/>fingerprint, date range, schema"]
-    E --> F["Chronological train segment"]
-    E --> G["Purged calibration segment"]
-    E --> H["Untouched chronological holdout"]
-    F --> I["Train classical candidates<br/>and/or scoped Transformer"]
-    G --> J["Calibrate probabilities<br/>and optimize abstention thresholds"]
-    I --> J
-    J --> K["Evaluate exact saved model,<br/>features, preprocessing and thresholds"]
-    H --> K
-    K --> L["Walk-forward tests across<br/>time, regimes and session phases"]
-    L --> M["Compare with current champion<br/>after costs and latency"]
-    M --> N{"All promotion gates pass?"}
-    N -- "No" --> O["Save candidate and rejection reason<br/>do not grant trade authority"]
-    N -- "Yes" --> P["Save versioned champion,<br/>fingerprint and rollback metadata"]
-    P --> Q["Shadow paper deployment"]
-    Q --> R["Collect executed-action outcomes,<br/>slippage, errors, MFE and MAE"]
-    R --> S{"Paper evidence remains<br/>inside validated range?"}
-    S -- "No" --> T["Demote or freeze; restore prior champion"]
-    S -- "Yes" --> U["Bounded paper authority"]
-    U --> R
+![GLD Scalper Bot training, validation, and promotion flow](docs/architecture/training-validation-promotion.jpg)
 
-    V["Knowledge, journal, news and reports"] --> W["Ollama offline review"]
-    W --> X["Advisory labels, macro context,<br/>feature ideas and review records"]
-    X --> D
-    X -. "Never bypasses evaluation" .-> K
-```
+The editable renderer is [tools/render_architecture_diagrams.py](tools/render_architecture_diagrams.py). Regenerate the JPEG whenever architecture labels or connections change.
 
 ### Pre-Training: What Happens Before Fitting
 
@@ -4889,11 +4836,11 @@ However:
 
 The correct improvement cycle is:
 
-\[
+$$
 Data \rightarrow Features \rightarrow MaturedLabels \rightarrow Training
 \rightarrow Calibration \rightarrow Holdout \rightarrow WalkForward
 \rightarrow ShadowPaper \rightarrow PromotionOrRejection
-\]
+$$
 
 This separation is intentional. It lets the system learn from mistakes without
 allowing a single mistake, an LLM opinion, or a noisy retraining round to rewrite

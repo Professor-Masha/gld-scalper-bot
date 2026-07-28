@@ -49,9 +49,10 @@ class PaperOrderReconciler:
                 seen_order_ids.add(order_id)
             self._persist_order(order, node)
             persisted_orders += 1
-            persisted_fills += self._persist_fill(order, now, node.root_direction)
+            persisted_fills += self._persist_fill(order, now, node)
 
         persisted_outcomes += self._persist_trade_outcomes(order_nodes, now)
+        persisted_outcomes += self._persist_closed_episode_outcomes(now)
         pending = TradeLearningAnalyzer(self.settings, self.database).review_pending(limit=25)
         if pending["failed"]:
             logger.error("pending post-trade reviews failed count=%s", pending["failed"])
@@ -81,6 +82,40 @@ class PaperOrderReconciler:
         order_id = _as_str(_field(order, "id")) or None
         client_order_id = _as_str(_field(order, "client_order_id")) or None
         existing = self.database.get_order(alpaca_order_id=order_id, client_order_id=client_order_id) or {}
+        parent = self.database.get_order(alpaca_order_id=node.parent_order_id) if node.parent_order_id else {}
+        episode_id = self._episode_id_for_order(order, node, existing)
+        episode = {}
+        association = None
+        if not episode_id:
+            association = self.database.conn.execute(
+                """
+                SELECT eo.episode_id, eo.strategy_path, eo.playbook
+                FROM execution_episode_orders eo
+                WHERE eo.alpaca_order_id = ? OR eo.client_order_id = ?
+                ORDER BY eo.updated_at DESC LIMIT 1
+                """,
+                (order_id, client_order_id),
+            ).fetchone()
+            if association is not None:
+                episode_id = str(association["episode_id"])
+        if episode_id:
+            row = self.database.conn.execute(
+                "SELECT * FROM execution_episodes WHERE episode_id = ? LIMIT 1",
+                (episode_id,),
+            ).fetchone()
+            episode = dict(row) if row is not None else {}
+        strategy_path = (
+            existing.get("strategy_path")
+            or (parent or {}).get("strategy_path")
+            or (association["strategy_path"] if association is not None else None)
+            or episode.get("strategy_path")
+        )
+        playbook = (
+            existing.get("playbook")
+            or (parent or {}).get("playbook")
+            or (association["playbook"] if association is not None else None)
+            or episode.get("playbook")
+        )
         side = _as_str(_field(order, "side")) or existing.get("side") or "unknown"
         position_side = (
             None
@@ -109,11 +144,12 @@ class PaperOrderReconciler:
                 "filled_qty": _as_float(_field(order, "filled_qty")),
                 "filled_avg_price": _as_float(_field(order, "filled_avg_price")),
                 "cancel_reason": _as_str(_field(order, "cancel_reason")),
+                "strategy_path": strategy_path,
+                "playbook": playbook,
                 "raw_json": _to_jsonable(order),
             }
         )
-        episode_id = self._episode_id_for_order(order, node, existing)
-        if episode_id:
+        if episode_id and association is None:
             exists = self.database.conn.execute(
                 "SELECT 1 FROM execution_episodes WHERE episode_id = ? LIMIT 1",
                 (episode_id,),
@@ -129,8 +165,12 @@ class PaperOrderReconciler:
                         "order_key": order_id or client_order_id,
                         "alpaca_order_id": order_id,
                         "client_order_id": client_order_id,
+                        "parent_order_id": node.parent_order_id,
                         "role": role,
                         "intent_type": "exit" if closing and status == FILLED_STATUS else "protective" if closing else "entry",
+                        "strategy_path": strategy_path,
+                        "playbook": playbook,
+                        "close_reason": _exit_reason(order) if closing and status == FILLED_STATUS else None,
                         "side": side,
                         "qty": _as_float(_field(order, "qty")),
                         "filled_qty": _as_float(_field(order, "filled_qty")),
@@ -150,9 +190,14 @@ class PaperOrderReconciler:
                 client_order_id = str(parent.get("client_order_id") or client_order_id)
         if not client_order_id.upper().startswith(f"{self.settings.bot_symbol.upper()}-"):
             return None
-        return _root_episode_id(client_order_id)
+        candidate = _root_episode_id(client_order_id)
+        exists = self.database.conn.execute(
+            "SELECT 1 FROM execution_episodes WHERE episode_id = ? LIMIT 1",
+            (candidate,),
+        ).fetchone()
+        return candidate if exists is not None else None
 
-    def _persist_fill(self, order: Any, now: datetime, root_direction: str | None) -> int:
+    def _persist_fill(self, order: Any, now: datetime, node: BrokerOrderNode) -> int:
         order_id = _as_str(_field(order, "id")) or _as_str(_field(order, "client_order_id"))
         if not order_id or self.database.fill_exists(order_id):
             return 0
@@ -164,6 +209,30 @@ class PaperOrderReconciler:
         side = _as_str(_field(order, "side"))
         filled_at = _field(order, "filled_at") or now
         client_order_id = _as_str(_field(order, "client_order_id")) or None
+        existing = self.database.get_order(alpaca_order_id=order_id, client_order_id=client_order_id) or {}
+        episode_id = self._episode_id_for_order(order, node, existing)
+        episode = {}
+        if episode_id:
+            row = self.database.conn.execute(
+                "SELECT strategy_path, playbook FROM execution_episodes WHERE episode_id = ?",
+                (episode_id,),
+            ).fetchone()
+            episode = dict(row) if row is not None else {}
+        if not episode_id:
+            association = self.database.conn.execute(
+                """
+                SELECT eo.episode_id, eo.strategy_path, eo.playbook
+                FROM execution_episode_orders eo
+                WHERE eo.alpaca_order_id = ? OR eo.client_order_id = ?
+                ORDER BY eo.updated_at DESC LIMIT 1
+                """,
+                (order_id, client_order_id),
+            ).fetchone()
+            if association is not None:
+                episode_id = str(association["episode_id"])
+                episode = dict(association)
+        strategy_path = existing.get("strategy_path") or episode.get("strategy_path")
+        playbook = existing.get("playbook") or episode.get("playbook")
         cost = build_fill_cost_context(
             self.database,
             self.settings,
@@ -184,6 +253,10 @@ class PaperOrderReconciler:
                 "price": filled_avg_price,
                 "timestamp": filled_at,
                 **cost.as_record(),
+                "client_order_id": client_order_id,
+                "episode_id": episode_id,
+                "strategy_path": strategy_path,
+                "playbook": playbook,
                 "mode": "paper",
                 "raw_json": _to_jsonable(order),
             }
@@ -193,7 +266,9 @@ class PaperOrderReconciler:
                 "timestamp": filled_at,
                 "symbol": symbol,
                 "event_type": "ORDER_FILLED",
-                "decision": root_direction,
+                "strategy_path": strategy_path,
+                "playbook": playbook,
+                "decision": node.root_direction,
                 "order_id": order_id,
                 "client_order_id": client_order_id,
                 "side": side,
@@ -201,6 +276,7 @@ class PaperOrderReconciler:
                 "price": filled_avg_price,
                 "notional": filled_qty * filled_avg_price,
                 "status": _as_str(_field(order, "status")),
+                "pattern_classification": playbook,
                 "broker_snapshot_json": _to_jsonable(order),
             }
         )
@@ -237,6 +313,14 @@ class PaperOrderReconciler:
             exit_leg = sorted(exit_legs, key=lambda leg: str(_field(leg, "filled_at") or ""))[-1]
             trade_id = _as_str(_field(parent, "client_order_id")) or parent_id
             if self.database.trade_outcome_exists(trade_id):
+                continue
+            root_episode_id = _root_episode_id(trade_id)
+            episode_exists = self.database.conn.execute(
+                "SELECT 1 FROM execution_episodes WHERE episode_id = ? LIMIT 1",
+                (root_episode_id,),
+            ).fetchone()
+            if episode_exists is not None:
+                # Atomic episodes are materialized once at root level below, not once per tranche.
                 continue
 
             exit_qty = min(entry_qty, _as_float(_field(exit_leg, "filled_qty")))
@@ -279,7 +363,6 @@ class PaperOrderReconciler:
             ).fetchone()
             estimated_live_cost = _as_float(cost_row["estimated_live_cost"])
             net_after_costs = gross_pnl - estimated_live_cost
-            root_episode_id = _root_episode_id(trade_id)
             strategy_path = str(
                 decision_features.get("strategy_path")
                 or ("fast" if "FAST" in root_episode_id.upper() else "minute")
@@ -356,6 +439,204 @@ class PaperOrderReconciler:
                 )
             count += 1
         return count
+
+    def _persist_closed_episode_outcomes(self, now: datetime) -> int:
+        episodes = self.database.conn.execute(
+            """
+            SELECT e.*
+            FROM execution_episodes e
+            WHERE e.status IN ('closed', 'flattened')
+              AND e.filled_qty > 0
+              AND e.entry_avg_price IS NOT NULL
+              AND e.exit_avg_price IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM trade_outcomes o
+                  WHERE o.trade_id = e.episode_id
+              )
+            ORDER BY e.closed_at, e.episode_id
+            """
+        ).fetchall()
+        count = 0
+        for raw_episode in episodes:
+            episode = dict(raw_episode)
+            trade_id = str(episode["episode_id"])
+            direction = str(episode["direction"]).upper()
+            qty = float(episode.get("filled_qty") or 0.0)
+            entry_price = float(episode.get("entry_avg_price") or 0.0)
+            exit_price = float(episode.get("exit_avg_price") or 0.0)
+            if direction not in {"LONG", "SHORT"} or qty <= 0 or entry_price <= 0 or exit_price <= 0:
+                continue
+            decision = self.database.fetch_trade_decision(trade_id) or self._episode_decision(trade_id)
+            decision_features = _json_mapping(decision.get("feature_snapshot_json"))
+            details = _json_mapping(episode.get("details_json"))
+            timing = self.database.conn.execute(
+                """
+                SELECT
+                    MIN(CASE WHEN eo.intent_type='entry' THEN f.timestamp END) AS entry_time,
+                    MAX(CASE WHEN eo.intent_type='exit' THEN f.timestamp END) AS exit_time
+                FROM execution_episode_orders eo
+                LEFT JOIN fills f
+                  ON f.order_id = eo.alpaca_order_id
+                  OR (f.client_order_id IS NOT NULL AND f.client_order_id = eo.client_order_id)
+                WHERE eo.episode_id = ?
+                """,
+                (trade_id,),
+            ).fetchone()
+            entry_time = timing["entry_time"] or episode.get("opened_at") or now
+            exit_time = timing["exit_time"] or episode.get("closed_at") or now
+            holding_seconds = max(
+                0.0,
+                (ensure_utc(exit_time) - ensure_utc(entry_time)).total_seconds(),
+            )
+            gross_pnl = (
+                (exit_price - entry_price) * qty
+                if direction == "LONG"
+                else (entry_price - exit_price) * qty
+            )
+            costs = self._episode_costs(trade_id)
+            estimated_live_cost = costs["estimated_live_cost"]
+            net_after_costs = gross_pnl - estimated_live_cost
+            notional = qty * entry_price
+            strategy_path = str(
+                episode.get("strategy_path")
+                or decision.get("strategy_path")
+                or decision_features.get("strategy_path")
+                or episode.get("source")
+                or "minute"
+            )
+            playbook = (
+                episode.get("playbook")
+                or decision.get("playbook")
+                or decision_features.get("playbook")
+                or details.get("playbook")
+            )
+            exit_reason = str(episode.get("close_reason") or "broker_exit")
+            exploration_trade = bool(
+                decision.get("exploration_trade")
+                or decision_features.get("paper_exploration")
+            )
+            outcome_id = self.database.insert_trade_outcome(
+                {
+                    "trade_id": trade_id,
+                    "symbol": episode["symbol"],
+                    "direction": direction,
+                    "entry_time": entry_time,
+                    "exit_time": exit_time,
+                    "entry_price": entry_price,
+                    "exit_price": exit_price,
+                    "qty": qty,
+                    "notional": notional,
+                    "gross_pnl": gross_pnl,
+                    "net_pnl_estimated": net_after_costs,
+                    "pnl_pct": safe_div(net_after_costs, notional),
+                    "holding_seconds": holding_seconds,
+                    "exit_reason": exit_reason,
+                    "win_loss": "win" if net_after_costs > 0 else "loss",
+                    "setup_type": str(playbook or f"execution_episode:{strategy_path}"),
+                    "model_version": decision.get("model_version"),
+                    "strategy_version": self.settings.strategy_version,
+                    "exploration_trade": exploration_trade,
+                    "root_episode_id": trade_id,
+                    "strategy_path": strategy_path,
+                    "playbook": playbook,
+                    "regime": decision.get("regime") or decision_features.get("regime"),
+                    "ml_prediction": decision.get("model_prediction")
+                    or decision_features.get("ml_predicted_direction"),
+                    "confidence": decision.get("confidence") or decision_features.get("confidence"),
+                    "spread_cost": costs["spread_cost"],
+                    "slippage_cost": costs["slippage_cost"],
+                    "estimated_fees": costs["estimated_fees"],
+                    "estimated_live_cost": estimated_live_cost,
+                    "net_pnl_after_costs": net_after_costs,
+                    "mode": "paper",
+                }
+            )
+            self.database.insert_trading_journal(
+                {
+                    "timestamp": exit_time,
+                    "symbol": episode["symbol"],
+                    "event_type": "TRADE_CLOSED",
+                    "strategy_path": strategy_path,
+                    "playbook": playbook,
+                    "decision": direction,
+                    "reason": exit_reason,
+                    "client_order_id": trade_id,
+                    "side": "sell" if direction == "LONG" else "buy",
+                    "qty": qty,
+                    "price": exit_price,
+                    "notional": notional,
+                    "status": episode["status"],
+                    "pnl": net_after_costs,
+                    "pattern_classification": playbook,
+                    "signal_id": decision.get("signal_id"),
+                    "exploration_trade": exploration_trade,
+                    "broker_snapshot_json": {
+                        "execution_episode": episode,
+                        "materialized_from": "closed_execution_episode",
+                    },
+                }
+            )
+            try:
+                TradeLearningAnalyzer(self.settings, self.database).review(outcome_id)
+            except Exception as exc:
+                logger.exception("post-trade learning review failed trade_id=%s: %s", trade_id, exc)
+                self.database.log_event(
+                    "ERROR",
+                    __name__,
+                    "trade_learning_review_failed",
+                    str(exc),
+                    {"trade_id": trade_id, "trade_outcome_id": outcome_id},
+                )
+            count += 1
+        return count
+
+    def _episode_decision(self, episode_id: str) -> dict[str, Any]:
+        row = self.database.conn.execute(
+            """
+            SELECT * FROM trading_journal
+            WHERE event_type IN ('TRADE_DECISION', 'ORDER_SUBMITTED', 'FAST_ORDER_SUBMITTED')
+              AND (client_order_id = ? OR client_order_id LIKE ?)
+            ORDER BY CASE event_type
+                WHEN 'TRADE_DECISION' THEN 0
+                WHEN 'FAST_ORDER_SUBMITTED' THEN 1
+                ELSE 2
+            END, id ASC
+            LIMIT 1
+            """,
+            (episode_id, f"{episode_id}-%"),
+        ).fetchone()
+        return dict(row) if row is not None else {}
+
+    def _episode_costs(self, episode_id: str) -> dict[str, float]:
+        row = self.database.conn.execute(
+            """
+            WITH associated AS (
+                SELECT eo.alpaca_order_id,
+                       MAX(eo.filled_qty) AS allocated_qty
+                FROM execution_episode_orders eo
+                WHERE eo.episode_id = ? AND eo.alpaca_order_id IS NOT NULL
+                GROUP BY eo.alpaca_order_id
+            )
+            SELECT
+                COALESCE(SUM(f.spread_cost *
+                    CASE WHEN f.qty > 0 THEN MIN(a.allocated_qty, f.qty) / f.qty ELSE 1 END), 0) AS spread_cost,
+                COALESCE(SUM(f.slippage_cost *
+                    CASE WHEN f.qty > 0 THEN MIN(a.allocated_qty, f.qty) / f.qty ELSE 1 END), 0) AS slippage_cost,
+                COALESCE(SUM(f.estimated_fee *
+                    CASE WHEN f.qty > 0 THEN MIN(a.allocated_qty, f.qty) / f.qty ELSE 1 END), 0) AS estimated_fees,
+                COALESCE(SUM(f.estimated_live_cost *
+                    CASE WHEN f.qty > 0 THEN MIN(a.allocated_qty, f.qty) / f.qty ELSE 1 END), 0) AS estimated_live_cost
+            FROM associated a
+            JOIN fills f ON f.order_id = a.alpaca_order_id
+            """,
+            (episode_id,),
+        ).fetchone()
+        return {
+            "spread_cost": _as_float(row["spread_cost"]),
+            "slippage_cost": _as_float(row["slippage_cost"]),
+            "estimated_fees": _as_float(row["estimated_fees"]),
+            "estimated_live_cost": _as_float(row["estimated_live_cost"]),
+        }
 
 
 def _field(message: Any, name: str, default: Any = None) -> Any:

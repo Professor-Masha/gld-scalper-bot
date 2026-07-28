@@ -23,6 +23,13 @@ NON_FEATURE_COLUMNS = {
 }
 TRADE_GOOD_LABELS = {"long_good", "short_good"}
 VALID_LABELS = {"long_good", "short_good", "no_trade"}
+UNCLEAN_EXECUTION_EXIT_REASONS = {
+    "unprotected_residual_position",
+    "startup_residual_position",
+    "safety_flatten",
+    "process_shutdown",
+    "session_close",
+}
 
 
 def build_training_dataset(
@@ -60,6 +67,8 @@ def build_training_records(
                COALESCE(o.net_pnl_after_costs, o.net_pnl_estimated) AS net_pnl_estimated,
                o.notional AS trade_notional,
                o.estimated_live_cost,
+               o.exit_reason,
+               e.close_reason AS episode_close_reason,
                (SELECT m.label FROM missed_opportunities m
                 WHERE m.signal_id = s.id ORDER BY m.id DESC LIMIT 1) AS missed_label,
                (SELECT ol.label FROM outcome_labels ol
@@ -88,6 +97,7 @@ def build_training_records(
                  OR candidate.trade_id = de.client_order_id
               ORDER BY candidate.id ASC LIMIT 1
           )
+        LEFT JOIN execution_episodes e ON e.episode_id = de.root_episode_id
         WHERE julianday(s.timestamp) >= julianday(?)
         ORDER BY julianday(s.timestamp), s.id
         """,
@@ -95,6 +105,11 @@ def build_training_records(
     ).fetchall()
     records: list[dict[str, Any]] = []
     for row in rows:
+        if (
+            str(row["exit_reason"] or "") in UNCLEAN_EXECUTION_EXIT_REASONS
+            or str(row["episode_close_reason"] or "") in UNCLEAN_EXECUTION_EXIT_REASONS
+        ):
+            continue
         raw_features = json.loads(row["feature_snapshot_json"] or "{}")
         raw_features.update(
             {
@@ -177,6 +192,8 @@ def build_training_records(
                de.executed_action, de.execution_status, de.playbook AS executed_playbook,
                de.model_scope, de.expected_slippage_pct, de.fill_quality_score,
                de.direction_available, de.session_phase, de.execution_error,
+               o.exit_reason,
+               e.close_reason AS episode_close_reason,
                ol.label AS outcome_label,
                ol.forward_return_1m,
                ol.forward_return_3m,
@@ -193,12 +210,25 @@ def build_training_records(
               WHERE candidate.decision_source = 'fast_scalp'
                 AND candidate.decision_id = f.id
           )
+        LEFT JOIN trade_outcomes o
+          ON o.id = (
+              SELECT candidate.id FROM trade_outcomes candidate
+              WHERE candidate.root_episode_id = de.root_episode_id
+                 OR candidate.trade_id = de.client_order_id
+              ORDER BY candidate.id ASC LIMIT 1
+          )
+        LEFT JOIN execution_episodes e ON e.episode_id = de.root_episode_id
         WHERE julianday(f.timestamp) >= julianday(?)
         ORDER BY julianday(f.timestamp), f.id
         """,
         (since.isoformat(),),
     ).fetchall()
     for row in fast_rows:
+        if (
+            str(row["exit_reason"] or "") in UNCLEAN_EXECUTION_EXIT_REASONS
+            or str(row["episode_close_reason"] or "") in UNCLEAN_EXECUTION_EXIT_REASONS
+        ):
+            continue
         label = row["outcome_label"]
         if label not in VALID_LABELS:
             continue

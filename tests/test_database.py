@@ -30,6 +30,33 @@ def test_database_upsert_prevents_duplicate_bars(tmp_path):
     assert db.count_rows("bars") == 1
 
 
+def test_failed_execution_episode_records_terminal_close_reason(tmp_path):
+    settings = Settings(database_url=f"sqlite:///{tmp_path / 'failed-episode.db'}")
+    db = Database(settings=settings)
+    db.init_db()
+    now = datetime(2026, 7, 28, 12, 0, tzinfo=timezone.utc)
+    db.create_execution_episode(
+        {
+            "episode_id": "GLD-FAILED-SUBMISSION",
+            "symbol": "GLD",
+            "direction": "LONG",
+            "source": "minute",
+            "planned_qty": 2,
+            "opened_at": now,
+        }
+    )
+
+    db.finalize_execution_episode_submission("GLD-FAILED-SUBMISSION", failed=True)
+
+    row = db.conn.execute(
+        "SELECT status, close_reason, closed_at FROM execution_episodes WHERE episode_id = ?",
+        ("GLD-FAILED-SUBMISSION",),
+    ).fetchone()
+    assert row["status"] == "submit_failed"
+    assert row["close_reason"] == "submission_failed"
+    assert row["closed_at"] is not None
+
+
 def test_database_serializes_concurrent_thread_writers(tmp_path):
     db_path = tmp_path / "concurrent.db"
     settings = Settings(database_url=f"sqlite:///{db_path}")

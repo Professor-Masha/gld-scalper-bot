@@ -216,6 +216,7 @@ class Settings:
     retrain_interval_hours: int = 24
     retrain_lookback_days: int = 90
     retrain_min_samples: int = 50
+    retrain_min_clean_episodes: int = 10
     retrain_only_outside_regular_hours: bool = True
     enable_missed_opportunity_learning: bool = True
     missed_opportunity_horizon_minutes: int = 15
@@ -290,6 +291,8 @@ class Settings:
     position_force_flatten_minutes_before_close: int = 8
     exit_model_min_trustworthy_outcomes: int = 500
     execution_reconcile_interval_seconds: int = 3
+    execution_bracket_grace_period_seconds: int = 15
+    execution_residual_confirmation_delay_seconds: int = 2
     execution_entry_freeze_minutes_before_close: int = 15
     execution_session_flatten_minutes_before_close: int = 10
     execution_intent_timeout_seconds: int = 30
@@ -623,6 +626,12 @@ class Settings:
             raise RuntimeError("EXIT_MODEL_MIN_TRUSTWORTHY_OUTCOMES must be at least 100.")
         if self.execution_reconcile_interval_seconds < 1:
             raise RuntimeError("EXECUTION_RECONCILE_INTERVAL_SECONDS must be at least one second.")
+        if self.execution_bracket_grace_period_seconds < self.execution_reconcile_interval_seconds:
+            raise RuntimeError(
+                "EXECUTION_BRACKET_GRACE_PERIOD_SECONDS must be at least one reconciliation interval."
+            )
+        if self.execution_residual_confirmation_delay_seconds < 0:
+            raise RuntimeError("EXECUTION_RESIDUAL_CONFIRMATION_DELAY_SECONDS cannot be negative.")
         if not 10 <= self.execution_entry_freeze_minutes_before_close <= 15:
             raise RuntimeError("EXECUTION_ENTRY_FREEZE_MINUTES_BEFORE_CLOSE must be between 10 and 15.")
         if not 1 <= self.execution_session_flatten_minutes_before_close <= self.execution_entry_freeze_minutes_before_close:
@@ -684,6 +693,8 @@ class Settings:
             raise RuntimeError("ML drift performance limits are invalid.")
         if not 0 <= self.retrain_after_hour_et <= 23 or not 0 <= self.retrain_before_hour_et <= 23:
             raise RuntimeError("Retraining window hours must be valid New York clock hours.")
+        if self.retrain_min_clean_episodes < 1:
+            raise RuntimeError("RETRAIN_MIN_CLEAN_EPISODES must be positive.")
         if self.database_busy_timeout_ms < 1_000:
             raise RuntimeError("DATABASE_BUSY_TIMEOUT_MS must be at least 1000 milliseconds.")
         if not self.order_block_timeframes or any(value <= 0 for value in self.order_block_timeframes):
@@ -843,6 +854,7 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         retrain_interval_hours=_int_env("RETRAIN_INTERVAL_HOURS", 24),
         retrain_lookback_days=_int_env("RETRAIN_LOOKBACK_DAYS", 90),
         retrain_min_samples=_int_env("RETRAIN_MIN_SAMPLES", 50),
+        retrain_min_clean_episodes=_int_env("RETRAIN_MIN_CLEAN_EPISODES", 10),
         retrain_only_outside_regular_hours=_bool_env("RETRAIN_ONLY_OUTSIDE_REGULAR_HOURS", True),
         enable_missed_opportunity_learning=_bool_env("ENABLE_MISSED_OPPORTUNITY_LEARNING", True),
         missed_opportunity_horizon_minutes=_int_env("MISSED_OPPORTUNITY_HORIZON_MINUTES", 15),
@@ -917,6 +929,8 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         position_force_flatten_minutes_before_close=_int_env("POSITION_FORCE_FLATTEN_MINUTES_BEFORE_CLOSE", 8),
         exit_model_min_trustworthy_outcomes=_int_env("EXIT_MODEL_MIN_TRUSTWORTHY_OUTCOMES", 500),
         execution_reconcile_interval_seconds=_int_env("EXECUTION_RECONCILE_INTERVAL_SECONDS", 3),
+        execution_bracket_grace_period_seconds=_int_env("EXECUTION_BRACKET_GRACE_PERIOD_SECONDS", 15),
+        execution_residual_confirmation_delay_seconds=_int_env("EXECUTION_RESIDUAL_CONFIRMATION_DELAY_SECONDS", 2),
         execution_entry_freeze_minutes_before_close=_int_env("EXECUTION_ENTRY_FREEZE_MINUTES_BEFORE_CLOSE", 15),
         execution_session_flatten_minutes_before_close=_int_env("EXECUTION_SESSION_FLATTEN_MINUTES_BEFORE_CLOSE", 10),
         execution_intent_timeout_seconds=_int_env("EXECUTION_INTENT_TIMEOUT_SECONDS", 30),

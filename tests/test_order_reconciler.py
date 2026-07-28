@@ -185,3 +185,137 @@ def test_standalone_closing_leg_never_becomes_active_direction_episode(tmp_path)
         "notional": 0,
         "client_order_ids": [],
     }
+
+
+def test_closed_atomic_episode_materializes_one_root_outcome_with_metadata(tmp_path):
+    settings = Settings(database_url=f"sqlite:///{tmp_path / 'atomic-outcome.db'}")
+    db = Database(settings=settings)
+    db.init_db()
+    entry_time = datetime(2026, 7, 27, 19, 3, tzinfo=timezone.utc)
+    exit_time = datetime(2026, 7, 27, 19, 8, tzinfo=timezone.utc)
+    episode_id = "GLD-ATOMIC-PROPER-LONG"
+    db.create_execution_episode(
+        {
+            "episode_id": episode_id,
+            "symbol": "GLD",
+            "direction": "LONG",
+            "source": "minute",
+            "strategy_path": "minute",
+            "playbook": "proper_breakout",
+            "planned_qty": 5,
+            "opened_at": entry_time,
+        }
+    )
+    db.record_execution_episode_order(
+        episode_id,
+        {
+            "order_key": "entry-atomic",
+            "alpaca_order_id": "entry-atomic",
+            "client_order_id": episode_id,
+            "role": "entry",
+            "intent_type": "entry",
+            "strategy_path": "minute",
+            "playbook": "proper_breakout",
+            "side": "buy",
+            "qty": 5,
+            "filled_qty": 5,
+            "filled_avg_price": 100.0,
+            "status": "filled",
+            "submitted_at": entry_time,
+        },
+    )
+    db.record_execution_episode_order(
+        episode_id,
+        {
+            "order_key": "close-atomic",
+            "alpaca_order_id": "close-atomic",
+            "client_order_id": "broker-close-atomic",
+            "role": "safety_flatten",
+            "intent_type": "exit",
+            "strategy_path": "minute",
+            "playbook": "proper_breakout",
+            "close_reason": "setup_invalidation",
+            "side": "sell",
+            "qty": 5,
+            "filled_qty": 5,
+            "filled_avg_price": 100.5,
+            "status": "filled",
+            "submitted_at": exit_time,
+            "updated_at": exit_time,
+        },
+    )
+    db.conn.execute(
+        """
+        INSERT INTO trade_outcomes(trade_id, symbol, direction, root_episode_id)
+        VALUES (?, 'GLD', 'LONG', ?)
+        """,
+        (f"{episode_id}-LEGACY-TRANCHE", episode_id),
+    )
+    db.conn.commit()
+    entry_order = SimpleNamespace(
+        id="entry-atomic",
+        parent_order_id=None,
+        client_order_id=episode_id,
+        symbol="GLD",
+        side="buy",
+        order_type="limit",
+        order_class="bracket",
+        time_in_force="day",
+        status="filled",
+        submitted_at=entry_time,
+        filled_at=entry_time,
+        filled_qty=5,
+        filled_avg_price=100.0,
+        qty=5,
+        notional=None,
+        legs=[],
+    )
+    close_order = SimpleNamespace(
+        id="close-atomic",
+        parent_order_id=None,
+        client_order_id="broker-close-atomic",
+        symbol="GLD",
+        side="sell",
+        position_intent="sell_to_close",
+        order_type="market",
+        order_class="simple",
+        time_in_force="day",
+        status="filled",
+        submitted_at=exit_time,
+        filled_at=exit_time,
+        filled_qty=5,
+        filled_avg_price=100.5,
+        qty=5,
+        notional=None,
+        legs=[],
+    )
+
+    result = PaperOrderReconciler(
+        settings,
+        db,
+        FakeTradingClient([entry_order, close_order]),
+    ).sync(exit_time)
+
+    assert result["trade_outcomes"] == 1
+    outcome = db.conn.execute(
+        "SELECT * FROM trade_outcomes WHERE trade_id = ?",
+        (episode_id,),
+    ).fetchone()
+    assert outcome["trade_id"] == episode_id
+    assert outcome["root_episode_id"] == episode_id
+    assert outcome["strategy_path"] == "minute"
+    assert outcome["playbook"] == "proper_breakout"
+    assert outcome["exit_reason"] == "setup_invalidation"
+    assert outcome["gross_pnl"] == 2.5
+    episode = db.conn.execute(
+        "SELECT * FROM execution_episodes WHERE episode_id = ?",
+        (episode_id,),
+    ).fetchone()
+    assert episode["close_reason"] == "setup_invalidation"
+    fills = db.conn.execute(
+        "SELECT strategy_path, playbook, episode_id FROM fills ORDER BY timestamp"
+    ).fetchall()
+    assert all(row["strategy_path"] == "minute" for row in fills)
+    assert all(row["playbook"] == "proper_breakout" for row in fills)
+    assert all(row["episode_id"] == episode_id for row in fills), [dict(row) for row in fills]
+    assert db.count_rows("trade_outcomes") == 2

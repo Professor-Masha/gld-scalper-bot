@@ -69,6 +69,35 @@ class SafeRetrainingScheduler:
             if db.fetch_active_execution_episodes(self.settings.bot_symbol):
                 self._record_result({"status": "skipped", "reason": "open execution episodes exist"})
                 return
+            clean_since = utc_now() - timedelta(days=self.settings.retrain_lookback_days)
+            clean_row = db.conn.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM trade_outcomes o
+                LEFT JOIN execution_episodes e ON e.episode_id = o.root_episode_id
+                WHERE o.exit_time >= ?
+                  AND COALESCE(o.exit_reason, '') NOT IN (
+                    'unprotected_residual_position', 'startup_residual_position',
+                    'safety_flatten', 'process_shutdown', 'session_close'
+                  )
+                  AND COALESCE(e.close_reason, '') NOT IN (
+                    'unprotected_residual_position', 'startup_residual_position',
+                    'safety_flatten', 'process_shutdown', 'session_close'
+                  )
+                """,
+                (clean_since.isoformat(),),
+            ).fetchone()
+            clean_count = int(clean_row["count"] or 0)
+            if clean_count < self.settings.retrain_min_clean_episodes:
+                result = {
+                    "status": "skipped",
+                    "reason": "not enough clean completed execution episodes",
+                    "clean_episodes": clean_count,
+                    "minimum": self.settings.retrain_min_clean_episodes,
+                }
+                db.log_event("INFO", __name__, "model_retraining_skipped", result["reason"], result)
+                self._record_result(result)
+                return
             samples, labels, _ = build_training_dataset(db, self.settings.retrain_lookback_days)
             if len(samples) < self.settings.retrain_min_samples:
                 result = {

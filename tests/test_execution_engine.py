@@ -134,3 +134,16 @@ def test_partial_profit_submission_uses_two_independently_protected_tranches(tmp
     assert submission.entries[1].client_order_id.endswith("-RUN")
     assert submission.entries[1].plan.take_profit_price > submission.entries[0].plan.take_profit_price
     assert database.active_trade_episode_summary("GLD")["count"] == 2
+    episode_orders = database.conn.execute(
+        """
+        SELECT role, intent_type, strategy_path
+        FROM execution_episode_orders
+        WHERE episode_id = ?
+        ORDER BY role, order_key
+        """,
+        (submission.primary.client_order_id.rsplit("-TAKE", 1)[0],),
+    ).fetchall()
+    assert len(episode_orders) == 6
+    assert sum(row["role"] == "stop" for row in episode_orders) == 2
+    assert sum(row["role"] == "take_profit" for row in episode_orders) == 3
+    assert all(row["strategy_path"] == "minute" for row in episode_orders)
