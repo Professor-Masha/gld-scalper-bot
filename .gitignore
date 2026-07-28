@@ -1,0 +1,75 @@
+# Local secrets and machine-specific configuration
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Python environments and caches
+.venv/
+venv/
+.pip-cache/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# Raw or derived training/market data
+data/
+exports/
+logs/
+backups/
+reports/backtests/
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.csv
+*.tsv
+*.parquet
+*.feather
+*.arrow
+download_progress.json
+
+# Local model runtimes and third-party source archives
+OLLAMA/
+_ollama_models/
+_ollama_runtime/
+FINGPT/
+LocalLow/
+*.exe
+*.msi
+*.zip
+*.7z
+*.tar
+*.gz
+
+# Test and scratch output
+.pytest-tmp*/
+.pytest_tmp*/
+pytest-tmp*/
+pytest_tmp*/
+tmp_pytest*/
+test_artifacts/
+tmp/
+temp/
+
+# Runtime output
+*.log
+*.pid
+*.lock
+*.tmp
+*.bak
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini

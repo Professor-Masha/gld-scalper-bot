@@ -1,0 +1,18 @@
+#!/bin/sh
+set -eu
+
+forbidden_paths="$(git diff --cached --name-only --diff-filter=ACMR | grep -Ei '(^|/)(\.env($|\.)|data|exports|logs|backups|OLLAMA|_ollama_models|_ollama_runtime|\.venv)(/|$)|\.(db|sqlite3?|csv|tsv|parquet|feather|arrow|log|key|pem|p12|pfx)$' || true)"
+if [ -n "$forbidden_paths" ]; then
+  echo "Commit blocked: operational data, credentials, or local runtime files are staged:"
+  echo "$forbidden_paths"
+  exit 1
+fi
+
+staged_text="$(git diff --cached --no-ext-diff --unified=0 -- . ':!*.pkl' ':!*.joblib' ':!*.pt' ':!*.pth' ':!*.onnx' ':!*.pdf' ':!*.docx' || true)"
+candidate_secrets="$(printf '%s' "$staged_text" | grep -Eiv '(your[-_]|replace|placeholder|example|dummy|test[-_]|<[^>]+>)' || true)"
+if printf '%s' "$candidate_secrets" | grep -Eiq 'PK[A-Z0-9]{20,}|(FRED_API_KEY|GITHUB_TOKEN)[[:space:]]*=[[:space:]]*[A-Za-z0-9_/-]{20,}|ALPACA_SECRET_KEY[[:space:]]*=[[:space:]]*[A-Za-z0-9+/=_-]{30,}'; then
+  echo "Commit blocked: a likely API credential is present in staged content."
+  exit 1
+fi
+
+exit 0

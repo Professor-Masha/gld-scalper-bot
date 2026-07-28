@@ -1,0 +1,18 @@
+[Unit]
+Description=GLD Scalper Paper Trading Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/gld_scalper_bot
+EnvironmentFile=/opt/gld_scalper_bot/.env
+Environment=PYTHONPATH=/opt/gld_scalper_bot/src
+ExecStart=/opt/gld_scalper_bot/.venv/bin/python -m gld_scalper.main run-paper
+Restart=on-failure
+RestartSec=10
+User=ubuntu
+Group=ubuntu
+
+[Install]
+WantedBy=multi-user.target
