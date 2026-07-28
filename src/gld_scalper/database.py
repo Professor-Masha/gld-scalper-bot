@@ -14,6 +14,7 @@ from .utils.time_utils import ensure_utc, utc_iso, utc_now
 
 
 _SQLITE_WRITE_LOCK = threading.RLock()
+CURRENT_SCHEMA_MIGRATION = "20260728_execution_integrity_v1"
 
 
 class SerializedSQLiteConnection(sqlite3.Connection):
@@ -176,8 +177,66 @@ class Database:
         schema_path = Path(__file__).with_name("schema.sql")
         with sqlite_write_lock():
             self.conn.executescript(schema_path.read_text(encoding="utf-8"))
-            self._run_migrations()
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    migration_id TEXT PRIMARY KEY,
+                    applied_at TEXT NOT NULL
+                )
+                """
+            )
+            applied = self.conn.execute(
+                "SELECT 1 FROM schema_migrations WHERE migration_id = ?",
+                (CURRENT_SCHEMA_MIGRATION,),
+            ).fetchone()
+            schema_current = self._current_schema_present()
+            if applied is None or not schema_current:
+                if not schema_current:
+                    self._run_migrations()
+                self.conn.execute(
+                    """
+                    INSERT INTO schema_migrations(migration_id, applied_at) VALUES (?, ?)
+                    ON CONFLICT(migration_id) DO UPDATE SET applied_at=excluded.applied_at
+                    """,
+                    (CURRENT_SCHEMA_MIGRATION, utc_iso(utc_now())),
+                )
+            self._run_lightweight_repairs()
             self.conn.commit()
+
+    def _current_schema_present(self) -> bool:
+        required = {
+            "fills": {"playbook", "episode_id", "strategy_path"},
+            "orders": {"parent_order_id", "strategy_path", "playbook"},
+            "trading_journal": {"playbook", "strategy_path", "exploration_trade"},
+            "trade_outcomes": {"root_episode_id", "net_pnl_after_costs", "exploration_trade"},
+            "execution_episodes": {"strategy_path", "playbook", "close_reason"},
+            "execution_episode_orders": {
+                "parent_order_id",
+                "strategy_path",
+                "playbook",
+                "close_reason",
+            },
+            "model_versions": {"model_scope", "artifact_fingerprint"},
+            "outcome_labels": {"label_1m", "label_3m", "label_5m", "label_15m"},
+        }
+        for table, expected_columns in required.items():
+            columns = {
+                row["name"]
+                for row in self.conn.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+            if not expected_columns.issubset(columns):
+                return False
+        return True
+
+    def _run_lightweight_repairs(self) -> None:
+        self.conn.execute(
+            """
+            UPDATE orders
+            SET position_side = NULL
+            WHERE position_side IS NOT NULL
+              AND LOWER(COALESCE(raw_json, '')) LIKE '%to_close%'
+            """
+        )
 
     def _run_migrations(self) -> None:
         for column, definition in {

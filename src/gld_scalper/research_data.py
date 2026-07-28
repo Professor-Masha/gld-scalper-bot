@@ -4,6 +4,7 @@ import csv
 import hashlib
 import json
 import logging
+import threading
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -395,8 +396,18 @@ class ResearchDataScheduler:
         self.last_macro_series_at: datetime | None = None
         self.last_calendar_at: datetime | None = None
         self.last_feature_audit_at: datetime | None = None
+        self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+        self._pending_results: list[ResearchDataResult] = []
+        self._last_error: str | None = None
 
-    def maybe_collect(self, database: Database, now: datetime | None = None) -> list[ResearchDataResult]:
+    def maybe_collect(
+        self,
+        database: Database,
+        now: datetime | None = None,
+        *,
+        include_heavy: bool = True,
+    ) -> list[ResearchDataResult]:
         now = now or utc_now()
         collector = ResearchDataCollector(self.settings, database)
         results: list[ResearchDataResult] = []
@@ -409,7 +420,11 @@ class ResearchDataScheduler:
         if self._due(self.last_calendar_at, 24 * 60) and self.settings.enable_market_calendar_collection:
             results.append(collector.collect_market_calendar(start=(now - timedelta(days=5)).date(), end=(now + timedelta(days=10)).date()))
             self.last_calendar_at = now
-        if self._due(self.last_feature_audit_at, 5) and self.settings.enable_feature_audit_tables:
+        if (
+            include_heavy
+            and self._due(self.last_feature_audit_at, 5)
+            and self.settings.enable_feature_audit_tables
+        ):
             results.append(collector.audit_recent_features())
             results.append(collector.label_signal_outcomes(limit=self.settings.outcome_label_batch_size))
             results.append(collector.label_news_price_moves())
@@ -419,8 +434,89 @@ class ResearchDataScheduler:
             collector._record_run(result, start=now, end=now)
         return results
 
+    def poll(
+        self,
+        now: datetime | None = None,
+        *,
+        include_heavy: bool = True,
+    ) -> list[ResearchDataResult]:
+        """Return completed work and start the next due collection without blocking decisions."""
+        now = now or utc_now()
+        with self._lock:
+            completed = list(self._pending_results)
+            self._pending_results.clear()
+            if self._thread is not None and self._thread.is_alive():
+                return completed
+            if not self._has_due_work(now, include_heavy=include_heavy):
+                return completed
+            self._thread = threading.Thread(
+                target=self._run_background,
+                args=(now, include_heavy),
+                name="research-data-collector",
+                daemon=True,
+            )
+            self._thread.start()
+        return completed
+
+    def _has_due_work(self, now: datetime, *, include_heavy: bool) -> bool:
+        return any(
+            (
+                self.settings.enable_news_collection
+                and self._due_at(self.last_news_at, self.settings.news_collection_interval_minutes, now),
+                self.settings.enable_macro_series_collection
+                and self._due_at(
+                    self.last_macro_series_at,
+                    self.settings.macro_series_interval_hours * 60,
+                    now,
+                ),
+                self.settings.enable_market_calendar_collection
+                and self._due_at(self.last_calendar_at, 24 * 60, now),
+                include_heavy
+                and self.settings.enable_feature_audit_tables
+                and self._due_at(self.last_feature_audit_at, 5, now),
+            )
+        )
+
+    def stop(self, timeout: float = 5.0) -> bool:
+        with self._lock:
+            thread = self._thread
+        if thread is None:
+            return True
+        thread.join(timeout=max(0.0, timeout))
+        return not thread.is_alive()
+
+    def status(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "in_progress": self._thread is not None and self._thread.is_alive(),
+                "pending_results": len(self._pending_results),
+                "last_error": self._last_error,
+            }
+
+    def _run_background(self, now: datetime, include_heavy: bool) -> None:
+        database = Database(settings=self.settings)
+        try:
+            database.init_db()
+            results = self.maybe_collect(database, now, include_heavy=include_heavy)
+            with self._lock:
+                self._pending_results.extend(results)
+                self._last_error = None
+        except Exception as exc:  # pragma: no cover - external services and large local data
+            logger.exception("background research data collection failed: %s", exc)
+            with self._lock:
+                self._last_error = str(exc)
+                self._pending_results.append(
+                    ResearchDataResult("runtime", "scheduled_research", 0, "failed", str(exc))
+                )
+        finally:
+            database.close()
+
     def _due(self, last: datetime | None, minutes: int) -> bool:
         return last is None or utc_now() >= last + timedelta(minutes=minutes)
+
+    @staticmethod
+    def _due_at(last: datetime | None, minutes: int, now: datetime) -> bool:
+        return last is None or now >= last + timedelta(minutes=minutes)
 
 
 def news_response_to_records(response: Any) -> list[dict[str, Any]]:

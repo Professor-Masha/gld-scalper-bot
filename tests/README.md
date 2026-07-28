@@ -70,7 +70,7 @@ Return to the [project manual](../README.md).
 **Internal dependencies:** `gld_scalper.config`, `gld_scalper.database`, `gld_scalper.reports.csv_exporter`.
 
 #### `test_database.py`
-**Public interfaces:** `test_database_upsert_prevents_duplicate_bars`, `test_failed_execution_episode_records_terminal_close_reason`, `test_database_serializes_concurrent_thread_writers`, `test_sqlite_log_handler_formats_exception_traceback`, `test_existing_database_migrates_parent_order_column_before_index`, `test_existing_database_migrates_multi_horizon_outcome_columns_before_index`, `test_database_migration_repairs_close_legs_misclassified_as_active_episodes`, `test_fetch_latest_bars_returns_newest_in_ascending_order`, `test_clear_all_data_removes_collected_rows`, `test_trading_journal_is_reset_with_collected_data`, `test_order_block_and_options_intelligence_round_trip`.
+**Public interfaces:** `test_database_upsert_prevents_duplicate_bars`, `test_failed_execution_episode_records_terminal_close_reason`, `test_database_records_current_migration_and_skips_repeat_backfill`, `test_database_serializes_concurrent_thread_writers`, `test_sqlite_log_handler_formats_exception_traceback`, `test_existing_database_migrates_parent_order_column_before_index`, `test_existing_database_migrates_multi_horizon_outcome_columns_before_index`, `test_database_migration_repairs_close_legs_misclassified_as_active_episodes`, `test_fetch_latest_bars_returns_newest_in_ascending_order`, `test_clear_all_data_removes_collected_rows`, `test_trading_journal_is_reset_with_collected_data`, `test_order_block_and_options_intelligence_round_trip`.
 **Internal dependencies:** `gld_scalper.config`, `gld_scalper.database`, `gld_scalper.utils.logging_utils`.
 
 #### `test_ema_cross_strategy.py`

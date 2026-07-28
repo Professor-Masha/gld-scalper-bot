@@ -22,7 +22,10 @@ class HistoricalDataCollector:
 
     def startup_recovery(self) -> dict[str, int]:
         self.database.init_db()
-        return self.backfill(symbols=self.settings.all_symbols, days=90)
+        return self.backfill(
+            symbols=self.settings.all_symbols,
+            days=self.settings.startup_recovery_days,
+        )
 
     def backfill(self, *, symbols: list[str], days: int = 90) -> dict[str, int]:
         self.settings.validate_safety()

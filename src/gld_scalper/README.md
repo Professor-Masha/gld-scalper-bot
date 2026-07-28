@@ -85,7 +85,7 @@ Return to the [project manual](../../README.md).
 
 #### `database.py`
 **Public interfaces:** `SerializedSQLiteConnection`, `sqlite_write_lock`, `database_path_from_url`, `Database`.
-**Module constants:** `_SQLITE_WRITE_LOCK`, `DATA_TABLES`.
+**Module constants:** `_SQLITE_WRITE_LOCK`, `CURRENT_SCHEMA_MIGRATION`, `DATA_TABLES`.
 
 #### `ema_cross_strategy.py`
 **Public interfaces:** `EMACrossState`, `EMACrossEvent`, `EMACrossSelection`, `EMACrossEvaluation`, `evaluate_ema_cross_strategy`, `select_ema_cross_events`, `apply_ema_cross_paper_authority`, `resample_completed_session_bars`, `pine_dmi_adx`.

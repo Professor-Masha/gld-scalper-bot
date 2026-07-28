@@ -926,7 +926,10 @@ def run_paper_command(args: argparse.Namespace) -> None:
                 db.log_event("ERROR", __name__, "macro_context_failed", str(exc), {})
 
             try:
-                research_results = research_data_scheduler.maybe_collect(db, now)
+                research_results = research_data_scheduler.poll(
+                    now,
+                    include_heavy=market_session(now, extended_hours=False) != "regular",
+                )
                 if research_results:
                     logger.info(
                         "research data collection results=%s",
@@ -1732,6 +1735,11 @@ def run_paper_command(args: argparse.Namespace) -> None:
             options_runtime.stop()
         if stream_runtime is not None:
             stream_runtime.stop()
+        if not research_data_scheduler.stop(timeout=5):
+            logger.warning(
+                "background research collector did not finish before shutdown timeout",
+                extra={"event_type": "research_data_shutdown_timeout"},
+            )
         try:
             order_reconciler.sync(utc_now())
             performance_tracker.capture("shutdown", force=True)

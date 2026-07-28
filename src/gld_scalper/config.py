@@ -100,6 +100,7 @@ class Settings:
     max_consecutive_losses: int = 3
     max_holding_minutes: int = 15
     trade_timeframe: str = "1Min"
+    startup_recovery_days: int = 10
     confirm_timeframe_1: str = "5Min"
     confirm_timeframe_2: str = "15Min"
     enable_ema_cross_strategy: bool = True
@@ -632,6 +633,8 @@ class Settings:
             )
         if self.execution_residual_confirmation_delay_seconds < 0:
             raise RuntimeError("EXECUTION_RESIDUAL_CONFIRMATION_DELAY_SECONDS cannot be negative.")
+        if not 1 <= self.startup_recovery_days <= 90:
+            raise RuntimeError("STARTUP_RECOVERY_DAYS must be between 1 and 90.")
         if not 10 <= self.execution_entry_freeze_minutes_before_close <= 15:
             raise RuntimeError("EXECUTION_ENTRY_FREEZE_MINUTES_BEFORE_CLOSE must be between 10 and 15.")
         if not 1 <= self.execution_session_flatten_minutes_before_close <= self.execution_entry_freeze_minutes_before_close:
@@ -745,6 +748,7 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         max_consecutive_losses=_int_env("MAX_CONSECUTIVE_LOSSES", 3),
         max_holding_minutes=_int_env("MAX_HOLDING_MINUTES", 15),
         trade_timeframe=os.getenv("TRADE_TIMEFRAME", "1Min"),
+        startup_recovery_days=_int_env("STARTUP_RECOVERY_DAYS", 10),
         confirm_timeframe_1=os.getenv("CONFIRM_TIMEFRAME_1", "5Min"),
         confirm_timeframe_2=os.getenv("CONFIRM_TIMEFRAME_2", "15Min"),
         enable_ema_cross_strategy=_bool_env("ENABLE_EMA_CROSS_STRATEGY", True),

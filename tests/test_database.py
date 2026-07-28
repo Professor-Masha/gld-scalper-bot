@@ -57,6 +57,22 @@ def test_failed_execution_episode_records_terminal_close_reason(tmp_path):
     assert row["closed_at"] is not None
 
 
+def test_database_records_current_migration_and_skips_repeat_backfill(tmp_path, monkeypatch):
+    settings = Settings(database_url=f"sqlite:///{tmp_path / 'migration-marker.db'}")
+    db = Database(settings=settings)
+    db.init_db()
+    marker = db.conn.execute(
+        "SELECT migration_id FROM schema_migrations"
+    ).fetchone()
+    assert marker is not None
+
+    def unexpected_migration():
+        raise AssertionError("completed migration was run again")
+
+    monkeypatch.setattr(db, "_run_migrations", unexpected_migration)
+    db.init_db()
+
+
 def test_database_serializes_concurrent_thread_writers(tmp_path):
     db_path = tmp_path / "concurrent.db"
     settings = Settings(database_url=f"sqlite:///{db_path}")

@@ -1941,7 +1941,12 @@ Optional manual historical backfill:
 .\.venv\Scripts\python.exe -m gld_scalper.main backfill --symbols GLD IAU SLV GDX UUP TLT SPY QQQ --days 90
 ```
 
-The bot also performs startup recovery/backfill automatically when `run-paper` starts.
+The bot also performs startup recovery/backfill automatically when `run-paper`
+starts. `STARTUP_RECOVERY_DAYS=10` bounds this operational catch-up window; the
+separate historical database remains the source for multi-year training.
+Completed schema migrations are recorded in `schema_migrations`, so every
+runtime worker does not repeat historical backfills and repair queries while a
+live session is starting.
 
 ## Fresh Start Is Optional
 
@@ -2924,7 +2929,11 @@ exports/paper/historical/<dataset-name>/hourly/<export-run>/knowledge/
 
 ### Upgraded Research Collection Command
 
-During paper trading, the bot can collect slow research data without putting the LLM in the live order path:
+During paper trading, the bot can collect slow research data without putting the
+LLM in the live order path. Scheduled news/calendar collection runs on a
+background worker. Quote-heavy outcome, feature, and news-price linkage scans
+are deferred outside the regular session so they cannot delay the live decision
+thread:
 
 ```powershell
 .\.venv\Scripts\python.exe -m gld_scalper.main collect-research-data `
