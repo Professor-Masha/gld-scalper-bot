@@ -290,6 +290,8 @@ class PaperExplorationPolicy:
         )
 
     def _hard_block(self, features: dict, direction: str, *, learning_mode: bool) -> bool:
+        if features.get("decision_council_hard_block"):
+            return True
         spread = float(features.get("spread_pct") or 0.0)
         liquidity = float(features.get("liquidity_score") or 0.0)
         quote_age = _number_or_large(features.get("quote_age_seconds"))

@@ -86,6 +86,8 @@ FOLDERS = {
 HANDWRITTEN = {
     "config.py": "Typed environment configuration, defaults, validation, data-mode separation, and credential guards.",
     "database.py": "SQLite connection owner, schema migrations, transactional repositories, and episode/order/outcome persistence.",
+    "decision_council.py": "Fast deterministic data-health, microstructure, Bull/Bear, and risk council with auditable votes and hard blocks.",
+    "tradingagents_advisory.py": "Offline TradingAgents-style Ollama council, evidence contract, bounded advisory persistence, and expiry conversion.",
     "main.py": "Command-line composition root that wires settings, databases, clients, services, and commands.",
     "execution_engine.py": "Converts approved order plans into serialized, idempotent, protected broker intents.",
     "execution_safety.py": "Broker/database reconciliation, bracket grace, residual confirmation, circuit breakers, and safety flattening.",
@@ -119,6 +121,9 @@ def tracked_files() -> list[Path]:
             files.add(path.relative_to(ROOT))
     for path in (ROOT / "tools").glob("*.py"):
         files.add(path.relative_to(ROOT))
+    for folder in (ROOT / "src", ROOT / "tests"):
+        for path in folder.rglob("*.py"):
+            files.add(path.relative_to(ROOT))
     return sorted(files, key=lambda item: item.as_posix().lower())
 
 

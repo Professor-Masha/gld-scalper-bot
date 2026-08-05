@@ -15,8 +15,8 @@ Return to the [project manual](../../README.md).
 
 | File | Responsibility |
 |---|---|
-| [`decision-and-order-flow.jpg`](../../docs/architecture/decision-and-order-flow.jpg) | Rendered documentation image. |
-| [`runtime-architecture.jpg`](../../docs/architecture/runtime-architecture.jpg) | Rendered documentation image. |
+| [`decision-and-order-flow.jpg`](../../docs/architecture/decision-and-order-flow.jpg) | Decision council, playbook, exploration, safety, execution, and outcome flow. |
+| [`runtime-architecture.jpg`](../../docs/architecture/runtime-architecture.jpg) | Complete live/offline architecture, including deterministic council and isolated TradingAgents/Ollama research. |
 | [`training-validation-promotion.jpg`](../../docs/architecture/training-validation-promotion.jpg) | Rendered documentation image. |
 
 ## Linkage And Change Discipline

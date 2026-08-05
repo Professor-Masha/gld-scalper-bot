@@ -22,6 +22,7 @@ Return to the [project manual](../../README.md).
 | [`config.py`](../../src/gld_scalper/config.py) | Typed environment configuration, defaults, validation, data-mode separation, and credential guards. |
 | [`data_collector.py`](../../src/gld_scalper/data_collector.py) | Python module exposing `HistoricalDataCollector`. |
 | [`database.py`](../../src/gld_scalper/database.py) | SQLite connection owner, schema migrations, transactional repositories, and episode/order/outcome persistence. |
+| [`decision_council.py`](../../src/gld_scalper/decision_council.py) | Fast deterministic data-health, microstructure, Bull/Bear, and risk council with auditable votes and hard blocks. |
 | [`ema_cross_strategy.py`](../../src/gld_scalper/ema_cross_strategy.py) | Python module exposing `EMACrossState`, `EMACrossEvent`, `EMACrossSelection`, `EMACrossEvaluation`. |
 | [`entry_quality.py`](../../src/gld_scalper/entry_quality.py) | Python module exposing `EntryGateResult`, `time_of_day_profile`, `EntryQualityGate`, `EntryCooldownPolicy`. |
 | [`event_calendar.py`](../../src/gld_scalper/event_calendar.py) | Python module exposing `event_risk_features`. |
@@ -63,6 +64,7 @@ Return to the [project manual](../../README.md).
 | [`target_exposure.py`](../../src/gld_scalper/target_exposure.py) | Python module exposing `TargetExposure`, `target_exposure_from_signal`. |
 | [`technical_confluence.py`](../../src/gld_scalper/technical_confluence.py) | Python module exposing `FairValueGap`, `TechnicalSetup`, `analyze_technical_market`, `build_fibonacci_features`. |
 | [`trade_learning.py`](../../src/gld_scalper/trade_learning.py) | Python module exposing `TradeLearningAnalyzer`. |
+| [`tradingagents_advisory.py`](../../src/gld_scalper/tradingagents_advisory.py) | Offline TradingAgents-style Ollama council, evidence contract, bounded advisory persistence, and expiry conversion. |
 
 ## Python Interfaces, Variables, And Linkage
 
@@ -86,6 +88,10 @@ Return to the [project manual](../../README.md).
 #### `database.py`
 **Public interfaces:** `SerializedSQLiteConnection`, `sqlite_write_lock`, `database_path_from_url`, `Database`.
 **Module constants:** `_SQLITE_WRITE_LOCK`, `CURRENT_SCHEMA_MIGRATION`, `DATA_TABLES`.
+
+#### `decision_council.py`
+**Public interfaces:** `CouncilVote`, `DecisionCouncilState`, `DataHealthAgent`, `MicrostructureAgent`, `BullCaseAgent`, `BearCaseAgent`, `RiskCouncil`, `run_decision_council`.
+The council consumes one causal feature snapshot. It records specialist votes, compares Bull/Bear evidence, and emits a hard block when data health or deterministic risk requires `NO_TRADE`. It imports no Alpaca client and performs no network or LLM work.
 
 #### `ema_cross_strategy.py`
 **Public interfaces:** `EMACrossState`, `EMACrossEvent`, `EMACrossSelection`, `EMACrossEvaluation`, `evaluate_ema_cross_strategy`, `select_ema_cross_events`, `apply_ema_cross_paper_authority`, `resample_completed_session_bars`, `pine_dmi_adx`.
@@ -217,6 +223,10 @@ Return to the [project manual](../../README.md).
 
 #### `trade_learning.py`
 **Public interfaces:** `TradeLearningAnalyzer`.
+
+#### `tradingagents_advisory.py`
+**Public interfaces:** `TradingAgentsAdvisoryService`, `agent_advisory_to_features`.
+The service performs three offline Ollama stages: specialist reports, Bull/Bear debate, and risk/context management. It reads bounded SQLite evidence, validates and clamps the result, persists an expiring `agent_advisories` row, and exposes only a small live score/size adjustment. It deliberately has no broker dependency.
 
 The interface list is generated from public top-level classes/functions and uppercase module constants. Read type annotations and tests before changing semantics; private helpers are implementation details but can still participate in safety invariants.
 

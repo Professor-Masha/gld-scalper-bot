@@ -105,10 +105,23 @@ class StrategyEngine:
         score = self._add(score, reasons, bool(f.get("buildup_detected")) and f.get("buildup_side") == "resistance", 6, "buildup below resistance")
         score = self._add(score, reasons, _f(f.get("liquidity_score"), 0.5) >= 0.65, 4, "liquidity score healthy")
         score = self._add(score, reasons, f.get("agent_consensus") == "LONG", 5, "reasoning agents confirm long")
+        score = self._add(
+            score,
+            reasons,
+            f.get("decision_council_consensus") == "LONG" and not f.get("decision_council_hard_block"),
+            3,
+            "deterministic decision council confirms long",
+        )
         score = self._add(score, reasons, not (_lt(f, "tf15_ema_9", "tf15_ema_21") and _lt(f, "tf15_close", "tf15_vwap")), 5, "15m trend does not oppose")
         score = self._add(score, reasons, _f(f.get("UUP_roc")) <= 0.001, 3, "UUP not strongly rising")
         score = self._add(score, reasons, _f(f.get("IAU_roc")) >= -0.001 or _f(f.get("GDX_roc")) >= -0.001, 3, "gold context not negative")
         score = self._add(score, reasons, f.get("macro_bias") == "bullish_gold_environment", min(self.settings.macro_context_max_live_score_adjustment, 3.0), "macro context mildly supports long")
+        advisory_adjustment = clamp(
+            _f(f.get("tradingagents_advisory_score_adjustment")),
+            0.0,
+            self.settings.tradingagents_max_score_adjustment,
+        )
+        score = self._add(score, reasons, advisory_adjustment > 0, advisory_adjustment, "fresh TradingAgents advisory mildly supports long")
         score = self._add(score, reasons, f.get("order_block_retest_direction") == "bullish" and _f(f.get("order_block_strength")) >= 0.60, 6, "bullish order-block retest")
         score = self._add(score, reasons, f.get("order_block_bias") == "bullish" and _f(f.get("order_block_alignment")) >= 0.55, 3, "multi-timeframe order blocks support long")
         options_adjustment = clamp(_f(f.get("options_score_adjustment")), 0.0, self.settings.options_max_score_adjustment)
@@ -145,10 +158,23 @@ class StrategyEngine:
         score = self._add(score, reasons, bool(f.get("buildup_detected")) and f.get("buildup_side") == "support", 6, "buildup above support")
         score = self._add(score, reasons, _f(f.get("liquidity_score"), 0.5) >= 0.65, 4, "liquidity score healthy")
         score = self._add(score, reasons, f.get("agent_consensus") == "SHORT", 5, "reasoning agents confirm short")
+        score = self._add(
+            score,
+            reasons,
+            f.get("decision_council_consensus") == "SHORT" and not f.get("decision_council_hard_block"),
+            3,
+            "deterministic decision council confirms short",
+        )
         score = self._add(score, reasons, not (_gt(f, "tf15_ema_9", "tf15_ema_21") and _gt(f, "tf15_close", "tf15_vwap")), 5, "15m trend does not oppose")
         score = self._add(score, reasons, _f(f.get("UUP_roc")) >= -0.001, 3, "UUP confirms or neutral")
         score = self._add(score, reasons, bool(f.get("is_shortable", True)), 3, "GLD marked shortable")
         score = self._add(score, reasons, f.get("macro_bias") == "bearish_gold_environment", min(self.settings.macro_context_max_live_score_adjustment, 3.0), "macro context mildly supports short")
+        advisory_adjustment = clamp(
+            -_f(f.get("tradingagents_advisory_score_adjustment")),
+            0.0,
+            self.settings.tradingagents_max_score_adjustment,
+        )
+        score = self._add(score, reasons, advisory_adjustment > 0, advisory_adjustment, "fresh TradingAgents advisory mildly supports short")
         score = self._add(score, reasons, f.get("order_block_retest_direction") == "bearish" and _f(f.get("order_block_strength")) >= 0.60, 6, "bearish order-block retest")
         score = self._add(score, reasons, f.get("order_block_bias") == "bearish" and _f(f.get("order_block_alignment")) >= 0.55, 3, "multi-timeframe order blocks support short")
         options_adjustment = clamp(-_f(f.get("options_score_adjustment")), 0.0, self.settings.options_max_score_adjustment)
@@ -224,12 +250,24 @@ class StrategyEngine:
         if f.get("agent_consensus") == "NO_TRADE" and _f(f.get("agent_confidence")) >= 0.25:
             score += 15
             reasons.append("reasoning agents prefer no trade")
+        if f.get("decision_council_hard_block"):
+            score += 100
+            reasons.extend(str(item) for item in f.get("decision_council_block_reasons") or ["decision council hard block"])
+        elif f.get("decision_council_consensus") == "NO_TRADE" and _f(f.get("decision_council_confidence")) >= 0.60:
+            score += 12
+            reasons.append("deterministic decision council abstains")
         if f.get("macro_bias") == "event_risk_environment":
             score += 8
             reasons.append("macro event-risk environment")
         if _f(f.get("headline_event_risk")) > 0.75:
             score += 8
             reasons.append("headline event risk elevated")
+        if (
+            not f.get("tradingagents_advisory_stale", True)
+            and _f(f.get("tradingagents_advisory_event_risk")) >= 0.80
+        ):
+            score += 8
+            reasons.append("TradingAgents advisory reports elevated event risk")
         if f.get("event_risk_active"):
             score += 35
             reasons.append(str(f.get("event_risk_reason") or "scheduled event risk active"))

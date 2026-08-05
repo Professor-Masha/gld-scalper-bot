@@ -872,6 +872,37 @@ CREATE TABLE IF NOT EXISTS llm_reviews (
 
 CREATE INDEX IF NOT EXISTS idx_llm_reviews_timestamp_type ON llm_reviews(timestamp, review_type);
 
+CREATE TABLE IF NOT EXISTS agent_advisories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,
+    symbol TEXT NOT NULL DEFAULT 'GLD',
+    horizon TEXT NOT NULL DEFAULT 'hourly',
+    bias TEXT NOT NULL DEFAULT 'neutral',
+    confidence REAL NOT NULL DEFAULT 0,
+    abstain INTEGER NOT NULL DEFAULT 1,
+    event_risk REAL NOT NULL DEFAULT 0,
+    size_multiplier REAL NOT NULL DEFAULT 1,
+    summary TEXT,
+    bull_case TEXT,
+    bear_case TEXT,
+    risk_flags_json TEXT,
+    evidence_ids_json TEXT,
+    provider TEXT,
+    model TEXT,
+    source_fingerprint TEXT,
+    expires_at TEXT NOT NULL,
+    advisory_only INTEGER NOT NULL DEFAULT 1,
+    raw_response_json TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    CHECK (bias IN ('bullish', 'bearish', 'neutral', 'event_risk')),
+    CHECK (confidence >= 0 AND confidence <= 1),
+    CHECK (event_risk >= 0 AND event_risk <= 1),
+    CHECK (advisory_only = 1)
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_advisories_symbol_timestamp
+ON agent_advisories(symbol, timestamp DESC);
+
 CREATE TABLE IF NOT EXISTS llm_training_advice (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     timestamp TEXT NOT NULL,

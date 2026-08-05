@@ -14,7 +14,7 @@ from .utils.time_utils import ensure_utc, utc_iso, utc_now
 
 
 _SQLITE_WRITE_LOCK = threading.RLock()
-CURRENT_SCHEMA_MIGRATION = "20260728_execution_integrity_v1"
+CURRENT_SCHEMA_MIGRATION = "20260805_hybrid_agent_council_v1"
 
 
 class SerializedSQLiteConnection(sqlite3.Connection):
@@ -72,6 +72,7 @@ DATA_TABLES = [
     "knowledge_artifacts",
     "data_source_runs",
     "llm_reviews",
+    "agent_advisories",
     "llm_training_advice",
     "llm_signal_labels",
     "rl_experiments",
@@ -2893,6 +2894,61 @@ class Database:
                 ),
             )
         return int(cursor.lastrowid)
+
+    def insert_agent_advisory(self, record: Mapping[str, Any]) -> int:
+        with self.conn:
+            cursor = self.conn.execute(
+                """
+                INSERT INTO agent_advisories(
+                    timestamp, symbol, horizon, bias, confidence, abstain, event_risk,
+                    size_multiplier, summary, bull_case, bear_case, risk_flags_json,
+                    evidence_ids_json, provider, model, source_fingerprint, expires_at,
+                    advisory_only, raw_response_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    utc_iso(record["timestamp"]),
+                    str(record.get("symbol") or self.settings.bot_symbol).upper(),
+                    record.get("horizon", "hourly"),
+                    record.get("bias", "neutral"),
+                    record.get("confidence", 0.0),
+                    1 if record.get("abstain", True) else 0,
+                    record.get("event_risk", 0.0),
+                    record.get("size_multiplier", 1.0),
+                    record.get("summary"),
+                    record.get("bull_case"),
+                    record.get("bear_case"),
+                    _json(record.get("risk_flags")),
+                    _json(record.get("evidence_ids")),
+                    record.get("provider"),
+                    record.get("model"),
+                    record.get("source_fingerprint"),
+                    utc_iso(record["expires_at"]),
+                    1,
+                    _json(record.get("raw_response")),
+                    utc_iso(record.get("created_at", utc_now())),
+                ),
+            )
+        return int(cursor.lastrowid)
+
+    def get_latest_agent_advisory(
+        self,
+        symbol: str,
+        *,
+        max_age_minutes: int | None = None,
+        now: datetime | str | None = None,
+    ) -> dict[str, Any] | None:
+        params: list[Any] = [symbol.upper()]
+        where = "WHERE symbol = ?"
+        if max_age_minutes is not None:
+            cutoff = ensure_utc(now or utc_now()) - timedelta(minutes=max_age_minutes)
+            where += " AND timestamp >= ?"
+            params.append(utc_iso(cutoff))
+        row = self.conn.execute(
+            f"SELECT * FROM agent_advisories {where} ORDER BY timestamp DESC, id DESC LIMIT 1",
+            params,
+        ).fetchone()
+        return dict(row) if row else None
 
     def insert_llm_training_advice(self, record: Mapping[str, Any]) -> int:
         with self.conn:

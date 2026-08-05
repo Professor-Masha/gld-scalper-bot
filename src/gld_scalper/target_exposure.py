@@ -35,6 +35,14 @@ def target_exposure_from_signal(signal: MarketSignal, features: dict[str, Any]) 
     multiplier = 0.75 + quality * 0.35 + liquidity * 0.25 + macro_alignment * 0.10
     if bool(features.get("volatility_burst")) or _f(features.get("headline_event_risk")) > 0.65:
         multiplier *= 0.75
+    advisory_bias = str(features.get("tradingagents_advisory_bias") or "neutral")
+    advisory_aligned = (
+        (signal.decision == "LONG" and advisory_bias == "bullish")
+        or (signal.decision == "SHORT" and advisory_bias == "bearish")
+    )
+    advisory_multiplier = _f(features.get("tradingagents_advisory_size_multiplier"), 1.0)
+    if not features.get("tradingagents_advisory_stale", True):
+        multiplier *= advisory_multiplier if advisory_aligned else min(advisory_multiplier, 1.0)
     exposure = clamp(base * multiplier, 0.0, 0.07)
     if signal.decision == "SHORT":
         exposure *= -1.0

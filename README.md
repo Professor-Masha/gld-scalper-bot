@@ -22,7 +22,7 @@ This bot is paper trading only. It is not financial advice, and paper trading re
 8. Reads the latest SQLite bars, quote, and trade.
 9. Builds indicators, price action, microstructure, gold-volatility, macro, and market-context features.
 10. Runs the loaded ML model and stores its probabilities, confidence, model version, role, and abstention reason for every completed minute.
-11. Runs the reasoning agents and scores `LONG`, `SHORT`, and `NO_TRADE`, including only a small bounded ML adjustment in paper-learning mode.
+11. Runs the specialist reasoning agents, deterministic Bull/Bear decision council, and hard-block review before scoring `LONG`, `SHORT`, and `NO_TRADE`.
 12. Converts the decision into a target exposure suggestion.
 13. Checks broker account state, open positions, open orders, stale data, session, spread, and shortability.
 14. Submits one Alpaca paper bracket limit order only if every safety layer passes.
@@ -3339,6 +3339,62 @@ Run the deeper daily pass:
 
 The command refuses regular market hours and refuses any open execution episode. `--force` only bypasses the clock check for deliberate maintenance; it does not permit an open episode and does not enable broker access.
 
+### Hybrid TradingAgents Decision Council
+
+The bot uses the architecture of the separately cloned `TauricResearch/TradingAgents` project without placing its slow LLM graph in the order path. The source checkout defaults to `../TradingAgents` and its Git commit is recorded as advisory provenance when available. Apache-licensed TradingAgents code remains in its separate repository; this proprietary bot implements a compatible GLD-specific adapter and does not silently relicense that project.
+
+There are two intentionally different councils:
+
+1. **Live deterministic council:** `DataHealthAgent`, `MicrostructureAgent`, `BullCaseAgent`, `BearCaseAgent`, and `RiskCouncil` run as ordinary Python. They add an auditable vote record to every minute and fast decision. Data-health, scheduled-event, and rejected-playbook hard blocks have absolute priority, including over paper exploration.
+2. **Offline LLM research council:** Ollama performs specialist synthesis, Bull/Bear debate, and a final risk/context review. It receives SQLite evidence but no Alpaca client, API key, or order function. Its result is saved in `agent_advisories` with an expiry time and `advisory_only=1`.
+
+The live council first builds bullish and bearish evidence strengths from rule agents, playbook/technical alignment, classical ML probabilities, and scoped Transformer probabilities. If `H` is the hard-block flag and `D` is the Bull/Bear confidence difference, its authority is:
+
+```text
+H = true                                  => NO_TRADE
+H = false and abs(D) >= 0.12 and risk OK  => sign(D)
+otherwise                                 => NO_TRADE
+```
+
+The offline advisory can never create a trade. For advisory confidence `c`, sign `s` (`+1` bullish, `-1` bearish), and configured maximum `A`, its score contribution is bounded:
+
+```text
+score_adjustment = clip(s * c * A, -A, A), where A <= 5 score points
+```
+
+Position sizing is independently bounded around one:
+
+```text
+size_multiplier = clip(requested_multiplier, 1 - M, 1 + M), where M <= 0.10
+```
+
+The supplied paper profile uses `A=3` and `M=0.05`. Neutral, abstaining, weak, missing, or expired advice cannot increase exposure. Opposing advice can reduce exposure but cannot reverse a deterministic decision. Freshness, liquidity, reconciliation, order-rate, circuit-breaker, close-window, and account-risk controls remain authoritative.
+
+Configuration:
+
+```dotenv
+ENABLE_TRADINGAGENTS_ADVISORY=true
+TRADINGAGENTS_SOURCE_DIR=../TradingAgents
+TRADINGAGENTS_ADVISORY_MAX_AGE_MINUTES=120
+TRADINGAGENTS_MIN_CONFIDENCE=0.60
+TRADINGAGENTS_MAX_SCORE_ADJUSTMENT=3.0
+TRADINGAGENTS_MAX_SIZING_ADJUSTMENT=0.05
+ENABLE_LLM_LIVE_TRADING=false
+```
+
+Generate one advisory only after stopping `run-paper` and confirming there are no active execution episodes:
+
+```powershell
+cd "D:\ALPACA TEST\gld_scalper_bot"
+$env:LLM_PROVIDER="ollama"
+$env:LLM_BASE_URL="http://localhost:11434"
+$env:LLM_MODEL="llama3.2:1b"
+$env:ENABLE_LLM_LIVE_TRADING="false"
+.\.venv\Scripts\python.exe -m gld_scalper.main tradingagents-advisory --horizon hourly
+```
+
+The command refuses regular market hours and any active execution episode. `--force` may bypass only the clock check for deliberate maintenance after `run-paper` is stopped; it cannot bypass the active-episode check. The existing `llm-offline-cycle` also creates this advisory after its FinGPT news linkage and local RAG stages. During paper trading, `run-paper` only reads the latest row from SQLite. It never starts Ollama, waits for an LLM, imports TradingAgents into the event loop, or exposes broker methods to the research process.
+
 Do not run full FinGPT 7B or 13B fine-tuning on the 8 GB laptop. Use a cloud GPU if that later becomes a research requirement. The local source integration does not claim that `llama3.2:1b` has been converted into or fine-tuned as FinGPT. It uses FinGPT's financial workflow patterns around a small local model.
 
 ### New Audit And Export Data
@@ -3349,6 +3405,7 @@ The SQLite migration preserves existing paper data and adds the following audit 
 decision_executions
 model_champion_history
 llm_offline_cycles
+agent_advisories
 model_scope and fingerprint metadata in model_versions
 paper-performance and demotion fields in model_drift_reports
 price/spread linkage and trust fields in news_items

@@ -367,6 +367,12 @@ class Settings:
     fingpt_source_dir: str = "FINGPT/FinGPT-1.0.0/fingpt"
     llm_context_max_sizing_adjustment: float = 0.05
     llm_news_min_linked_fraction: float = 0.60
+    enable_tradingagents_advisory: bool = True
+    tradingagents_source_dir: str = "../TradingAgents"
+    tradingagents_advisory_max_age_minutes: int = 120
+    tradingagents_min_confidence: float = 0.60
+    tradingagents_max_score_adjustment: float = 3.0
+    tradingagents_max_sizing_adjustment: float = 0.05
     walk_forward_train_months: int = 12
     walk_forward_test_months: int = 3
     promotion_min_profit_factor: float = 1.20
@@ -688,6 +694,14 @@ class Settings:
             raise RuntimeError("LLM_CONTEXT_MAX_SIZING_ADJUSTMENT must be between 0 and 0.10.")
         if not 0.0 <= self.llm_news_min_linked_fraction <= 1.0:
             raise RuntimeError("LLM_NEWS_MIN_LINKED_FRACTION must be between 0 and 1.")
+        if self.tradingagents_advisory_max_age_minutes < 1:
+            raise RuntimeError("TRADINGAGENTS_ADVISORY_MAX_AGE_MINUTES must be positive.")
+        if not 0.0 <= self.tradingagents_min_confidence <= 1.0:
+            raise RuntimeError("TRADINGAGENTS_MIN_CONFIDENCE must be between 0 and 1.")
+        if not 0.0 <= self.tradingagents_max_score_adjustment <= 5.0:
+            raise RuntimeError("TRADINGAGENTS_MAX_SCORE_ADJUSTMENT must be between 0 and 5.")
+        if not 0.0 <= self.tradingagents_max_sizing_adjustment <= 0.10:
+            raise RuntimeError("TRADINGAGENTS_MAX_SIZING_ADJUSTMENT must be between 0 and 0.10.")
         if min(self.promotion_min_paper_trade_count, self.promotion_min_regime_count, self.drift_min_predictions, self.drift_min_paper_outcomes) < 1:
             raise RuntimeError("ML promotion and drift sample thresholds must be positive.")
         if not 0.0 < self.drift_demotion_score <= 1.0:
@@ -988,6 +1002,12 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         fingpt_source_dir=os.getenv("FINGPT_SOURCE_DIR", "FINGPT/FinGPT-1.0.0/fingpt"),
         llm_context_max_sizing_adjustment=_float_env("LLM_CONTEXT_MAX_SIZING_ADJUSTMENT", 0.05),
         llm_news_min_linked_fraction=_float_env("LLM_NEWS_MIN_LINKED_FRACTION", 0.60),
+        enable_tradingagents_advisory=_bool_env("ENABLE_TRADINGAGENTS_ADVISORY", True),
+        tradingagents_source_dir=os.getenv("TRADINGAGENTS_SOURCE_DIR", "../TradingAgents"),
+        tradingagents_advisory_max_age_minutes=_int_env("TRADINGAGENTS_ADVISORY_MAX_AGE_MINUTES", 120),
+        tradingagents_min_confidence=_float_env("TRADINGAGENTS_MIN_CONFIDENCE", 0.60),
+        tradingagents_max_score_adjustment=_float_env("TRADINGAGENTS_MAX_SCORE_ADJUSTMENT", 3.0),
+        tradingagents_max_sizing_adjustment=_float_env("TRADINGAGENTS_MAX_SIZING_ADJUSTMENT", 0.05),
         enable_hourly_csv_export=_bool_env("ENABLE_HOURLY_CSV_EXPORT", True),
         csv_export_interval_minutes=_int_env("CSV_EXPORT_INTERVAL_MINUTES", 60),
         csv_export_dir=os.getenv("CSV_EXPORT_DIR", default_csv_export_dir),

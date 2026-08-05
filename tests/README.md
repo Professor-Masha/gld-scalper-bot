@@ -25,6 +25,7 @@ Return to the [project manual](../README.md).
 | [`test_execution_safety.py`](../tests/test_execution_safety.py) | Regression tests for execution safety. |
 | [`test_fast_scalp.py`](../tests/test_fast_scalp.py) | Regression tests for fast scalp. |
 | [`test_feature_compatibility.py`](../tests/test_feature_compatibility.py) | Regression tests for feature compatibility. |
+| [`test_hybrid_agent_council.py`](../tests/test_hybrid_agent_council.py) | Regression tests for deterministic council authority, bounded advisory persistence, and expiry. |
 | [`test_indicators.py`](../tests/test_indicators.py) | Regression tests for indicators. |
 | [`test_llm_analysis.py`](../tests/test_llm_analysis.py) | Regression tests for llm analysis. |
 | [`test_macro_context.py`](../tests/test_macro_context.py) | Regression tests for macro context. |
@@ -92,6 +93,10 @@ Return to the [project manual](../README.md).
 #### `test_feature_compatibility.py`
 **Public interfaces:** `test_live_archive_features_match_training_formulas`, `test_live_snapshot_includes_model_quote_depth_inputs`.
 **Internal dependencies:** `gld_scalper.feature_engine`, `gld_scalper.ml.archive_dataset`.
+
+#### `test_hybrid_agent_council.py`
+**Public interfaces:** `ScriptedClient`, `test_decision_council_builds_auditable_long_consensus`, `test_decision_council_gives_stale_data_absolute_priority`, `test_tradingagents_advisory_is_bounded_persisted_and_expires`.
+**Internal dependencies:** `gld_scalper.config`, `gld_scalper.database`, `gld_scalper.decision_council`, `gld_scalper.tradingagents_advisory`.
 
 #### `test_indicators.py`
 **Public interfaces:** `test_ema_calculation`, `test_rsi_calculation_on_uptrend`, `test_atr_calculation`.

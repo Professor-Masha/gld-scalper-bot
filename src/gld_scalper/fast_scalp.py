@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from .alpaca_clients import get_trading_client
 from .config import Settings, load_settings
+from .decision_council import run_decision_council
 from .concurrent_trading import populate_concurrent_risk_state
 from .database import Database
 from .entry_quality import EntryCooldownPolicy, EntryQualityGate, time_of_day_profile
@@ -129,6 +130,14 @@ class FastScalpEngine:
             "proper_break",
             "false_break",
             "playbook_allowed",
+            "tradingagents_advisory_available",
+            "tradingagents_advisory_stale",
+            "tradingagents_advisory_bias",
+            "tradingagents_advisory_confidence",
+            "tradingagents_advisory_abstain",
+            "tradingagents_advisory_event_risk",
+            "tradingagents_advisory_score_adjustment",
+            "tradingagents_advisory_size_multiplier",
         }
         with self._lock:
             self.context_features.update({key: features.get(key) for key in keep if key in features})
@@ -567,10 +576,20 @@ class FastScalpRuntime:
         if transformer_prediction is not None:
             apply_transformer_to_fast_decision(decision, transformer_prediction, self.settings)
         _apply_paper_ml_advice(decision, ml_result, predictor, self.settings)
+        council = run_decision_council(decision.features, self.settings, now=decision.timestamp)
+        decision.features.update(council.as_features())
+        if council.hard_block and decision.decision != "NO_TRADE":
+            decision.decision = "NO_TRADE"
+            decision.allowed = False
+            decision.reason = "; ".join(council.block_reasons)
         decision = (paper_exploration or PaperExplorationPolicy(self.settings, database)).maybe_select_fast(
             decision,
             now=decision.timestamp,
         )
+        if council.hard_block:
+            decision.decision = "NO_TRADE"
+            decision.allowed = False
+            decision.reason = "; ".join(council.block_reasons)
         predicted_action = {"long_good": "LONG", "short_good": "SHORT"}.get(ml_result.predicted_direction)
         decision.features["ml_direction_aligned"] = predicted_action == decision.decision
         self._persist_fast_decision(persistence, decision, ml_result, None, None)

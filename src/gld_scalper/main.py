@@ -16,6 +16,7 @@ from .config import PROJECT_ROOT, load_settings, parse_symbols
 from .concurrent_trading import populate_concurrent_risk_state
 from .data_collector import HistoricalDataCollector
 from .database import Database
+from .decision_council import run_decision_council
 from .ema_cross_strategy import (
     apply_ema_cross_paper_authority,
     evaluate_ema_cross_strategy,
@@ -76,6 +77,7 @@ from .strategy_engine import StrategyEngine
 from .stream_collector import LiveDataStreamRuntime
 from .target_exposure import target_exposure_from_signal
 from .technical_confluence import analyze_technical_market
+from .tradingagents_advisory import TradingAgentsAdvisoryService, agent_advisory_to_features
 from .utils.logging_utils import configure_logging
 from .utils.time_utils import ensure_utc, market_session, parse_date, seconds_until_next_minute, utc_now
 
@@ -553,6 +555,16 @@ def llm_offline_cycle_command(args: argparse.Namespace) -> None:
     print(json.dumps(result, indent=2, sort_keys=True, default=str))
 
 
+def tradingagents_advisory_command(args: argparse.Namespace) -> None:
+    settings = load_settings()
+    require_ollama_enabled(settings)
+    db = Database(settings=settings)
+    db.init_db()
+    configure_logging(settings.log_level, database=db)
+    result = TradingAgentsAdvisoryService(settings, db).run(horizon=args.horizon, force=args.force)
+    print(json.dumps(result, indent=2, sort_keys=True, default=str))
+
+
 def train_exit_model_command(args: argparse.Namespace) -> None:
     settings = load_settings()
     db = Database(settings=settings)
@@ -649,6 +661,10 @@ def status_command(args: argparse.Namespace) -> None:
     predictor = Predictor(db)
     latest = db.get_latest_database_timestamp(settings.bot_symbol)
     macro = db.get_latest_macro_context(max_age_minutes=settings.macro_context_max_age_minutes)
+    agent_advisory = db.get_latest_agent_advisory(
+        settings.bot_symbol,
+        max_age_minutes=settings.tradingagents_advisory_max_age_minutes,
+    )
     options = db.get_latest_options_intelligence()
     champions_by_scope = {
         str(row["model_scope"] or "entry:all"): str(row["model_version"])
@@ -670,6 +686,11 @@ def status_command(args: argparse.Namespace) -> None:
         "champions_by_scope": champions_by_scope,
         "latest_macro_bias": macro.get("macro_bias") if macro else None,
         "latest_macro_context_timestamp": macro.get("timestamp") if macro else None,
+        "tradingagents_advisory_enabled": settings.enable_tradingagents_advisory,
+        "latest_tradingagents_advisory_bias": agent_advisory.get("bias") if agent_advisory else None,
+        "latest_tradingagents_advisory_confidence": agent_advisory.get("confidence") if agent_advisory else None,
+        "latest_tradingagents_advisory_timestamp": agent_advisory.get("timestamp") if agent_advisory else None,
+        "latest_tradingagents_advisory_expires_at": agent_advisory.get("expires_at") if agent_advisory else None,
         "latest_options_bias": options.get("options_bias") if options else None,
         "latest_options_intelligence_timestamp": options.get("timestamp") if options else None,
         "options_intelligence_enabled": settings.enable_options_intelligence,
@@ -1140,6 +1161,16 @@ def run_paper_command(args: argparse.Namespace) -> None:
             )
             macro_context = db.get_latest_macro_context(max_age_minutes=settings.macro_context_max_age_minutes, now=now)
             features.update(macro_context_to_features(macro_context))
+            agent_advisory = (
+                db.get_latest_agent_advisory(
+                    settings.bot_symbol,
+                    max_age_minutes=settings.tradingagents_advisory_max_age_minutes,
+                    now=now,
+                )
+                if settings.enable_tradingagents_advisory
+                else None
+            )
+            features.update(agent_advisory_to_features(agent_advisory, settings, now=now))
             features.update(event_risk_features(db, settings, now))
             features.update(build_gold_event_impact(features))
             technical_features, fair_value_gaps = analyze_technical_market(
@@ -1310,6 +1341,7 @@ def run_paper_command(args: argparse.Namespace) -> None:
                 }
             )
             features.update(combine_reasoning(features))
+            features.update(run_decision_council(features, settings, now=now).as_features())
             signal = strategy.evaluate(features, symbol=settings.bot_symbol, now=now, has_champion_model=predictor.has_champion)
             signal.model_version = ml_result.model_version
             signal = apply_transformer_to_signal(
@@ -2177,6 +2209,18 @@ def build_parser() -> argparse.ArgumentParser:
     llm_offline.add_argument("--cadence", choices=["hourly", "daily"], default="daily")
     llm_offline.add_argument("--force", action="store_true", help="Allow a maintenance run during market hours only when no episodes are open")
     llm_offline.set_defaults(func=llm_offline_cycle_command)
+
+    tradingagents_advisory = subparsers.add_parser(
+        "tradingagents-advisory",
+        help="Run the offline TradingAgents-style GLD research council and save a bounded advisory",
+    )
+    tradingagents_advisory.add_argument("--horizon", choices=["hourly", "daily"], default="hourly")
+    tradingagents_advisory.add_argument(
+        "--force",
+        action="store_true",
+        help="Allow deliberate market-hours research only when no execution episode is active",
+    )
+    tradingagents_advisory.set_defaults(func=tradingagents_advisory_command)
 
     train_exit = subparsers.add_parser("train-exit-model", help="Train a separate advisory exit model after enough trustworthy outcomes exist")
     train_exit.add_argument("--strategy-path", choices=["all", "fast", "minute"], default="all")

@@ -13,6 +13,7 @@ from .database import Database
 from .llm_analysis import LLMAnalysisService, require_ollama_enabled
 from .offline_review import LocalRAGCoach
 from .research_data import ResearchDataCollector
+from .tradingagents_advisory import TradingAgentsAdvisoryService
 from .utils.time_utils import market_session, utc_now
 
 
@@ -79,6 +80,14 @@ class FinGPTOfflineResearch:
                     query="Review GLD trades, missed opportunities, news reactions, exit quality, and model weaknesses.",
                     limit=40 if cadence == "hourly" else 100,
                 )
+                agent_advisory = TradingAgentsAdvisoryService(
+                    self.settings,
+                    self.database,
+                    client=service.client,
+                ).run(
+                    horizon="hourly" if cadence == "hourly" else "daily",
+                    force=force,
+                )
                 outputs: dict[str, Any] = {
                     "price_linking": {
                         "status": price_link_result.status,
@@ -88,6 +97,7 @@ class FinGPTOfflineResearch:
                     "news_classifications": news_labels,
                     "macro_context": macro,
                     "rag_review": rag,
+                    "tradingagents_advisory": agent_advisory,
                     "fingpt_source": {"root": str(profile.root), "files": profile.files},
                 }
                 if cadence == "daily":
