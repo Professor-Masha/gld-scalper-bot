@@ -564,6 +564,8 @@ Every queued operation has an idempotency key. Repeating the same entry callback
 
 The supervisor repeats this check every `EXECUTION_RECONCILE_INTERVAL_SECONDS`, which defaults to three seconds. A broker position with no database episode, no protective stop, or unknown orders is treated as residual exposure. With the default `EXECUTION_FLATTEN_RESIDUAL_POSITIONS=true`, the bot cancels GLD orders, waits for cancellation acknowledgements, closes GLD, and verifies that both the broker position and open-order list are empty before entries are released. It never tries to reconstruct an imaginary stop from incomplete local information.
 
+The inverse mismatch is handled just as carefully. If SQLite contains an active episode while Alpaca reports no GLD position and no open GLD order, startup waits `EXECUTION_RESIDUAL_CONFIRMATION_DELAY_SECONDS` and reads the broker a second time. Only when both independent reads confirm that Alpaca is flat does the bot close the stale local episode with `close_reason=broker_flat_startup_reconciliation`, record an `ORPHAN_EPISODES_CLOSED` safety event, and reconcile again before releasing the entry freeze. This grace period prevents a newly submitted bracket and its parent/child acknowledgements from being mistaken for an orphan.
+
 An opposite-direction signal uses a controlled direction switch. The bot freezes entries, cancels existing GLD orders, closes the current net position, polls Alpaca until flat, reconciles SQLite, waits the configured cooldown, and only then permits the opposite entry. GLD remains one net Alpaca position; this procedure does not pretend that independent long and short holdings can coexist.
 
 The regular-session shutdown has two boundaries:

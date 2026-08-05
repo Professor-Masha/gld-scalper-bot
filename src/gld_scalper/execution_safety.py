@@ -333,6 +333,7 @@ class ExecutionSafetySupervisor:
         self.state.freeze("startup_reconciliation")
         self.coordinator.start()
         snapshot = self.reconcile(startup=True, record_failure=False)
+        snapshot = self._close_orphan_database_episodes_after_flat_confirmation(snapshot)
         confirmed = self._confirm_residual_snapshot(snapshot, startup=True)
         if confirmed is not None:
             if not self.settings.execution_flatten_residual_positions:
@@ -346,6 +347,43 @@ class ExecutionSafetySupervisor:
         self._apply_session_clock(snapshot)
         self._start_thread()
         return snapshot
+
+    def _close_orphan_database_episodes_after_flat_confirmation(
+        self,
+        snapshot: SafetySnapshot,
+    ) -> SafetySnapshot:
+        """Close stale local episodes only after the broker is confirmed flat twice."""
+        if (
+            snapshot.database_episode_count <= 0
+            or snapshot.broker_position_qty != 0
+            or snapshot.broker_open_order_count != 0
+        ):
+            return snapshot
+        time.sleep(self.settings.execution_residual_confirmation_delay_seconds)
+        position, open_orders, _clock = self._load_broker_state()
+        if _float(_field(position, "qty")) != 0 or open_orders:
+            return self.reconcile(startup=True, record_failure=False)
+        database = Database(settings=self.settings)
+        try:
+            database.close_symbol_execution_state(
+                self.settings.bot_symbol,
+                "broker_flat_startup_reconciliation",
+            )
+            database.insert_execution_safety_event(
+                {
+                    **self.state.snapshot(),
+                    "event_type": "ORPHAN_EPISODES_CLOSED",
+                    "severity": "WARNING",
+                    "reason": "broker flat on two startup checks",
+                    "broker_position_qty": 0,
+                    "broker_open_order_count": 0,
+                    "database_episode_count": snapshot.database_episode_count,
+                    "details": {"second_broker_check": True},
+                }
+            )
+        finally:
+            database.close()
+        return self.reconcile(startup=True, record_failure=False)
 
     def _start_thread(self) -> None:
         if self._thread is not None and self._thread.is_alive():

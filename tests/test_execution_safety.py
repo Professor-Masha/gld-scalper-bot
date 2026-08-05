@@ -138,6 +138,39 @@ def test_startup_flattens_unprotected_residual_position_before_entries(tmp_path)
     coordinator.stop()
 
 
+def test_startup_closes_orphan_database_episode_after_two_flat_broker_checks(tmp_path):
+    settings = _settings(tmp_path)
+    db = Database(settings=settings)
+    db.init_db()
+    db.create_execution_episode(
+        {
+            "episode_id": "GLD-ORPHAN-SHORT",
+            "symbol": "GLD",
+            "direction": "SHORT",
+            "source": "minute",
+            "planned_qty": 2,
+        }
+    )
+    client = FakeSafetyClient()
+    coordinator = OrderIntentCoordinator(settings, client)
+    supervisor = ExecutionSafetySupervisor(settings, client, coordinator)
+
+    snapshot = supervisor.startup()
+
+    assert snapshot.consistent
+    assert snapshot.database_episode_count == 0
+    assert db.fetch_active_execution_episodes("GLD") == []
+    episode = db.conn.execute(
+        "SELECT status, close_reason FROM execution_episodes WHERE episode_id = ?",
+        ("GLD-ORPHAN-SHORT",),
+    ).fetchone()
+    assert episode["status"] == "flattened"
+    assert episode["close_reason"] == "broker_flat_startup_reconciliation"
+    assert client.close_calls == []
+    supervisor.stop(flatten=False)
+    coordinator.stop()
+
+
 def test_new_bracket_position_gets_grace_and_second_check_can_clear_residual(tmp_path):
     settings = _settings(tmp_path)
     db = Database(settings=settings)
