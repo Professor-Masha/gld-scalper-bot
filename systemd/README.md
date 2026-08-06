@@ -17,6 +17,40 @@ Return to the [project manual](../README.md).
 |---|---|
 | [`gld-scalper.service`](../systemd/gld-scalper.service) | systemd service unit template. |
 
+## Programmer Guide: Linux Process Lifecycle
+
+`gld-scalper.service` is a process supervisor definition, not a second bot
+implementation. Its important connections are:
+
+```text
+systemd
+ -> WorkingDirectory=/opt/gld_scalper_bot
+ -> EnvironmentFile=/opt/gld_scalper_bot/.env
+ -> PYTHONPATH=/opt/gld_scalper_bot/src
+ -> .venv/bin/python -m gld_scalper.main run-paper
+ -> main.run_paper_command()
+```
+
+`After` and `Wants` request network readiness before startup. `Type=simple`
+means systemd supervises the Python process directly. `Restart=on-failure`
+restarts unexpected nonzero exits after the configured delay; an ordinary clean
+stop is not treated as a crash.
+
+The service runs as the configured non-root user, so that user must be able to
+read `.env`, execute the virtual environment, and write the paper database,
+logs, exports, and model-runtime paths. Keep `.env` permissions restrictive and
+never embed credentials in the unit file.
+
+Stopping the unit sends a termination signal to Python. The bot's own shutdown
+path must still freeze entries, stop workers, reconcile, and confirm flattening.
+Do not use an aggressive systemd timeout that kills Python before that bounded
+shutdown can complete.
+
+When changing installation paths, update `WorkingDirectory`, `EnvironmentFile`,
+`PYTHONPATH`, and `ExecStart` together. Validate the rendered unit with
+`systemd-analyze verify`, reload with `systemctl daemon-reload`, then inspect
+`journalctl -u gld-scalper` after a controlled paper-only start and stop.
+
 ## Linkage And Change Discipline
 
 1. Start at the composition root in `src/gld_scalper/main.py` or the invoking tool/script.

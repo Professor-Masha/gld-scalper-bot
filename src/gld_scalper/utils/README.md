@@ -39,6 +39,50 @@ Return to the [project manual](../../../README.md).
 
 The interface list is generated from public top-level classes/functions and uppercase module constants. Read type annotations and tests before changing semantics; private helpers are implementation details but can still participate in safety invariants.
 
+## Programmer Guide: Leaf Dependencies
+
+Utilities are deliberately small leaf modules. Higher layers may import them;
+utilities should rarely import higher layers. The one notable infrastructure
+link is `logging_utils.py` using the database write lock for SQLite logging.
+
+### Time Is A Domain Rule
+
+`time_utils.py` normalizes external timestamps with `ensure_utc()` and provides
+New York market-session calculations. Alpaca timestamps, SQLite values, labels,
+and model sequence indexes must be timezone-aware. Do not compare naive local
+datetime values with UTC or assume Nairobi time is the exchange session.
+
+`seconds_until_next_minute()` is used by the minute loop; `market_session()`,
+`minutes_since_open()`, and `minutes_before_close()` affect entries, event
+profiles, retraining windows, and shutdown management. A time-helper change can
+therefore alter trading behavior and needs focused tests around daylight-saving
+transitions, holidays, and boundaries.
+
+### Numerical Guardrails
+
+`math_utils.py` centralizes `safe_div`, `clamp`, and percentage change behavior.
+These functions define how missing denominators and bounded scores behave across
+features, risk, reports, and ML. Keep their units explicit: a decimal return of
+`0.001` means `0.1%`, not `1%`.
+
+### Retry And Logging
+
+`retry_utils.py` is for bounded idempotent operations. Do not wrap order
+submission in a generic retry unless idempotency is proven by the order
+coordinator and client order ID.
+
+`logging_utils.py` configures console/file/SQLite handlers. Structured
+`event_type` and context fields are operational data used in audits. Never log
+API keys, authorization headers, full secrets, or unrestricted provider
+responses.
+
+### Adding A Utility
+
+Create a utility only when behavior is small, domain-neutral, reused, and easy
+to test independently. Trading concepts such as stop geometry, liquidity, or
+playbook scoring belong in their domain module even if they are mathematically
+short.
+
 ## Linkage And Change Discipline
 
 1. Start at the composition root in `src/gld_scalper/main.py` or the invoking tool/script.

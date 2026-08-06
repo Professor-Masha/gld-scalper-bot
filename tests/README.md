@@ -205,6 +205,104 @@ Return to the [project manual](../README.md).
 
 The interface list is generated from public top-level classes/functions and uppercase module constants. Read type annotations and tests before changing semantics; private helpers are implementation details but can still participate in safety invariants.
 
+## Programmer Guide: How The Tests Describe The Bot
+
+The tests are executable architecture documentation. Most construct `Settings`
+and a temporary SQLite `Database`, call one public service directly, and assert
+both returned behavior and durable records. External broker, stream, and LLM
+boundaries use small fakes so tests do not place orders or consume API quota.
+
+### Test Layers
+
+| Layer | Typical files | What a failure means |
+|---|---|---|
+| Pure calculations | `test_indicators.py`, `test_price_action.py`, `test_market_quality_features.py` | Formula, units, causality, or classification changed |
+| Strategy/risk | `test_strategy_engine.py`, `test_risk_engine.py`, `test_fast_scalp.py` | Eligibility, scoring, or hard-block behavior changed |
+| Persistence/learning | `test_database.py`, `test_outcome_labeler.py`, `test_trade_learning.py` | Schema, joins, episode grain, or labels changed |
+| Broker execution | `test_execution_engine.py`, `test_execution_safety.py`, `test_order_reconciler.py`, `test_position_manager.py` | Idempotency, protection, reconciliation, or closure changed |
+| ML lifecycle | `test_ml_upgrade.py`, `test_continual_training.py`, `test_transformer_upgrade.py` | Feature profile, evaluation, promotion, resume, or inference changed |
+| Offline research | `test_llm_analysis.py`, `test_kimi_provider.py`, `test_hybrid_agent_council.py` | Provider safety, JSON validation, advisory bounds, or persistence changed |
+| End-to-end policy phases | `test_phase2_phase3.py`, `test_phase4_phase7.py` | A cross-module operating contract changed |
+
+### Fixture Pattern
+
+A common test follows this sequence:
+
+```python
+settings = Settings(database_url=f"sqlite:///{tmp_path / 'data' / 'paper' / 'test.db'}")
+database = Database(settings=settings)
+database.init_db()
+
+# Arrange causal input or fake broker state.
+# Call one public service.
+# Assert returned decision and SQLite audit state.
+```
+
+Temporary databases isolate tests and exercise real migrations. Tests using
+`tmp_path` should not point inside the repository's production `data/` tree.
+Network-facing fakes should implement only the SDK methods required by the unit
+under test and retain submitted calls for assertions.
+
+### Safety Tests Are Invariants
+
+Execution tests protect more than current output. They encode invariants:
+
+- one logical intent cannot create duplicate entries;
+- every open position must have recognized protection after its grace period;
+- mixed-direction episodes are rejected or switched through a flatten sequence;
+- stale data and circuit breakers dominate model or strategy confidence;
+- an exit request is not a closed episode until fills reconcile;
+- parent/child bracket fills aggregate into one root outcome;
+- shutdown and consistency checks cannot silently claim a flat account.
+
+If a requested behavior makes one of these tests fail, first decide whether the
+invariant is intentionally changing. Do not merely weaken the assertion.
+
+### ML Tests And Leakage
+
+ML tests verify chronological splits, purge gaps, class sufficiency, cost-aware
+labels, exact feature profiles, actual candidate evaluation, immutable version
+history, drift demotion, and rollback. Transformer tests additionally verify
+causal masks, aligned sequence artifacts, independent scopes, asynchronous
+fallback, baseline comparison, and paper evidence.
+
+A test model may be tiny or deterministic to keep the suite fast. That does not
+mean production promotion can omit full holdout, walk-forward, after-cost, and
+paper evaluation.
+
+### Running Tests While Learning The Code
+
+Run the narrowest file while studying a module:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q tests\test_risk_engine.py
+```
+
+Run one named behavior while stepping through it:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q `
+  tests\test_execution_safety.py::test_coordinator_deduplicates_entry_by_client_order_id
+```
+
+Then run the complete suite:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+On a Windows machine with an inaccessible global pytest temp directory, pass a
+writable `--basetemp` outside the project root. Keeping it outside the project
+also avoids triggering the intentional database paper/live path safety check.
+
+### Adding A Regression Test
+
+Name the test after observable behavior, arrange the smallest causal evidence,
+call a public boundary, and assert the decision plus its audit record. Add tests
+for the accepted path, rejection path, missing/stale data, duplicated event, and
+restart/reconciliation path when relevant. Update this README when a new test
+file or subsystem contract is added.
+
 ## Linkage And Change Discipline
 
 1. Start at the composition root in `src/gld_scalper/main.py` or the invoking tool/script.

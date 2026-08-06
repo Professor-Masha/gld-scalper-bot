@@ -21,6 +21,29 @@ Return to the [project manual](../README.md).
 | [`run_paper.sh`](../scripts/run_paper.sh) | POSIX shell operations entry point. |
 | [`train_model.sh`](../scripts/train_model.sh) | POSIX shell operations entry point. |
 
+## Programmer Guide: Thin Operational Wrappers
+
+Scripts in this folder are intentionally thin. Business logic belongs in the
+Python package so Windows, Linux, tests, and service deployment all execute the
+same implementation.
+
+| Script | Connection to Python |
+|---|---|
+| `run_paper.sh` | Changes to the project context and invokes `python -m gld_scalper.main run-paper`. |
+| `run_backfill.sh` | Invokes the CLI backfill command using environment configuration. |
+| `train_model.sh` | Invokes the classical training command; promotion remains controlled by Python. |
+| `install_ubuntu.sh` | Creates/uses the server environment and installs project dependencies. |
+| `install_git_hooks.ps1` | Installs repository-local Git hooks for the Windows development workflow. |
+
+The wrapper process inherits `.env` and shell environment values consumed by
+`load_settings()`. Do not place API keys directly in script source or command
+history. Keep quoting correct for project paths containing spaces.
+
+When adding a script, make it fail on command errors, resolve the project path
+explicitly, invoke a documented CLI command, and propagate the Python exit code.
+Do not duplicate risk settings, SQL, training formulas, or broker logic in shell
+code.
+
 ## Linkage And Change Discipline
 
 1. Start at the composition root in `src/gld_scalper/main.py` or the invoking tool/script.

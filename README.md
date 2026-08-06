@@ -35,9 +35,344 @@ At a high level, the bot has three separate jobs:
 
 - **Live trader**: collect market data, score setups, manage risk, and place paper trades.
 - **Research engine**: record everything, label outcomes, export CSVs, and train candidate models.
-- **LLM analyst**: use local Ollama to review data and suggest improvements without controlling live trades.
+- **LLM analyst**: use the configured offline Kimi or Ollama provider to review data and suggest improvements without controlling live trades.
 
 These jobs are intentionally separated. The live trading path must stay predictable, fast, and rule-governed. The LLM path is slower and more flexible, so it is used for review, training advice, and research rather than order execution.
+
+## Programmer's Source-Code Tour
+
+This section explains how to read the project as a Python programmer. It starts
+at the process boundary, moves inward through the live runtime, and then follows
+the stored evidence back out through training and reporting. Read this section
+with [`src/gld_scalper/main.py`](src/gld_scalper/main.py) open beside it.
+
+### 1. How Python Finds And Starts The Bot
+
+[`pyproject.toml`](pyproject.toml) defines a `src`-layout Python package. The
+installable package is `gld_scalper`, found below `src/gld_scalper`. The console
+entry point is:
+
+```toml
+[project.scripts]
+gld-scalper = "gld_scalper.main:main"
+```
+
+Therefore these two commands eventually call the same function:
+
+```powershell
+gld-scalper status
+.\.venv\Scripts\python.exe -m gld_scalper.main status
+```
+
+At the bottom of `main.py`, `main()` builds the `argparse` parser, parses one
+subcommand, and calls the function stored in `args.func`. For example,
+`run-paper` dispatches to `run_paper_command()`, while `train` dispatches to
+`train_command()`. The command functions are composition roots: they construct
+the objects required for one use case and define their lifetime.
+
+### 2. The Lowest-Level Application Contracts
+
+Before reading strategy code, understand these three files:
+
+| File | Why it comes first |
+|---|---|
+| [`config.py`](src/gld_scalper/config.py) | Defines the `Settings` dataclass, reads `.env`, derives paper/live paths, and rejects unsafe combinations. |
+| [`models.py`](src/gld_scalper/models.py) | Defines the in-memory messages passed between strategy, ML, risk, execution, and backtesting. |
+| [`database.py`](src/gld_scalper/database.py) | Owns SQLite connection setup, schema migration, serialization, and every durable repository operation. |
+
+`Settings` is dependency injection for configuration. Modules receive a
+`Settings` object instead of repeatedly reading environment variables. This
+makes tests able to construct explicit configurations and makes safety checks
+centralized.
+
+The principal in-memory progression is:
+
+```text
+feature dictionary
+    -> MarketSignal
+    -> MLPrediction
+    -> RiskState
+    -> OrderPlan
+    -> broker order/fill
+    -> execution episode and TradeOutcome rows
+```
+
+The feature dictionary is intentionally extensible, but names are a contract.
+Training and live inference must calculate the same feature name with the same
+formula and units. Renaming a key without updating dataset builders, predictors,
+tests, and model manifests creates feature drift even if Python still runs.
+
+### 3. What `run_paper_command()` Owns
+
+`run_paper_command()` is the top-level owner of a paper session. Its startup
+order is meaningful:
+
+1. Load and validate `Settings`.
+2. Open `Database` and apply schema migrations.
+3. Configure terminal/file/SQLite logging.
+4. Run historical startup recovery so recent bars exist.
+5. Construct deterministic strategy, risk, and ML predictor objects.
+6. Connect to Alpaca's paper trading client.
+7. Start execution reconciliation before accepting entries.
+8. Construct one `OrderIntentCoordinator` shared by every order-producing path.
+9. Capture the startup account snapshot.
+10. Start asynchronous Transformer inference, dynamic position management,
+    fast scalping, options intelligence, and the Alpaca data stream as enabled.
+11. Warm the stream before the minute loop is allowed to trust it.
+12. Enter the minute loop.
+
+The order coordinator is shared because minute entries, fast entries, exits,
+cancellations, replacements, direction changes, and shutdown flattening must
+not race one another. `ExecutionEngine` creates broker entry intents;
+`ExecutionSafetySupervisor` decides whether order traffic is presently safe;
+`OrderIntentCoordinator` serializes the actual broker calls.
+
+### 4. The Two Live Market Paths
+
+The runtime has two paths with different clocks.
+
+**Fast event path**
+
+```text
+Alpaca websocket
+ -> LiveDataStreamRuntime
+ -> route_live_event()
+ -> FastScalpRuntime event queue
+ -> microstructure/fast pattern decision
+ -> bounded ML and Transformer advice
+ -> RiskEngine
+ -> ExecutionEngine
+ -> OrderIntentCoordinator
+```
+
+Quotes and trades can reach this route multiple times per second. The callback
+only records and enqueues work; broker calls do not execute inside the websocket
+callback. This protects the stream from slow execution work.
+
+**Minute research/decision path**
+
+```text
+SQLite bars, quotes, trades, context
+ -> feature builders
+ -> playbook and technical analysis
+ -> Predictor and Transformer cache
+ -> reasoning agents and decision council
+ -> StrategyEngine
+ -> entry-quality and exploration policy
+ -> target exposure
+ -> RiskEngine
+ -> ExecutionEngine
+ -> OrderIntentCoordinator
+```
+
+The minute path sleeps until the next minute boundary after one completed
+iteration. Maintenance work may take several seconds, so it refreshes `now`
+before reading market data and making a decision.
+
+### 5. How A Minute Feature Snapshot Is Built
+
+No single indicator decides the trade. `main.py` incrementally builds one
+feature dictionary by calling specialized modules:
+
+1. `feature_engine.py` creates bar indicators and archive-compatible features.
+2. `stream_collector.py` supplies connection, message age, and event counts.
+3. `price_action.py` classifies buildup, compression, breaks, false breaks,
+   pullbacks, and support/resistance behavior.
+4. `microstructure.py` adds spread, imbalance, trade intensity, signed volume,
+   liquidity, volatility bursts, and freshness.
+5. `gold_volatility.py` adds session segment, volatility regime, and cycle data.
+6. `order_blocks.py` adds confirmed multi-timeframe institutional-zone proxies.
+7. `options_intelligence.py` adds bounded GLD options context.
+8. `macro_context.py`, `event_calendar.py`, and `gold_event_impact.py` add slow
+   context and event risk.
+9. `technical_confluence.py` adds RSI, moving-average, Fibonacci, fair-value-gap,
+   and grouped indicator-family evidence.
+10. `ema_cross_strategy.py` evaluates completed-bar cross events independently.
+11. `strategy_playbooks.py` selects and scores a named setup.
+
+Each module returns data; none submits an order. This is the most important
+boundary to preserve when adding a new indicator.
+
+### 6. How Evidence Becomes A Decision
+
+The feature snapshot passes through several independent opinions:
+
+```text
+deterministic features
+ -> scoped classical Predictor probabilities
+ -> cached Transformer probabilities/returns/uncertainty
+ -> IndicatorAgent, PatternAgent, TrendAgent, RiskAgent
+ -> Bull/Bear deterministic council
+ -> StrategyEngine LONG/SHORT/NO_TRADE scores
+```
+
+`Predictor` loads an eligible model through `ModelRegistry`. It can abstain when
+features are missing, data is stale, confidence is weak, or class separation is
+too small. `AsyncTransformerShadowRuntime` calculates sequence predictions on
+another thread and exposes only a recent cached result. `transformer_authority`
+applies the configured shadow, bounded-adviser, or paper-champion rules.
+
+`StrategyEngine` produces a `MarketSignal`, not an order. The signal carries the
+decision, three scores, confidence, regime, and human-readable reasons. Entry
+quality, controlled paper exploration, risk, broker state, and execution safety
+can still turn that signal into `NO_TRADE`.
+
+### 7. How A Decision Becomes A Broker Order
+
+`target_exposure.py` expresses the desired direction and bounded exposure.
+`RiskEngine.build_order_plan()` then checks account/session/data constraints and
+calculates quantity, limit price, stop, target, and estimated notional. It either
+returns an `OrderPlan` or raises `OrderPlanRejected`.
+
+`ExecutionEngine.submit_entry()` transforms that plan into one or more
+independently protected Alpaca bracket tranches. The client order ID is the
+idempotency key and episode root. `OrderIntentCoordinator` rejects duplicate
+intent keys and serializes submission. This means a retry or duplicated stream
+event should recover the same logical episode rather than open another trade.
+
+`execution_safety.py` continuously compares four views of truth:
+
+```text
+Alpaca position
+Alpaca open orders
+SQLite execution episodes
+in-memory managed position episodes
+```
+
+New brackets receive a grace period before being judged unprotected. Persistent
+mismatches, stale order states, stream failures, or repeated broker rejections
+freeze new entries through the circuit breaker.
+
+### 8. How Open Trades Are Managed And Closed
+
+`DynamicPositionRuntime` receives the same live quote/trade events as the fast
+strategy, but its job is existing exposure. `PositionManager` reconstructs
+managed trades from broker orders, tracks maximum favorable/adverse excursion,
+and evaluates economic breakeven, structural invalidation, trailing profit,
+profit giveback, time limits, and session-close reduction.
+
+Exit and protective-order changes still travel through the shared coordinator.
+The manager does not mark a trade closed merely because it requested an exit;
+the broker reconciliation path must observe fills and settle quantities.
+
+### 9. How Broker Truth Becomes Learning Memory
+
+`PaperOrderReconciler.sync()` reads Alpaca orders and fills, flattens parent/child
+bracket structures, and upserts broker state into SQLite. It associates every
+fill with the root episode, preserves strategy/playbook metadata, calculates
+execution cost context, and creates a root `trade_outcomes` row only when the
+episode is actually complete.
+
+`TradeLearningAnalyzer` reviews closed episodes. `MultiHorizonOutcomeLabeler`
+later calculates causal 1, 3, 5, and 15-minute outcomes for decisions.
+`MissedOpportunityAnalyzer` performs the corresponding review for skipped
+decisions. This gives the trainer examples of good trades, bad trades, and
+correct or incorrect abstention.
+
+### 10. How Offline Training Connects Back To Trading
+
+The classical route is:
+
+```text
+SQLite/archive evidence
+ -> dataset_builder or archive_dataset
+ -> causal labels and feature matrix
+ -> trainer
+ -> calibration and threshold selection
+ -> holdout and walk-forward evaluation
+ -> immutable candidate artifact
+ -> ModelRegistry
+ -> paper shadow/champion
+ -> Predictor on next process start or reload
+```
+
+The Transformer route replaces the flat matrix with aligned causal sequences:
+
+```text
+snapshots/bars/quotes/trades
+ -> transformer_dataset sequence artifact
+ -> transformer_trainer
+ -> TorchScript artifact and manifest
+ -> historical and paper evaluation
+ -> ModelRegistry
+ -> AsyncTransformerShadowRuntime
+```
+
+Training never mutates a model that is currently making decisions. Every fit
+creates a versioned artifact. Promotion changes registry status only after the
+required evidence passes. Drift can demote a champion; rollback preserves older
+approved versions.
+
+Kimi, Ollama, FinGPT helpers, RAG, and TradingAgents operate beside this
+pipeline, not inside the fitting algorithm. They write reviews, macro context,
+advisories, and optional high-confidence labels to SQLite. They do not receive
+an Alpaca trading client and cannot promote a model.
+
+### 11. Shutdown Is Part Of The Trading Algorithm
+
+The `finally` block in `run_paper_command()` is required behavior, not cleanup
+decoration. It freezes entries, stops fast and position workers, stops the
+Transformer, requests safe flattening, stops options and stream workers,
+performs a final reconciliation, records the shutdown account snapshot, runs a
+consistency audit, and only then stops the order coordinator.
+
+When changing startup ownership, add the matching reverse-order shutdown step.
+An object that owns a thread, socket, broker intent, or file lock must have one
+clear owner and one bounded stop path.
+
+### 12. Dependency Direction
+
+Use this rule when deciding where new code belongs:
+
+```text
+main / CLI / tools
+    -> application services and runtimes
+        -> domain calculations and models
+            -> utils
+
+all persistence-aware layers -> Database
+all configuration-aware layers -> Settings
+only execution layers -> Alpaca trading client
+```
+
+Avoid importing `main.py` from domain modules. Avoid importing broker clients
+into indicator, feature, model, or LLM modules. Keep `utils` as leaf helpers so
+they do not become a hidden second composition root.
+
+### 13. A Practical Reading And Debugging Order
+
+For a first complete code study, use this order:
+
+1. `pyproject.toml`, then `main.main()` and `build_parser()`.
+2. `config.Settings`, `models.py`, and `database.Database`.
+3. `run_paper_command()` startup and shutdown, without reading helper bodies.
+4. `stream_collector.py` and `data_collector.py`.
+5. Feature modules, then `strategy_playbooks.py` and `strategy_engine.py`.
+6. `ml/predictor.py`, `decision_council.py`, and `reasoning_agents.py`.
+7. `risk_engine.py`, `execution_engine.py`, and `execution_safety.py`.
+8. `position_manager.py` and `order_reconciler.py`.
+9. Outcome learning and the complete `ml` folder.
+10. Reports, tools, scripts, and tests.
+
+When debugging a missing trade, follow one decision ID from `signals` to
+`model_predictions`, `no_trade_logs` or `decision_executions`, then to
+`execution_episodes`, `orders`, `fills`, and `trade_outcomes`. When debugging a
+wrong feature, compare the stored feature snapshot with the corresponding
+dataset-builder formula and feature-compatibility test. When debugging a broker
+mismatch, trust Alpaca as external truth, reconcile before changing SQLite, and
+never repair the symptom by deleting episode history.
+
+### 14. Adding A Feature Without Breaking The Architecture
+
+1. Implement a pure causal calculation in the narrowest domain module.
+2. Add its setting to `Settings` only if configuration is necessary.
+3. Add the feature to both live and historical/archive construction.
+4. Persist raw evidence or an audit record when later reconstruction matters.
+5. Add focused tests for formula, causality, missing data, and stale data.
+6. Add the feature to a playbook or model input; do not call execution directly.
+7. Run feature-compatibility, strategy, risk, execution, and full regression
+   tests.
+8. Update the root and relevant folder README in the same commit.
 
 ## Current Interface, Architecture, And Complete Training Route
 
@@ -62,7 +397,7 @@ operator interfaces are:
 The runtime diagram shows the two asynchronous market routes, deterministic
 feature and agent layers, conventional ML, the Transformer cache, the decision
 council, risk controls, synchronized order coordinator, Alpaca paper account,
-SQLite memory, and the offline Ollama/TradingAgents research boundary.
+SQLite memory, and the offline Kimi/Ollama/TradingAgents research boundary.
 
 ![GLD Scalper Bot decision and order flow](docs/architecture/decision-and-order-flow.jpg)
 
@@ -359,8 +694,8 @@ ALPACA_ENDPOINT=https://paper-api.alpaca.markets/v2
 BOT_SYMBOL=GLD
 BOT_DATA_MODE=paper
 DATABASE_URL=sqlite:///data/paper/gld_scalper.db
-LLM_PROVIDER=ollama
-LLM_MODEL=llama3.2:1b
+LLM_PROVIDER=kimi
+LLM_MODEL=kimi-k2.6
 ENABLE_LLM_LIVE_TRADING=false
 ```
 
@@ -1378,13 +1713,15 @@ The training system does not automatically trust a new model just because it exi
 
 ### 19. How The LLM Fits
 
-The LLM is a local Ollama model. It is currently configured as:
+The LLM adapter supports either hosted Kimi or local Ollama. The current local
+`.env` selects Kimi as an offline provider:
 
 ```dotenv
-LLM_PROVIDER=ollama
-LLM_MODEL=llama3.2:1b
-LLM_BASE_URL=http://localhost:11434
+LLM_PROVIDER=kimi
+LLM_MODEL=kimi-k2.6
+LLM_BASE_URL=https://api.moonshot.ai/v1
 ENABLE_LLM_LIVE_TRADING=false
+LLM_OFFLINE_ONLY=true
 ```
 
 The LLM can read summaries and recent rows from:
@@ -1416,7 +1753,10 @@ The LLM cannot:
 - guarantee profitable trades
 - replace paper-trading evidence
 
-On this 8 GB laptop, the LLM is intentionally configured as an offline research assistant. Larger local models were heavier and less reliable under memory pressure. The smaller model is more practical for generating lightweight summaries and advice.
+On this 8 GB laptop, every LLM provider is intentionally configured as an
+offline research assistant. Kimi moves inference off the laptop but consumes a
+remote quota. Ollama keeps data local but uses laptop RAM and CPU/GPU. Neither
+provider is part of the order path.
 
 ### 20. The Safest Daily Workflow
 
@@ -3790,7 +4130,7 @@ The bot uses the architecture of the separately cloned `TauricResearch/TradingAg
 There are two intentionally different councils:
 
 1. **Live deterministic council:** `DataHealthAgent`, `MicrostructureAgent`, `BullCaseAgent`, `BearCaseAgent`, and `RiskCouncil` run as ordinary Python. They add an auditable vote record to every minute and fast decision. Data-health, scheduled-event, and rejected-playbook hard blocks have absolute priority, including over paper exploration.
-2. **Offline LLM research council:** Ollama performs specialist synthesis, Bull/Bear debate, and a final risk/context review. It receives SQLite evidence but no Alpaca client, API key, or order function. Its result is saved in `agent_advisories` with an expiry time and `advisory_only=1`.
+2. **Offline LLM research council:** the configured Kimi or Ollama provider performs specialist synthesis, Bull/Bear debate, and a final risk/context review. It receives bounded SQLite evidence but no Alpaca client or order function. Its result is saved in `agent_advisories` with an expiry time and `advisory_only=1`.
 
 The live council first builds bullish and bearish evidence strengths from rule agents, playbook/technical alignment, classical ML probabilities, and scoped Transformer probabilities. If `H` is the hard-block flag and `D` is the Bull/Bear confidence difference, its authority is:
 
@@ -3874,7 +4214,7 @@ Verify Alpaca shows no unintended GLD position or open GLD order. Then run:
 .\.venv\Scripts\python.exe -m gld_scalper.main run-paper
 ```
 
-After the close, let broker-confirmed shutdown finish. Review root episodes separately from tranches, inspect after-cost P/L, and run the offline Ollama daily cycle only after live order processing has ended. Do not promote a model merely because classification accuracy improved; promotion must remain tied to after-cost holdout, walk-forward, paper, and regime evidence.
+After the close, let broker-confirmed shutdown finish. Review root episodes separately from tranches, inspect after-cost P/L, and run the configured offline LLM daily cycle only after live order processing has ended. Do not promote a model merely because classification accuracy improved; promotion must remain tied to after-cost holdout, walk-forward, paper, and regime evidence.
 
 ## Ubuntu Server Deployment
 

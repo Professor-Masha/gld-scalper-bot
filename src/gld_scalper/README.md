@@ -231,9 +231,194 @@ The council consumes one causal feature snapshot. It records specialist votes, c
 
 #### `tradingagents_advisory.py`
 **Public interfaces:** `TradingAgentsAdvisoryService`, `agent_advisory_to_features`.
-The service performs three offline Ollama stages: specialist reports, Bull/Bear debate, and risk/context management. It reads bounded SQLite evidence, validates and clamps the result, persists an expiring `agent_advisories` row, and exposes only a small live score/size adjustment. It deliberately has no broker dependency.
+The service performs three offline provider stages through Kimi or Ollama: specialist reports, Bull/Bear debate, and risk/context management. It reads bounded SQLite evidence, validates and clamps the result, persists an expiring `agent_advisories` row, and exposes only a small live score/size adjustment. It deliberately has no broker dependency.
 
 The interface list is generated from public top-level classes/functions and uppercase module constants. Read type annotations and tests before changing semantics; private helpers are implementation details but can still participate in safety invariants.
+
+## Programmer Map: Inside The Runtime Package
+
+This package is organized by responsibility rather than by one class per
+feature. `main.py` composes the responsibilities; the other modules should be
+usable and testable without starting the complete process.
+
+### Foundation Modules
+
+| Module | Owns | Does not own |
+|---|---|---|
+| `config.py` | Environment parsing, defaults, mode-specific paths, safety validation | Runtime state or broker calls |
+| `models.py` | Dataclasses passed between strategy, ML, risk, and backtesting | Persistence |
+| `database.py` | SQLite connection, migrations, transactions, typed repository methods | Trading decisions |
+| `alpaca_clients.py` | Construction of authenticated Alpaca SDK clients | Strategy or retry policy |
+
+Read these modules first. Nearly every higher layer receives `Settings`,
+`Database`, or a dataclass defined here.
+
+### Market-Data Modules
+
+`data_collector.py` performs REST historical recovery and backfill.
+`stream_collector.py` owns the websocket thread, subscriptions, database writes,
+event counts, timestamps, and health diagnostics. `research_data.py` collects
+slower sidecars such as news, economic/calendar, macro, knowledge, and derived
+audit data. `event_calendar.py` turns scheduled events into bounded live risk
+features.
+
+The data direction is one way:
+
+```text
+Alpaca/FRED/files -> collector -> Database -> feature/strategy consumers
+```
+
+Consumers should not reach backward into a collector to query private state,
+except for the explicitly exposed stream-health and event-sink interfaces.
+
+### Feature And Market-Interpretation Modules
+
+The calculation modules consume bars, quotes, trades, context records, and a
+decision timestamp. They return dictionaries or typed analysis objects:
+
+| Family | Modules |
+|---|---|
+| Bar indicators | `indicator_engine.py`, `feature_engine.py` |
+| Price structure | `price_action.py`, `order_blocks.py`, `technical_confluence.py` |
+| Tape quality | `microstructure.py`, `gold_volatility.py` |
+| External context | `macro_context.py`, `gold_event_impact.py`, `options_intelligence.py` |
+| Regime/setup | `regime_detector.py`, `strategy_playbooks.py`, `ema_cross_strategy.py` |
+
+These modules should be causal: when called with timestamp `t`, they may use
+only evidence known by `t`. A function returning a feature is not permission to
+trade.
+
+### Decision Modules
+
+`reasoning_agents.py` creates deterministic specialist opinions.
+`decision_council.py` combines bullish, bearish, and hard-block evidence.
+`strategy_engine.py` converts the complete feature snapshot into a
+`MarketSignal`. `entry_quality.py` applies setup-specific freshness, liquidity,
+session, spread, and cooldown requirements. `paper_exploration.py` may sample a
+small near-valid paper setup, but it cannot bypass absolute safety blocks.
+`target_exposure.py` translates the accepted direction into a bounded desired
+exposure.
+
+The separation is intentional:
+
+```text
+evidence -> opinion -> signal -> eligibility -> desired exposure
+```
+
+Combining these into one function would make it difficult to identify whether
+a trade came from evidence, exploration, model advice, or a safety override.
+
+### Execution And Position Modules
+
+`risk_engine.py` is the last deterministic plan builder. It returns an
+`OrderPlan` only after data, account, exposure, loss, session, spread, liquidity,
+and geometry checks pass. `execution_engine.py` converts the plan to protected
+bracket tranches. `execution_safety.py` serializes order intents, enforces
+idempotency, reconciles state, and owns circuit-breaker entry freezes.
+
+`concurrent_trading.py` describes existing GLD exposure for risk checks.
+`position_manager.py` manages already-open episodes and protective orders.
+`order_reconciler.py` imports broker order/fill truth and atomically closes
+episodes. `shortability.py` verifies that a proposed short can be supported by
+the broker before submission.
+
+Only modules in this group should handle an Alpaca trading client. Even here,
+order-changing operations should pass through the shared coordinator rather
+than call the SDK from multiple threads.
+
+### Learning And Evidence Modules
+
+`trade_learning.py` reviews completed execution episodes.
+`outcome_labeler.py` attaches forward outcomes to historical decisions.
+`no_trade_learning.py` identifies skipped clean moves. `performance_tracking.py`
+records account state and execution-cost context. The `ml/` package consumes
+these durable records and creates versioned candidates.
+
+Learning is delayed until truth matures. A submitted order is not a completed
+trade, and a signal at `t` cannot have a 15-minute label until `t + 15 minutes`
+has elapsed and valid future data exists.
+
+### Offline Research Modules
+
+`offline_review.py` performs deterministic local retrieval. `llm_provider.py`
+adapts Ollama or Kimi to one JSON interface. `kimi_tier0.py` governs remote Kimi
+quota. `llm_analysis.py` validates and persists structured LLM output.
+`fingpt_offline.py` composes offline research stages, while
+`tradingagents_advisory.py` creates a bounded expiring advisory.
+
+These modules know about SQLite evidence but have no broker-order interface.
+The live process may read a previously saved, fresh advisory; it does not wait
+for an LLM response before acting.
+
+### Composition And Object Lifetime
+
+`main.py` owns long-lived objects. The owner that calls `.start()` must also
+call `.stop()` in `finally`. Important long-lived objects are:
+
+| Object | Background responsibility |
+|---|---|
+| `OrderIntentCoordinator` | Serialized broker mutation queue |
+| `LiveDataStreamRuntime` | Alpaca websocket thread |
+| `FastScalpRuntime` | Sub-second decision queue |
+| `DynamicPositionRuntime` | Open-position event management |
+| `OptionsIntelligenceRuntime` | Periodic option-chain context |
+| `AsyncTransformerShadowRuntime` | Nonblocking sequence inference |
+| `ResearchDataScheduler` | Slow scheduled data sidecars |
+| `SafeRetrainingScheduler` | Guarded after-hours candidate fitting |
+
+Do not construct a second coordinator or second writer runtime casually. A
+duplicate owner can create duplicate broker intents, competing stream state, or
+unclear shutdown behavior.
+
+### Main Minute Call Chain
+
+The central call chain in `run_paper_command()` is:
+
+```text
+PaperOrderReconciler.sync
+ -> AccountPerformanceTracker.capture
+ -> scheduled context/research/label/export work
+ -> read latest bars/quotes/trades
+ -> build feature dictionary
+ -> evaluate technical setup and playbook
+ -> Predictor.predict
+ -> cached Transformer authority
+ -> reasoning council and StrategyEngine
+ -> EntryQualityGate / PaperExplorationPolicy
+ -> target_exposure_from_signal
+ -> RiskEngine.build_order_plan
+ -> ExecutionEngine.submit_entry
+ -> OrderIntentCoordinator
+```
+
+Any early rejection should be persisted as a no-trade or decision-execution
+record with a reason. That audit trail is how a programmer discovers which
+layer stopped an order.
+
+### Common Data Shapes
+
+- **Feature dictionary:** JSON-compatible scalar evidence keyed by stable names.
+- **`MarketSignal`:** direction, scores, confidence, regime, and explanation.
+- **`MLPrediction`:** calibrated class probabilities, model identity, role, and
+  abstention metadata.
+- **`RiskState`:** broker/account/session/exposure facts required by risk.
+- **`OrderPlan`:** immutable proposed side, quantity, prices, and episode ID.
+- **Execution episode:** durable root that owns entry, children, fills, costs,
+  close reason, and final P/L.
+
+Timestamps crossing module boundaries must be timezone-aware UTC. Prices and
+quantities should remain numeric in memory and become strings only when an SDK
+or serialization boundary requires it.
+
+### Where To Put New Code
+
+Use a new module when a responsibility has a distinct input/output contract or
+independent tests. Extend an existing module when the behavior is part of its
+current invariant. New evidence belongs before strategy; new eligibility rules
+belong in entry quality or a playbook; new account protections belong in risk
+or execution safety; new broker mutations belong behind the coordinator; new
+training logic belongs in `ml/`; new read-only presentation belongs in
+`reports/`.
 
 ## Linkage And Change Discipline
 

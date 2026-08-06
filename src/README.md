@@ -15,6 +15,49 @@ Return to the [project manual](../README.md).
 
 _This directory contains only child directories and this guide._
 
+## How To Read The Source Tree
+
+Python packaging uses the `src` layout. Keeping importable code below `src`
+prevents accidental imports from the repository root during development.
+
+```text
+src/
+`-- gld_scalper/              installable application package
+    |-- main.py               CLI and process composition root
+    |-- config.py             typed configuration and safety validation
+    |-- database.py           durable repository boundary
+    |-- models.py             shared in-memory domain messages
+    |-- ml/                   fitting, registry, validation, inference
+    |-- reports/              read-only projections and CSV/report output
+    `-- utils/                low-level time, math, retry, and logging helpers
+```
+
+The root is not an alternative runtime package. Standalone programs in
+`tools/` prepend `src` to `sys.path` only so they can reuse the installed
+application modules. Production entry points should import `gld_scalper`, never
+`src.gld_scalper`.
+
+## Layer Direction
+
+The intended import direction is from orchestration toward smaller domain
+units:
+
+```text
+main.py
+ -> runtimes/services
+ -> calculations/domain dataclasses
+ -> utils
+```
+
+`Database` and `Settings` are shared infrastructure dependencies. Broker client
+construction belongs in `alpaca_clients.py` and is used only by collection,
+execution, reconciliation, and account-state services. Pure feature, strategy,
+ML, reporting, and LLM interpretation code must not gain hidden broker-order
+authority.
+
+Start with the [root programmer tour](../README.md#programmers-source-code-tour),
+then continue into the [runtime package guide](gld_scalper/README.md).
+
 ## Linkage And Change Discipline
 
 1. Start at the composition root in `src/gld_scalper/main.py` or the invoking tool/script.

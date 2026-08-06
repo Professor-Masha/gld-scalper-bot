@@ -49,6 +49,69 @@ Return to the [project manual](../README.md).
 
 The interface list is generated from public top-level classes/functions and uppercase module constants. Read type annotations and tests before changing semantics; private helpers are implementation details but can still participate in safety invariants.
 
+## Programmer Guide: Standalone Tool Architecture
+
+Files in this folder are executable maintenance programs, not modules imported
+by the live paper loop. They may reuse `gld_scalper` services, but they construct
+their own settings/database context and should be run with `run-paper` stopped
+when they perform heavy work or write the same database.
+
+### Historical Data Downloader
+
+`download_historical_data.py` builds a dataset-specific database below the
+historical paper-data root. Its architecture is:
+
+```text
+CLI arguments
+ -> build_paths/build_settings
+ -> date chunk generator
+ -> Alpaca paginated request
+ -> normalization to database records
+ -> bounded batch upsert
+ -> atomic progress checkpoint
+ -> optional research sidecars/labels
+ -> manifest and coverage summary
+```
+
+Bars use larger windows; quote/trade microstructure uses adaptive windows that
+split on memory-heavy failures. Completed chunk keys make reruns resumable.
+Progress files are files, not directories. Coverage over enormous quote tables
+can be skipped or cached because a full aggregate scan is expensive.
+
+### News Archive Downloader
+
+`download_news_archive.py` fetches small time windows, normalizes provider
+records, records matched macro terms and event classes, checkpoints completed
+windows, exports CSV, and later links news timestamps to GLD price/spread
+outcomes. Rate-limit waits are bounded and provider errors remain visible.
+
+### Historical Export And Backtest Report
+
+`export_historical_dataset.py` opens one named historical database and delegates
+to the normal CSV exporter. `backtest_2023_2026_report.py` creates an isolated
+working database, runs segmented backtests, aggregates direction/regime/hour
+statistics, writes CSV evidence, and constructs the DOCX report. It must not
+write results into the live paper database.
+
+### Documentation Tools
+
+`render_architecture_diagrams.py` draws the JPEG architecture assets referenced
+by the root README. `update_readme_presentation.py` updates those references and
+math presentation. `generate_folder_readmes.py` inventories tracked files and
+public Python interfaces.
+
+The programmer guides in these READMEs contain hand-written architecture
+explanations. Review generator output before replacing a README so those manual
+sections are not accidentally discarded.
+
+### Reading Or Changing A Tool
+
+Start at its `main()`, then follow argument parsing, path construction, settings
+overrides, external calls, persistence, checkpointing, and final output. Keep
+network pagination separate from normalization and database writes. A failed
+window must be safely repeatable; an interrupted run must not mark unfinished
+data complete.
+
 ## Linkage And Change Discipline
 
 1. Start at the composition root in `src/gld_scalper/main.py` or the invoking tool/script.

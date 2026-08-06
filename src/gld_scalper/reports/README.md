@@ -34,6 +34,62 @@ Return to the [project manual](../../../README.md).
 
 The interface list is generated from public top-level classes/functions and uppercase module constants. Read type annotations and tests before changing semantics; private helpers are implementation details but can still participate in safety invariants.
 
+## Programmer Guide: From SQLite To Human Evidence
+
+Reporting modules are read-only projections over durable trading state. They do
+not recalculate broker truth, repair episodes, promote models, or mutate trading
+decisions.
+
+### CSV Export Path
+
+`csv_exporter.py` owns both explicit exports and the hourly scheduler:
+
+```text
+run_paper_command
+ -> HourlyCSVExportScheduler.maybe_export(Database, now)
+ -> export_database_to_csv()
+ -> category/table CSV files in a timestamped directory
+ -> latest-access copy/pointer structure
+```
+
+`EXPORT_TABLES` defines the export surface. `EXPORT_TABLE_CATEGORIES` places
+each table in a unique subject folder, while filter and order-column mappings
+keep a one-hour export bounded and chronologically readable. Adding a database
+table does not automatically export it; add it deliberately with a stable
+timestamp/order contract and test it.
+
+### Performance Aggregation
+
+`performance_report.py` starts from root execution episodes. Partial-profit
+tranches are children of one trading idea and must not be counted as independent
+strategy wins. `root_episode_rows()` normalizes that unit of analysis, and the
+breakdown functions group it by direction, strategy path, playbook, regime,
+hour, exit reason, model prediction, and confidence.
+
+The report consumes stored cost and excursion fields. It should not infer a
+fill from an order status or replace missing costs with flattering assumptions.
+
+### Daily Report
+
+`daily_report.py` composes account snapshots, episode-level performance,
+decisions, and operational evidence into a text report. The CLI route is:
+
+```text
+main.report_command -> generate_daily_report(Database, report_date)
+```
+
+Keep calculations in reusable report functions rather than embedding SQL and
+math directly in the CLI command. Tests should assert episode counts and metric
+semantics, not only that a file was created.
+
+### Extending Reports
+
+First identify the authoritative source table and the correct grain: event,
+decision, order, fill, tranche, root episode, account snapshot, or model
+version. Join on explicit IDs, preserve UTC timestamps, state how missing values
+are treated, and compare totals with the consistency audit before presenting a
+new metric as performance.
+
 ## Linkage And Change Discipline
 
 1. Start at the composition root in `src/gld_scalper/main.py` or the invoking tool/script.
