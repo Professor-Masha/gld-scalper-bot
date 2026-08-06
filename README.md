@@ -39,6 +39,313 @@ At a high level, the bot has three separate jobs:
 
 These jobs are intentionally separated. The live trading path must stay predictable, fast, and rule-governed. The LLM path is slower and more flexible, so it is used for review, training advice, and research rather than order execution.
 
+## Current Interface, Architecture, And Complete Training Route
+
+This is the consolidated operator guide for the current bot. The detailed
+sections later in this README explain every subsystem and equation; this section
+explains the order in which those subsystems are used. The application is a
+PowerShell/CLI service rather than a graphical desktop interface. Its four
+operator interfaces are:
+
+1. **PowerShell CLI**: initialize databases, collect data, label outcomes, train,
+   inspect status, export evidence, and start or stop paper trading.
+2. **SQLite**: durable paper memory for decisions, predictions, episodes, fills,
+   outcomes, advisories, promotion history, and safety events.
+3. **CSV exports and reports**: human-readable analysis grouped by data domain.
+4. **Logs and status commands**: operational health, loaded model roles,
+   Transformer prediction counts, reconciliation state, and training progress.
+
+### Current Architecture JPEGs
+
+![GLD Scalper Bot complete runtime architecture](docs/architecture/runtime-architecture.jpg)
+
+The runtime diagram shows the two asynchronous market routes, deterministic
+feature and agent layers, conventional ML, the Transformer cache, the decision
+council, risk controls, synchronized order coordinator, Alpaca paper account,
+SQLite memory, and the offline Ollama/TradingAgents research boundary.
+
+![GLD Scalper Bot decision and order flow](docs/architecture/decision-and-order-flow.jpg)
+
+The order-flow diagram shows that no model or indicator submits an order
+directly. Minute and fast decisions must converge through data-health checks,
+the Bull/Bear council, entry-quality gates, target exposure, account risk,
+broker reconciliation, the circuit breaker, and the idempotent order queue.
+
+![GLD Scalper Bot training, validation, and promotion flow](docs/architecture/training-validation-promotion.jpg)
+
+The training diagram separates raw evidence, causal features, matured labels,
+candidate fitting, calibration, holdout testing, walk-forward testing, paper
+shadow evidence, promotion, drift monitoring, demotion, and rollback. A saved
+candidate is not automatically a champion, and a paper champion is not
+automatically approved for live money.
+
+Regenerate these JPEG files with
+[`tools/render_architecture_diagrams.py`](tools/render_architecture_diagrams.py)
+whenever a future code change adds, removes, or reconnects an architecture
+component. A documentation-only wording change does not require regenerating
+the images.
+
+### How A Live Paper Decision Works Now
+
+1. `run-paper` validates paper-only configuration and initializes SQLite.
+2. Startup freezes entries and reconciles Alpaca positions, nested orders, and
+   local execution episodes.
+3. The Alpaca websocket streams quotes, trades, bars, corrections, and data
+   diagnostics into the live cache and SQLite.
+4. The fast route evaluates eligible quote/trade events; the minute route
+   evaluates completed causal bar context.
+5. Feature builders calculate indicators, price action, Fibonacci structure,
+   order blocks, options context, spread, imbalance, intensity, liquidity,
+   volatility, session phase, event state, and data age.
+6. The loaded conventional model returns class probabilities and an abstention
+   result using its exact saved feature profile.
+7. A trained Transformer runs asynchronously. The order path reads only a fresh
+   cached result; it never waits for PyTorch inference.
+8. `IndicatorAgent`, `PatternAgent`, `TrendAgent`, data-health and
+   microstructure specialists produce structured evidence.
+9. `BullCaseAgent`, `BearCaseAgent`, and `RiskCouncil` combine that evidence.
+   A hard safety block always outranks a bullish or bearish vote.
+10. A fresh offline TradingAgents/Ollama advisory may make only the configured
+    small confidence or sizing adjustment. It cannot call Alpaca.
+11. Strategy and playbook rules produce `LONG`, `SHORT`, or `NO_TRADE` and a
+    target exposure request.
+12. Risk sizing reduces exposure for costs, uncertainty, poor liquidity,
+    volatility, stale data, drawdown, correlated exposure, and weak alignment.
+13. Reconciliation, shortability, session-close, circuit-breaker, duplicate,
+    order-rate, and account-risk gates receive final authority.
+14. One synchronized `OrderIntentCoordinator` creates an idempotent bracket
+    intent and records its atomic root execution episode.
+15. Fills, protection, dynamic exits, costs, final P/L, close reason, journal
+    evidence, and later outcome labels feed the next offline training cycle.
+
+### Every Trainable Or Analytical Model
+
+| Model or layer | Input | What training changes | Paper runtime authority |
+|---|---|---|---|
+| Logistic Regression | One causal numeric feature row | Class weights, coefficients, calibration, and thresholds | Candidate may provide bounded paper-shadow advice; champion may advise normally |
+| Gaussian Naive Bayes | One causal numeric feature row | Per-class feature distributions and calibrated probabilities | Same registry and promotion boundary as other tabular candidates |
+| Random Forest | One causal numeric feature row | A bounded ensemble of decision trees | Main nonlinear tabular candidate and fallback |
+| Gradient Boosting | One causal numeric feature row | Sequential error-correcting decision trees | Competes with the exact same holdout and walk-forward rules |
+| Exit Random Forest | Position and post-entry state | `HOLD`, `REDUCE`, and `CLOSE` behavior from trustworthy closed episodes | Advisory only until exit-specific evidence passes its gates |
+| Fast Transformer | Last 30-120 seconds | Quote/trade sequence attention, direction, return, cost, and uncertainty heads | Shadow, bounded adviser, or promoted paper champion |
+| Minute Transformer | Last 30-90 minutes | Bar/feature sequence attention and multi-horizon heads | Shadow, bounded adviser, or promoted paper champion |
+| News Transformer | Event-centered price/liquidity sequence | Post-event direction, cost, and uncertainty | Independent scope; prose never enters the order path |
+| Exit Transformer | Position sequence since entry | `HOLD`, `REDUCE`, `CLOSE`, expected return, cost, and uncertainty | Shadow until enough clean exit labels exist |
+| Ollama/FinGPT/TradingAgents | Journals, news, summaries, knowledge, and stored evidence | No sklearn or PyTorch weights; writes reviewed advice and structured labels | Offline only; latest bounded SQLite advisory may be read live |
+| FinRL-style preview | Historical environment transitions | Experimental policy and reward evidence | Offline research only; no broker authority |
+
+### Complete Training Order
+
+Do not run heavy training, Ollama analysis, and `run-paper` together on the
+8 GB laptop. Stop paper trading with `Ctrl+C`, wait for verified broker-flat
+shutdown, and wait at least 15 minutes for the last 15-minute label to mature.
+
+#### Stage A: Label Paper Evidence
+
+```powershell
+cd "D:\ALPACA TEST\gld_scalper_bot"
+
+.\.venv\Scripts\python.exe -m gld_scalper.main label-paper-outcomes `
+  --retry-partial
+```
+
+This labels executed and skipped decisions at 1, 3, 5, and 15 minutes after
+spread and slippage. It does not fit a model. Run it again later when the first
+pass reports partial recent horizons.
+
+#### Stage B: Train All Tabular Entry Candidates
+
+The existing five-year archive is:
+
+```text
+data\paper\ml_training\gld_2021_2026_training_v3.joblib
+```
+
+Run the resumable search:
+
+```powershell
+.\.venv\Scripts\python.exe -m gld_scalper.main train-loop `
+  --artifact "D:\ALPACA TEST\gld_scalper_bot\data\paper\ml_training\gld_2021_2026_training_v3.joblib" `
+  --horizons 1 3 5 15 `
+  --playbooks all proper_breakout false_break_reversal pullback_continuation compression_breakout spread_capture news_event trend_continuation `
+  --minimum-samples 750 `
+  --paper-weight 2 `
+  --continuous-historical `
+  --interval-minutes 1 `
+  --patience-rounds 3 `
+  --minimum-improvement 0.001 `
+  --clear-stop
+```
+
+Each search round compares Logistic Regression, Gaussian Naive Bayes, Random
+Forest, and Gradient Boosting feature profiles. Exact fingerprints prevent an
+unchanged experiment from being mistaken for new learning. The loop preserves
+all candidates and stops after repeated rounds fail to improve actual
+walk-forward net return.
+
+Check or request a cooperative stop from another PowerShell window:
+
+```powershell
+.\.venv\Scripts\python.exe -m gld_scalper.main training-loop-status
+.\.venv\Scripts\python.exe -m gld_scalper.main stop-training-loop
+```
+
+#### Stage C: Train The Independent Exit Model
+
+```powershell
+.\.venv\Scripts\python.exe -m gld_scalper.main train-exit-model `
+  --strategy-path all
+```
+
+An insufficient-samples result is a correct refusal. Continue collecting clean,
+closed root execution episodes rather than lowering the evidence requirement.
+
+#### Stage D: Build Every Transformer Sequence Artifact
+
+Use explicit `.seq` directory names. A path ending in `.se`, or a path that was
+never built, causes the trainer to stop with `FileNotFoundError`.
+
+```powershell
+$Root = "D:\ALPACA TEST\gld_scalper_bot"
+$HistoricalDb = "$Root\data\paper\historical\gld_2021_2026_ai_full\gld_scalper_historical.db"
+$TransformerRoot = "$Root\data\paper\ml_training\transformer"
+
+$MinuteArtifact = "$TransformerRoot\minute_2021_2026_v1.seq"
+$FastArtifact = "$TransformerRoot\fast_2021_2026_v1.seq"
+$NewsArtifact = "$TransformerRoot\news_2021_2026_v1.seq"
+$ExitArtifact = "$TransformerRoot\exit_paper_v1.seq"
+
+.\.venv\Scripts\python.exe -m gld_scalper.main build-transformer-dataset `
+  --database $HistoricalDb --scope minute --source raw `
+  --start 2021-01-01 --end 2026-01-01 --stride 5 `
+  --max-samples 50000 --max-features 64 --output $MinuteArtifact
+
+.\.venv\Scripts\python.exe -m gld_scalper.main build-transformer-dataset `
+  --database $HistoricalDb --scope fast_microstructure --source raw `
+  --start 2021-01-01 --end 2026-01-01 `
+  --max-samples 50000 --max-features 64 --output $FastArtifact
+
+.\.venv\Scripts\python.exe -m gld_scalper.main build-transformer-dataset `
+  --database $HistoricalDb --scope news_event --source raw `
+  --start 2021-01-01 --end 2026-01-01 `
+  --max-samples 50000 --max-features 64 --output $NewsArtifact
+
+.\.venv\Scripts\python.exe -m gld_scalper.main build-transformer-dataset `
+  --database "$Root\data\paper\gld_scalper.db" --scope exit --source raw `
+  --start 2026-01-01 --end 2027-01-01 `
+  --max-samples 50000 --max-features 64 --output $ExitArtifact
+```
+
+The fast build scans the very large quote/trade archive and may require a
+separate night. News and exit builds may correctly refuse to finish until their
+specialized labels are numerous and trustworthy enough.
+
+#### Stage E: Train Each Transformer Separately
+
+First verify that the artifact exists:
+
+```powershell
+Test-Path $MinuteArtifact
+Test-Path $FastArtifact
+Test-Path $NewsArtifact
+Test-Path $ExitArtifact
+```
+
+Train one artifact at a time with laptop-safe settings. Replace `$Artifact` for
+each scope that returned `True`:
+
+```powershell
+$Artifact = $MinuteArtifact
+
+.\.venv\Scripts\python.exe -m gld_scalper.main train-transformer `
+  --artifact $Artifact `
+  --d-model 32 --layers 2 --batch-size 16 `
+  --epochs 10 --patience 3 `
+  --walk-forward-folds 3 --walk-forward-epochs 3
+```
+
+Repeat on separate nights with `$FastArtifact`, `$NewsArtifact`, and
+`$ExitArtifact`. Do not train two Transformer scopes concurrently.
+
+For resumable search after the first candidate, use the exact scope/path pair:
+
+```powershell
+.\.venv\Scripts\python.exe -m gld_scalper.main transformer-train-loop `
+  --artifact "minute=$MinuteArtifact" `
+  --watch --interval-minutes 60 `
+  --epochs 8 --walk-forward-epochs 2 --batch-size 16 `
+  --no-improvement-patience 3 --minimum-improvement 0.001 `
+  --clear-stop
+```
+
+Change `minute` to `fast_microstructure`, `news_event`, or `exit` together with
+the matching artifact. Inspect and stop with:
+
+```powershell
+.\.venv\Scripts\python.exe -m gld_scalper.main transformer-status
+.\.venv\Scripts\python.exe -m gld_scalper.main stop-transformer-training
+```
+
+#### Stage F: Collect Live Paper Shadow Evidence
+
+Training is offline; inference is live. Restart `run-paper` after training so it
+loads the saved model registry:
+
+```powershell
+$env:ENABLE_TRANSFORMER_SHADOW="true"
+$env:TRANSFORMER_TRADING_MODE="shadow"
+
+.\.venv\Scripts\python.exe -m gld_scalper.main run-paper --no-retraining
+```
+
+`--no-retraining` disables scheduled fitting during that process. It does not
+disable conventional-model or Transformer inference. A working Transformer
+shows loaded model versions and increasing prediction counts:
+
+```powershell
+.\.venv\Scripts\python.exe -m gld_scalper.main transformer-status
+.\.venv\Scripts\python.exe -m gld_scalper.main status
+```
+
+#### Stage G: Evaluate, Promote, Monitor, And Roll Back
+
+After the paper session and label-maturity delay:
+
+```powershell
+.\.venv\Scripts\python.exe -m gld_scalper.main label-paper-outcomes --retry-partial
+.\.venv\Scripts\python.exe -m gld_scalper.main evaluate-transformer-paper
+.\.venv\Scripts\python.exe -m gld_scalper.main transformer-status
+.\.venv\Scripts\python.exe -m gld_scalper.main ml-drift-report
+```
+
+Transformer authority graduates in this order:
+
+| Mode | What it may do during paper trading |
+|---|---|
+| `shadow` | Predict asynchronously and save evidence; never alter a decision |
+| `bounded_adviser` | Veto a conflicting setup or add a small score adjustment to an aligned existing setup; cannot originate a trade |
+| `paper_champion` | A promoted scope may recommend a paper action when technical confluence and every later safety gate agree |
+
+Use `promote-transformer --model-version EXACT_VERSION` only after reading the
+reported gate results. `paper_champion` is rejected outside Alpaca paper mode.
+The current repository does not authorize live-money Transformer control.
+
+### Is Continuous Transformer Participation Required?
+
+Real-time asynchronous inference is recommended during paper validation, but a
+fresh Transformer prediction must not be a hard dependency for broker safety.
+The runtime refreshes registered models, performs inference in a background CPU
+thread, saves predictions, and exposes only fresh cached values. Missing,
+incompatible, slow, stale, or uncertain output falls back to deterministic
+rules and the conventional model.
+
+This fail-open advisory boundary is intentional. Requiring a neural prediction
+for every quote could freeze protective execution during CPU pressure or model
+failure. The correct operational requirement is therefore **continuous health
+visibility**, not unconditional Transformer authority: inspect loaded versions,
+prediction counts, cache age, inference latency, and errors while retaining the
+safe fallback.
+
 ### 1. Configuration And Safety Startup
 
 When the bot starts, it first loads settings from `.env`.
@@ -870,6 +1177,13 @@ cd "D:\ALPACA TEST\gld_scalper_bot"
 .\scripts\install_git_hooks.ps1
 ```
 
+Every behavioral, configuration, schema, CLI, model, deployment, or safety
+change must update this root `README.md` in the same commit. Update the relevant
+folder README as well when a public interface or file responsibility changes.
+If architecture connections change, regenerate and review the three JPEG
+flowcharts before committing. Documentation is part of the definition of done,
+not a later cleanup task.
+
 After every completed and verified bot change:
 
 ```powershell
@@ -878,14 +1192,19 @@ git diff --check
 git add <changed-files>
 git diff --cached
 git commit -m "Describe the completed change"
-git push origin main
+$Branch = git branch --show-current
+git push -u origin $Branch
 ```
 
-Each future change should end with a meaningful commit and a push to `main`.
-The completion report should include the commit SHA and the tests that passed.
+Feature work should be pushed to its current feature branch, reviewed, and then
+merged into the private repository's default branch. Do not silently commit to
+another branch merely because an example says `main`. Each future change should
+end with a meaningful commit and a GitHub push. The completion report should
+include the branch, commit SHA, changed documentation, and tests that passed.
 Never use `git add .` without first checking `git status`, because the local
 project contains valuable private training and trading data that must remain
-outside GitHub.
+outside GitHub. Stage explicit paths so SQLite databases, raw archives, CSVs,
+credentials, and unrelated generated model files are not included accidentally.
 
 Leave that window open. Stop safely with `Ctrl+C`; the shutdown workflow freezes entries, cancels entries, reconciles orders, flattens configured paper exposure, and verifies broker state.
 
