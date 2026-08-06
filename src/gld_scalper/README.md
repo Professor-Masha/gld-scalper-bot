@@ -35,8 +35,9 @@ Return to the [project manual](../../README.md).
 | [`gold_event_impact.py`](../../src/gld_scalper/gold_event_impact.py) | Python module exposing `build_gold_event_impact`. |
 | [`gold_volatility.py`](../../src/gld_scalper/gold_volatility.py) | Python module exposing `build_gold_volatility_features`. |
 | [`indicator_engine.py`](../../src/gld_scalper/indicator_engine.py) | Python module exposing `sma`, `ema`, `rsi`, `true_range`. |
-| [`llm_analysis.py`](../../src/gld_scalper/llm_analysis.py) | Python module exposing `LLMAnalysisService`, `require_ollama_enabled`. |
-| [`llm_provider.py`](../../src/gld_scalper/llm_provider.py) | Python module exposing `LLMError`, `LLMResponse`, `OllamaClient`, `DisabledLLMClient`. |
+| [`kimi_tier0.py`](../../src/gld_scalper/kimi_tier0.py) | Persistent cross-process Kimi Tier0 request/token governor and redacted provider status. |
+| [`llm_analysis.py`](../../src/gld_scalper/llm_analysis.py) | Provider-neutral offline analysis service and offline-LLM safety guard. |
+| [`llm_provider.py`](../../src/gld_scalper/llm_provider.py) | Ollama and Kimi JSON clients plus the disabled-provider implementation. |
 | [`macro_context.py`](../../src/gld_scalper/macro_context.py) | Python module exposing `MacroContextScheduler`, `MacroContextBuilder`, `macro_context_to_features`, `pretty_macro_context`. |
 | [`main.py`](../../src/gld_scalper/main.py) | Command-line composition root that wires settings, databases, clients, services, and commands. |
 | [`microstructure.py`](../../src/gld_scalper/microstructure.py) | Python module exposing `build_microstructure_features`. |
@@ -135,11 +136,15 @@ The council consumes one causal feature snapshot. It records specialist votes, c
 **Public interfaces:** `sma`, `ema`, `rsi`, `true_range`, `atr`, `rolling_max`, `rolling_min`, `bollinger_bands`, `macd`, `obv`, `money_flow_index`, `accumulation_distribution`, `adx`, `supertrend`, `parabolic_sar`, `compute_indicators`.
 
 #### `llm_analysis.py`
-**Public interfaces:** `LLMAnalysisService`, `require_ollama_enabled`.
+**Public interfaces:** `LLMAnalysisService`, `require_offline_llm_enabled`, `require_ollama_enabled`.
 **Module constants:** `SYSTEM_PROMPT`.
 
+#### `kimi_tier0.py`
+**Public interfaces:** `KimiTier0Ledger`, `KimiUsageReservation`, `kimi_tier0_status`.
+**Linkage:** `KimiClient` obtains an exclusive file lock before every request, reserves a conservative token estimate, then replaces the estimate with API-reported usage. The JSON ledger is stored under the selected data mode and is never a source of trading authority.
+
 #### `llm_provider.py`
-**Public interfaces:** `LLMError`, `LLMResponse`, `OllamaClient`, `DisabledLLMClient`, `make_llm_client`.
+**Public interfaces:** `LLMError`, `LLMResponse`, `OllamaClient`, `KimiClient`, `DisabledLLMClient`, `make_llm_client`.
 
 #### `macro_context.py`
 **Public interfaces:** `MacroContextScheduler`, `MacroContextBuilder`, `macro_context_to_features`, `pretty_macro_context`.

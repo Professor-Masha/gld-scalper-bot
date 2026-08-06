@@ -353,9 +353,15 @@ class Settings:
     llm_provider: str = "none"
     llm_base_url: str = "http://localhost:11434"
     llm_model: str = "llama3.2:1b"
+    llm_api_key: str = field(default="", repr=False)
     llm_timeout_seconds: int = 60
     llm_temperature: float = 0.1
     llm_max_context_rows: int = 80
+    kimi_max_completion_tokens: int = 2_048
+    kimi_tier0_rpm_limit: int = 10
+    kimi_tier0_tpm_limit: int = 400_000
+    kimi_tier0_tpd_limit: int = 1_200_000
+    kimi_usage_state_path: str = "data/paper/llm/kimi_tier0_usage.json"
     enable_llm_analysis: bool = False
     enable_llm_macro_context: bool = False
     enable_llm_review_coach: bool = False
@@ -690,6 +696,23 @@ class Settings:
             raise RuntimeError("PAPER_ML_MAX_SCORE_ADJUSTMENT must be between 0 and 10.")
         if self.enable_llm_live_trading:
             raise RuntimeError("ENABLE_LLM_LIVE_TRADING must remain false; LLM processing is offline and advisory only.")
+        if self.llm_provider not in {"none", "ollama", "kimi"}:
+            raise RuntimeError("LLM_PROVIDER must be none, ollama, or kimi.")
+        if self.llm_provider == "kimi":
+            if not self.llm_api_key:
+                raise RuntimeError("MOONSHOT_API_KEY is required when LLM_PROVIDER=kimi.")
+            if self.llm_base_url.rstrip("/") != "https://api.moonshot.ai/v1":
+                raise RuntimeError("Kimi must use the official https://api.moonshot.ai/v1 endpoint.")
+            if not self.llm_offline_only:
+                raise RuntimeError("Kimi requires LLM_OFFLINE_ONLY=true.")
+            if not 1 <= self.kimi_tier0_rpm_limit <= 20:
+                raise RuntimeError("KIMI_TIER0_RPM_LIMIT must be between 1 and the Tier0 ceiling of 20.")
+            if not 1 <= self.kimi_tier0_tpm_limit <= 500_000:
+                raise RuntimeError("KIMI_TIER0_TPM_LIMIT must not exceed the Tier0 ceiling of 500000.")
+            if not 1 <= self.kimi_tier0_tpd_limit <= 1_500_000:
+                raise RuntimeError("KIMI_TIER0_TPD_LIMIT must not exceed the Tier0 ceiling of 1500000.")
+            if not 1 <= self.kimi_max_completion_tokens <= 8_192:
+                raise RuntimeError("KIMI_MAX_COMPLETION_TOKENS must be between 1 and 8192.")
         if not 0.0 <= self.llm_context_max_sizing_adjustment <= 0.10:
             raise RuntimeError("LLM_CONTEXT_MAX_SIZING_ADJUSTMENT must be between 0 and 0.10.")
         if not 0.0 <= self.llm_news_min_linked_fraction <= 1.0:
@@ -988,9 +1011,15 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         llm_provider=os.getenv("LLM_PROVIDER", "none").lower(),
         llm_base_url=os.getenv("LLM_BASE_URL", "http://localhost:11434"),
         llm_model=os.getenv("LLM_MODEL", "llama3.2:1b"),
+        llm_api_key=os.getenv("MOONSHOT_API_KEY", ""),
         llm_timeout_seconds=_int_env("LLM_TIMEOUT_SECONDS", 60),
         llm_temperature=_float_env("LLM_TEMPERATURE", 0.1),
         llm_max_context_rows=_int_env("LLM_MAX_CONTEXT_ROWS", 80),
+        kimi_max_completion_tokens=_int_env("KIMI_MAX_COMPLETION_TOKENS", 2_048),
+        kimi_tier0_rpm_limit=_int_env("KIMI_TIER0_RPM_LIMIT", 10),
+        kimi_tier0_tpm_limit=_int_env("KIMI_TIER0_TPM_LIMIT", 400_000),
+        kimi_tier0_tpd_limit=_int_env("KIMI_TIER0_TPD_LIMIT", 1_200_000),
+        kimi_usage_state_path=os.getenv("KIMI_USAGE_STATE_PATH", "data/paper/llm/kimi_tier0_usage.json"),
         enable_llm_analysis=_bool_env("ENABLE_LLM_ANALYSIS", False),
         enable_llm_macro_context=_bool_env("ENABLE_LLM_MACRO_CONTEXT", False),
         enable_llm_review_coach=_bool_env("ENABLE_LLM_REVIEW_COACH", False),

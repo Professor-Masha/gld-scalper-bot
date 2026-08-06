@@ -2119,6 +2119,129 @@ timestamp,source,headline,url
 2026-01-02T14:00:00+00:00,manual,Gold rally as weaker dollar and rate cut hopes lift safe haven demand,
 ```
 
+## Kimi Tier0 Offline Research Setup
+
+The bot supports Kimi through Moonshot AI's OpenAI-compatible API. Kimi is a
+hosted research provider, not a replacement for the numerical tree models or
+the time-series Transformer. Kimi reviews bounded evidence, proposes advisory
+labels, and writes structured advice to SQLite. The normal trainer may then use
+eligible labels when fitting a new candidate. Kimi never fits sklearn or
+PyTorch weights itself.
+
+Kimi API access is usage-priced rather than a guaranteed permanent free
+service. A Tier0 account can be quota-limited even when no recharge has been
+made. The operator must check the current Kimi console before assuming a call
+has zero monetary cost.
+
+### Tier0 Guardrails
+
+The configured local limits are intentionally below the supplied Tier0 limits:
+
+| Budget | Tier0 ceiling | Bot limit |
+|---|---:|---:|
+| Concurrent requests | 3 | 1 |
+| Requests per rolling minute | 20 | 10 |
+| Tokens per rolling minute | 500,000 | 400,000 |
+| Tokens per rolling 24 hours | 1,500,000 | 1,200,000 |
+
+One process-wide file lock serializes Kimi calls. Before a request, the bot
+reserves a conservative token estimate. After a successful response, it
+reconciles that estimate with `usage.total_tokens` returned by the API. Usage is
+persisted in:
+
+```text
+data/paper/llm/kimi_tier0_usage.json
+```
+
+The limiter does not automatically retry rejected or rate-limited requests.
+This prevents one command from consuming the remaining allowance through a
+retry storm. On HTTP 429, stop issuing Kimi commands and wait for the provider
+window to recover. Ollama remains the no-cloud fallback.
+
+### Secure Configuration
+
+Put the real key in the ignored local `.env` file only:
+
+```dotenv
+LLM_PROVIDER=kimi
+LLM_BASE_URL=https://api.moonshot.ai/v1
+LLM_MODEL=kimi-k2.6
+MOONSHOT_API_KEY=replace_with_a_new_private_key
+LLM_TIMEOUT_SECONDS=240
+LLM_TEMPERATURE=0.1
+LLM_MAX_CONTEXT_ROWS=20
+KIMI_MAX_COMPLETION_TOKENS=2048
+KIMI_TIER0_RPM_LIMIT=10
+KIMI_TIER0_TPM_LIMIT=400000
+KIMI_TIER0_TPD_LIMIT=1200000
+KIMI_USAGE_STATE_PATH=data/paper/llm/kimi_tier0_usage.json
+ENABLE_LLM_ANALYSIS=true
+ENABLE_LLM_MACRO_CONTEXT=true
+ENABLE_LLM_REVIEW_COACH=true
+ENABLE_LLM_TRAINING_ADVICE=true
+ENABLE_LLM_TRAINING_LABELS=true
+LLM_TRAINING_LABEL_MIN_CONFIDENCE=0.80
+ENABLE_LLM_LIVE_TRADING=false
+LLM_OFFLINE_ONLY=true
+```
+
+The program rejects Kimi configuration when the endpoint is not the official
+HTTPS endpoint, local limits exceed Tier0 ceilings, offline-only mode is off,
+or live LLM trading is enabled. The provider status command reports whether a
+key exists but never prints the key:
+
+```powershell
+cd "D:\ALPACA TEST\gld_scalper_bot"
+.\.venv\Scripts\python.exe -m gld_scalper.main llm-provider-status
+```
+
+### Quota-Safe PowerShell Workflow
+
+Run Kimi work after `run-paper`, tree training, and Transformer training have
+stopped. Start with one bounded review:
+
+```powershell
+cd "D:\ALPACA TEST\gld_scalper_bot"
+
+.\.venv\Scripts\python.exe -m gld_scalper.main llm-provider-status
+
+.\.venv\Scripts\python.exe -m gld_scalper.main llm-analyze `
+  --query "Review completed paper episodes, losses, missed opportunities, execution costs, and the next testable ML improvements."
+
+.\.venv\Scripts\python.exe -m gld_scalper.main llm-training-advice
+
+.\.venv\Scripts\python.exe -m gld_scalper.main llm-label-signals --limit 10
+```
+
+Keep `--limit` small until output quality and token usage are known. The daily
+offline pipeline is available after those individual commands succeed:
+
+```powershell
+.\.venv\Scripts\python.exe -m gld_scalper.main llm-offline-cycle --cadence daily
+```
+
+The offline cycle can make several Kimi calls. Do not place it in a tight loop.
+After Kimi has written advice and sufficiently confident advisory labels, run
+the local numerical trainers separately. Candidate promotion still requires
+chronological holdout, walk-forward, after-cost, drift, and paper-performance
+gates; an LLM recommendation cannot promote a model.
+
+### Switching Back To Ollama
+
+For a single PowerShell session, override the provider without changing `.env`:
+
+```powershell
+$env:LLM_PROVIDER="ollama"
+$env:LLM_BASE_URL="http://127.0.0.1:11434"
+$env:LLM_MODEL="llama3.2:1b"
+$env:ENABLE_LLM_LIVE_TRADING="false"
+$env:LLM_OFFLINE_ONLY="true"
+```
+
+Start the already installed Ollama server, then use the same `llm-analyze`,
+`llm-training-advice`, and `llm-label-signals` commands. Run one provider at a
+time so duplicate reviewers do not label the same evidence concurrently.
+
 ## Ollama Local LLM Setup
 
 The bot can connect to a local Ollama model. This avoids paid API calls and keeps data on your machine, but it still uses your computer's CPU/GPU/RAM.

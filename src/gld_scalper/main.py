@@ -36,7 +36,8 @@ from .feature_engine import build_archive_compatible_features, build_feature_sna
 from .fingpt_offline import FinGPTOfflineResearch
 from .gold_volatility import build_gold_volatility_features
 from .gold_event_impact import build_gold_event_impact
-from .llm_analysis import LLMAnalysisService, require_ollama_enabled
+from .llm_analysis import LLMAnalysisService, require_offline_llm_enabled
+from .kimi_tier0 import kimi_tier0_status
 from .macro_context import MacroContextBuilder, MacroContextScheduler, macro_context_to_features, pretty_macro_context
 from .microstructure import build_microstructure_features
 from .ml.archive_dataset import build_archive_training_records, save_archive_training_artifact
@@ -529,7 +530,7 @@ def rl_preview_command(args: argparse.Namespace) -> None:
 
 def llm_analyze_command(args: argparse.Namespace) -> None:
     settings = load_settings()
-    require_ollama_enabled(settings)
+    require_offline_llm_enabled(settings)
     db = Database(settings=settings)
     db.init_db()
     configure_logging(settings.log_level, database=db)
@@ -537,9 +538,22 @@ def llm_analyze_command(args: argparse.Namespace) -> None:
     print(json.dumps(result, indent=2, sort_keys=True, default=str))
 
 
+def llm_provider_status_command(args: argparse.Namespace) -> None:
+    settings = load_settings()
+    result = {
+        "provider": settings.llm_provider,
+        "model": settings.llm_model,
+        "offline_only": settings.llm_offline_only,
+        "live_trading_enabled": settings.enable_llm_live_trading,
+    }
+    if settings.llm_provider == "kimi":
+        result = kimi_tier0_status(settings)
+    print(json.dumps(result, indent=2, sort_keys=True, default=str))
+
+
 def llm_macro_context_command(args: argparse.Namespace) -> None:
     settings = load_settings()
-    require_ollama_enabled(settings)
+    require_offline_llm_enabled(settings)
     db = Database(settings=settings)
     db.init_db()
     configure_logging(settings.log_level, database=db)
@@ -557,7 +571,7 @@ def llm_offline_cycle_command(args: argparse.Namespace) -> None:
 
 def tradingagents_advisory_command(args: argparse.Namespace) -> None:
     settings = load_settings()
-    require_ollama_enabled(settings)
+    require_offline_llm_enabled(settings)
     db = Database(settings=settings)
     db.init_db()
     configure_logging(settings.log_level, database=db)
@@ -583,7 +597,7 @@ def rollback_model_command(args: argparse.Namespace) -> None:
 
 def llm_training_advice_command(args: argparse.Namespace) -> None:
     settings = load_settings()
-    require_ollama_enabled(settings)
+    require_offline_llm_enabled(settings)
     db = Database(settings=settings)
     db.init_db()
     configure_logging(settings.log_level, database=db)
@@ -593,7 +607,7 @@ def llm_training_advice_command(args: argparse.Namespace) -> None:
 
 def llm_label_signals_command(args: argparse.Namespace) -> None:
     settings = load_settings()
-    require_ollama_enabled(settings)
+    require_offline_llm_enabled(settings)
     db = Database(settings=settings)
     db.init_db()
     configure_logging(settings.log_level, database=db)
@@ -603,7 +617,7 @@ def llm_label_signals_command(args: argparse.Namespace) -> None:
 
 def llm_train_candidate_command(args: argparse.Namespace) -> None:
     settings = load_settings()
-    require_ollama_enabled(settings)
+    require_offline_llm_enabled(settings)
     db = Database(settings=settings)
     db.init_db()
     configure_logging(settings.log_level, database=db)
@@ -2198,14 +2212,20 @@ def build_parser() -> argparse.ArgumentParser:
     rl_preview.add_argument("--policy-name", default="momentum_preview")
     rl_preview.set_defaults(func=rl_preview_command)
 
-    llm_analyze = subparsers.add_parser("llm-analyze", help="Use local Ollama to analyze SQLite data and latest CSV exports")
+    llm_status = subparsers.add_parser(
+        "llm-provider-status",
+        help="Show redacted offline LLM provider configuration and local Kimi Tier0 usage",
+    )
+    llm_status.set_defaults(func=llm_provider_status_command)
+
+    llm_analyze = subparsers.add_parser("llm-analyze", help="Use the configured offline LLM to analyze SQLite data and latest CSV exports")
     llm_analyze.add_argument("--query", default="Analyze bot performance, missed opportunities, journal quality, and ML improvements.")
     llm_analyze.set_defaults(func=llm_analyze_command)
 
-    llm_macro = subparsers.add_parser("llm-macro-context", help="Use local Ollama to build macro/sentiment context")
+    llm_macro = subparsers.add_parser("llm-macro-context", help="Use the configured offline LLM to build macro/sentiment context")
     llm_macro.set_defaults(func=llm_macro_context_command)
 
-    llm_offline = subparsers.add_parser("llm-offline-cycle", help="Run offline FinGPT/Ollama research with no broker-order access")
+    llm_offline = subparsers.add_parser("llm-offline-cycle", help="Run offline FinGPT/LLM research with no broker-order access")
     llm_offline.add_argument("--cadence", choices=["hourly", "daily"], default="daily")
     llm_offline.add_argument("--force", action="store_true", help="Allow a maintenance run during market hours only when no episodes are open")
     llm_offline.set_defaults(func=llm_offline_cycle_command)
@@ -2233,14 +2253,14 @@ def build_parser() -> argparse.ArgumentParser:
     rollback_model.add_argument("--reason", default="operator rollback")
     rollback_model.set_defaults(func=rollback_model_command)
 
-    llm_advice = subparsers.add_parser("llm-training-advice", help="Use local Ollama to generate structured ML training advice")
+    llm_advice = subparsers.add_parser("llm-training-advice", help="Use the configured offline LLM to generate structured ML training advice")
     llm_advice.set_defaults(func=llm_training_advice_command)
 
-    llm_labels = subparsers.add_parser("llm-label-signals", help="Use local Ollama to suggest advisory ML labels for recent signals")
+    llm_labels = subparsers.add_parser("llm-label-signals", help="Use the configured offline LLM to suggest advisory ML labels for recent signals")
     llm_labels.add_argument("--limit", type=int, default=25)
     llm_labels.set_defaults(func=llm_label_signals_command)
 
-    llm_train = subparsers.add_parser("llm-train-candidate", help="Label recent signals with Ollama, create advice, then train a candidate with LLM labels")
+    llm_train = subparsers.add_parser("llm-train-candidate", help="Label recent signals with the offline LLM, create advice, then train a candidate")
     llm_train.add_argument("--lookback-days", type=int, default=90)
     llm_train.add_argument("--label-limit", type=int, default=25)
     llm_train.add_argument("--with-advice", action="store_true")

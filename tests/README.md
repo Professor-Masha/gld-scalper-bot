@@ -27,6 +27,7 @@ Return to the [project manual](../README.md).
 | [`test_feature_compatibility.py`](../tests/test_feature_compatibility.py) | Regression tests for feature compatibility. |
 | [`test_hybrid_agent_council.py`](../tests/test_hybrid_agent_council.py) | Regression tests for deterministic council authority, bounded advisory persistence, and expiry. |
 | [`test_indicators.py`](../tests/test_indicators.py) | Regression tests for indicators. |
+| [`test_kimi_provider.py`](../tests/test_kimi_provider.py) | Kimi JSON protocol, Tier0 budget, secret-redaction, and safety-validation tests. |
 | [`test_llm_analysis.py`](../tests/test_llm_analysis.py) | Regression tests for llm analysis. |
 | [`test_macro_context.py`](../tests/test_macro_context.py) | Regression tests for macro context. |
 | [`test_market_quality_features.py`](../tests/test_market_quality_features.py) | Regression tests for market quality features. |
@@ -101,6 +102,10 @@ Return to the [project manual](../README.md).
 #### `test_indicators.py`
 **Public interfaces:** `test_ema_calculation`, `test_rsi_calculation_on_uptrend`, `test_atr_calculation`.
 **Internal dependencies:** `gld_scalper.indicator_engine`.
+
+#### `test_kimi_provider.py`
+**Public interfaces:** regression tests for OpenAI-compatible request construction, API usage reconciliation, rolling-budget refusal, official endpoint enforcement, secret redaction, provider selection, offline-only enforcement, and redacted status output.
+**Internal dependencies:** `gld_scalper.config`, `gld_scalper.kimi_tier0`, `gld_scalper.llm_analysis`, `gld_scalper.llm_provider`.
 
 #### `test_llm_analysis.py`
 **Public interfaces:** `FakeLLMClient`, `test_llm_data_analysis_persists_review`, `test_llm_macro_context_persists_context`, `test_llm_training_advice_and_labels_feed_dataset_when_enabled`, `test_llm_training_advice_persists_advice`.

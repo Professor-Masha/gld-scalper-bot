@@ -10,7 +10,7 @@ from typing import Any
 
 from .config import PROJECT_ROOT, Settings
 from .database import Database
-from .llm_analysis import LLMAnalysisService, require_ollama_enabled
+from .llm_analysis import LLMAnalysisService, require_offline_llm_enabled
 from .offline_review import LocalRAGCoach
 from .research_data import ResearchDataCollector
 from .tradingagents_advisory import TradingAgentsAdvisoryService
@@ -47,7 +47,7 @@ class OfflineResearchLock(AbstractContextManager):
 
 
 class FinGPTOfflineResearch:
-    """Offline-only FinGPT-inspired data preparation, RAG, and Ollama review."""
+    """Offline-only FinGPT-inspired data preparation, RAG, and LLM review."""
 
     def __init__(self, settings: Settings, database: Database) -> None:
         self.settings = settings
@@ -56,10 +56,10 @@ class FinGPTOfflineResearch:
     def run(self, *, cadence: str = "daily", force: bool = False) -> dict[str, Any]:
         if cadence not in {"hourly", "daily"}:
             raise ValueError("cadence must be hourly or daily")
-        require_ollama_enabled(self.settings)
+        require_offline_llm_enabled(self.settings)
         self._assert_offline(force=force)
         profile = load_fingpt_source_profile(self.settings)
-        lock_path = self.settings.data_root / "locks" / "fingpt_ollama_offline.lock"
+        lock_path = self.settings.data_root / "locks" / "fingpt_llm_offline.lock"
         started = utc_now()
         with OfflineResearchLock(lock_path):
             try:
@@ -142,7 +142,7 @@ class FinGPTOfflineResearch:
         if self.settings.enable_llm_live_trading:
             raise RuntimeError("LLM broker access is prohibited")
         if not force and market_session(utc_now(), extended_hours=False) == "regular":
-            raise RuntimeError("FinGPT/Ollama research is restricted to after-market hours")
+            raise RuntimeError("FinGPT/LLM research is restricted to after-market hours")
         if self.database.fetch_active_execution_episodes(self.settings.bot_symbol):
             raise RuntimeError("Offline LLM research refused because execution episodes are still active")
 

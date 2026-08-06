@@ -46,7 +46,7 @@ class LLMAnalysisService:
         parsed = self._ask(user)
         record = {
             "timestamp": utc_now(),
-            "review_type": "ollama_data_analysis",
+            "review_type": f"{self.client.provider}_data_analysis",
             "summary": str(parsed.get("summary") or ""),
             "bull_case": str(parsed.get("bull_case") or ""),
             "bear_case": str(parsed.get("bear_case") or ""),
@@ -425,8 +425,13 @@ def _sentiment_matches_realized_move(impact: str, move: Any) -> bool:
     return abs(value) < 0.001
 
 
-def require_ollama_enabled(settings: Settings) -> None:
-    if settings.llm_provider.lower() != "ollama":
-        raise LLMError("Set LLM_PROVIDER=ollama before running Ollama LLM commands.")
+def require_offline_llm_enabled(settings: Settings) -> None:
+    if settings.llm_provider.lower() not in {"ollama", "kimi"}:
+        raise LLMError("Set LLM_PROVIDER=ollama or kimi before running offline LLM commands.")
     if settings.enable_llm_live_trading:
         raise LLMError("ENABLE_LLM_LIVE_TRADING must remain false. LLM output is advisory only.")
+    if not settings.llm_offline_only:
+        raise LLMError("LLM_OFFLINE_ONLY must remain true. LLM output is advisory only.")
+
+
+require_ollama_enabled = require_offline_llm_enabled
