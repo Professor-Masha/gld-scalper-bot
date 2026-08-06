@@ -4323,20 +4323,20 @@ role in the bot. Subscripts are time indexes, not multiplication.
 
 **Common symbols**
 
-- **\(t\):** the decision timestamp. A value with subscript \(t\) must be known
+- **$t$:** the decision timestamp. A value with subscript $t$ must be known
   at that timestamp; otherwise it would leak future information.
-- **\(h\):** a forward horizon such as 1, 3, 5, or 15 minutes.
-- **\(n\):** the number of historical observations in a rolling lookback.
-- **\(P_t\):** the selected price at time \(t\), normally close or midpoint
+- **$h$:** a forward horizon such as 1, 3, 5, or 15 minutes.
+- **$n$:** the number of historical observations in a rolling lookback.
+- **$P_t$:** the selected price at time $t$, normally close or midpoint
   depending on the feature.
-- **\(O_t,H_t,L_t,C_t\):** open, high, low, and close for the bar ending at
-  time \(t\).
-- **\(V_t\):** traded volume for the observation ending at \(t\).
-- **\(\sum\):** add all indexed observations in the stated range.
-- **\(\max\) and \(\min\):** select the largest or smallest candidate value.
-- **\(\mu\) and \(\sigma\):** arithmetic mean and standard deviation.
-- **\(\epsilon\):** a small positive number used to prevent division by zero.
-- **\(\hat{p}\):** an estimated, calibrated probability rather than a
+- **$O_t,H_t,L_t,C_t$:** open, high, low, and close for the bar ending at
+  time $t$.
+- **$V_t$:** traded volume for the observation ending at $t$.
+- **$\sum$:** add all indexed observations in the stated range.
+- **$\max$ and $\min$:** select the largest or smallest candidate value.
+- **$\mu$ and $\sigma$:** arithmetic mean and standard deviation.
+- **$\epsilon$:** a small positive number used to prevent division by zero.
+- **$\hat{p}$:** an estimated, calibrated probability rather than a
   guaranteed outcome.
 
 **Important interpretation:** an indicator equation creates evidence. It does
@@ -4344,8 +4344,8 @@ not create broker authority. A trade still needs a confirmed playbook, fresh
 data, acceptable microstructure, risk approval, broker reconciliation, and an
 idempotent protected order intent.
 
-Let \(P_t\) be the latest price, \(H_t\), \(L_t\), and \(C_t\) be high, low, and
-close, \(V_t\) be volume, and \(n\) be a lookback length.
+Let $P_t$ be the latest price, $H_t$, $L_t$, and $C_t$ be high, low, and
+close, $V_t$ be volume, and $n$ be a lookback length.
 
 #### Returns
 
@@ -4363,13 +4363,13 @@ $$
 
 **Breaking down the variables**
 
-- **\(r_{t,h}\):** price return over horizon \(h\), measured from decision time
-  \(t\).
-- **\(P_t\):** causal entry reference price known at the decision timestamp.
-- **\(P_{t+h}\):** observed price when the forward horizon matures.
-- **\(h\):** the outcome window. The project normally records 1, 3, 5, and
+- **$r_{t,h}$:** price return over horizon $h$, measured from decision time
+  $t$.
+- **$P_t$:** causal entry reference price known at the decision timestamp.
+- **$P_{t+h}$:** observed price when the forward horizon matures.
+- **$h$:** the outcome window. The project normally records 1, 3, 5, and
   15-minute horizons separately.
-- **\(r^{short}_{t,h}\):** direction-adjusted short return. A falling future
+- **$r^{short}_{t,h}$:** direction-adjusted short return. A falling future
   price produces a positive short return.
 
 **What the equation means:** dividing the later price by the initial price
@@ -4396,12 +4396,12 @@ EMA_n(t) = \alpha P_t + (1-\alpha)EMA_n(t-1)
 $$
 
 The bot uses moving-average order and slope as trend evidence. For example,
-\(EMA_9 > EMA_{21}\) supports a bullish case, but it does not independently
+$EMA_9 > EMA_{21}$ supports a bullish case, but it does not independently
 authorize an order.
 
 #### RSI
 
-For period \(n\), separate positive and negative price changes:
+For period $n$, separate positive and negative price changes:
 
 $$
 Gain_t = \max(P_t-P_{t-1},0)
@@ -4491,7 +4491,7 @@ volume weakens breakouts and may move the regime toward poor liquidity.
 
 ### Microstructure Mathematics
 
-For best bid \(B\), best ask \(A\), bid size \(Q_b\), and ask size \(Q_a\):
+For best bid $B$, best ask $A$, bid size $Q_b$, and ask size $Q_a$:
 
 $$
 Mid = \frac{A+B}{2}
@@ -4509,7 +4509,7 @@ $$
 QuoteImbalance = \frac{Q_b-Q_a}{Q_b+Q_a}
 $$
 
-Quote imbalance is bounded to \([-1,1]\). Positive values indicate more displayed
+Quote imbalance is bounded to $[-1,1]$. Positive values indicate more displayed
 bid size; negative values indicate more displayed ask size. It is only a short
 horizon pressure estimate because displayed liquidity can disappear.
 
@@ -4517,9 +4517,9 @@ The implemented spread regimes are:
 
 | Regime | Implemented rule |
 |---|---:|
-| Tight | \(SpreadPct \le 0.00045\) |
-| Normal | \(0.00045 < SpreadPct \le 0.0015\) |
-| Wide | \(SpreadPct > 0.0015\) |
+| Tight | $SpreadPct \le 0.00045$ |
+| Normal | $0.00045 < SpreadPct \le 0.0015$ |
+| Wide | $SpreadPct > 0.0015$ |
 
 Trade intensity is the count of prints in the last 60 seconds and the per-minute
 average over the last five minutes:
@@ -4547,7 +4547,7 @@ clip\left(\frac{VolRatio-1}{1.4},0,0.60\right)
 +\mathbb{1}[\sigma_{short}>0.055]\cdot0.15
 $$
 
-The final value is clipped to \([0,1]\). A burst flag is raised at 0.65.
+The final value is clipped to $[0,1]$. A burst flag is raised at 0.65.
 
 The implemented liquidity score is:
 
@@ -4572,7 +4572,7 @@ clip\left(
 \cdot BurstPenalty,0,1\right)
 $$
 
-Here \(S_{spread}\) starts at 1.00 for tight, 0.72 for normal, 0.18 for wide,
+Here $S_{spread}$ starts at 1.00 for tight, 0.72 for normal, 0.18 for wide,
 and 0.45 when unknown, and is further limited by the measured spread percentage.
 This explains why a connected stream can still be unsuitable for entry: the
 connection may be alive while quotes are old, the spread is wide, depth is thin,
@@ -4597,14 +4597,14 @@ signals:
 - **Fair-value gap:** an imbalance zone inferred from non-overlapping candle
   structure.
 
-For a confirmed swing from \(P_0\) to \(P_1\), a Fibonacci level \(f\) is:
+For a confirmed swing from $P_0$ to $P_1$, a Fibonacci level $f$ is:
 
 $$
 Fib(f)=P_1+(P_0-P_1)f
 $$
 
-Common retracement values include \(0.236,0.382,0.5,0.618,\) and \(0.786\).
-Extensions such as \(1.272,1.618,\) and \(2.618\) can provide target context.
+Common retracement values include $0.236,0.382,0.5,0.618,$ and $0.786$.
+Extensions such as $1.272,1.618,$ and $2.618$ can provide target context.
 The implementation uses ATR-adaptive ZigZag-style pivots so that a new swing
 requires meaningful deviation rather than every small price change.
 
@@ -4662,8 +4662,8 @@ liquidity, reconciliation, circuit-breaker, or close-window protections.
 
 ### Risk, Sizing, Stops, And Exit Mathematics
 
-If account equity is \(E\), maximum fractional risk per trade is \(\rho\), entry
-price is \(P\), and stop distance is \(D_{stop}\):
+If account equity is $E$, maximum fractional risk per trade is $\rho$, entry
+price is $P$, and stop distance is $D_{stop}$:
 
 $$
 MaximumLoss=E\rho
@@ -4707,7 +4707,7 @@ D_{target}=\max(P\cdot TargetPct,\;R\cdot D_{stop},\;
 1.5P\cdot BE_{pct})
 $$
 
-where \(R\) is a playbook-specific reward-to-risk requirement. A long uses:
+where $R$ is a playbook-specific reward-to-risk requirement. A long uses:
 
 $$
 Stop=P-D_{stop},\qquad Target=P+D_{target}
@@ -4723,7 +4723,7 @@ $$
 
 subject to all global risk caps and cost floors.
 
-For a long entered at \(P_e\), current directional return is:
+For a long entered at $P_e$, current directional return is:
 
 $$
 PnL_{pct}=\frac{P_t-P_e}{P_e}
@@ -4771,7 +4771,7 @@ supervised classifiers over labeled LONG, SHORT, and NO_TRADE examples.
 
 #### Logistic regression
 
-For class \(k\):
+For class $k$:
 
 $$
 z_k=\beta_{0,k}+\boldsymbol{\beta}_k^\top\mathbf{x}
@@ -4822,12 +4822,12 @@ $$
 F_m(\mathbf{x})=F_{m-1}(\mathbf{x})+\eta h_m(\mathbf{x})
 $$
 
-Each small tree \(h_m\) attempts to correct the current ensemble's errors.
+Each small tree $h_m$ attempts to correct the current ensemble's errors.
 Class scores are converted to probabilities with softmax.
 
 ### Abstention And Calibration
 
-The model does not have to choose LONG or SHORT. Let \(p_{(1)}\) and \(p_{(2)}\)
+The model does not have to choose LONG or SHORT. Let $p_{(1)}$ and $p_{(2)}$
 be the largest and second-largest class probabilities. A directional prediction
 is accepted only when:
 
@@ -4840,8 +4840,8 @@ p_{(1)}-p_{(2)}\ge T_{margin}
 $$
 
 Otherwise the model abstains with NO_TRADE. The trainer searches confidence
-thresholds \(0.40,0.46,0.52,0.58,0.64,0.70\) and margins
-\(0,0.04,0.08,0.12,0.16\), then validates the selected policy chronologically.
+thresholds $0.40,0.46,0.52,0.58,0.64,0.70$ and margins
+$0,0.04,0.08,0.12,0.16$, then validates the selected policy chronologically.
 
 Probability calibration uses a held-out chronological calibration segment.
 For the Transformer, temperature scaling produces:
@@ -4850,7 +4850,7 @@ $$
 P(y=k)=softmax\left(\frac{z_k}{T}\right)
 $$
 
-where \(T\) is selected to reduce held-out cross-entropy without changing the
+where $T$ is selected to reduce held-out cross-entropy without changing the
 ordering of the logits.
 
 ### Compact Causal Transformer Mathematics
@@ -4864,7 +4864,7 @@ The sequence model is intentionally small for an 8 GB laptop:
 - dropout, value masks, missing-data masks, and session masks;
 - causal attention so the model cannot inspect future observations.
 
-For input matrix \(X\):
+For input matrix $X$:
 
 $$
 Q=XW_Q,\qquad K=XW_K,\qquad V=XW_V
@@ -4888,7 +4888,7 @@ $$
 
 The final valid sequence representation feeds four heads:
 
-1. class logits for \(P(LONG)\), \(P(SHORT)\), and \(P(NO\_TRADE)\);
+1. class logits for $P(LONG)$, $P(SHORT)$, and $P(NO\_TRADE)$;
 2. expected returns at 1, 3, 5, and 15 minutes;
 3. expected spread/slippage cost;
 4. log variance, which represents return uncertainty.
@@ -4908,8 +4908,8 @@ $$
 \mathcal{L}_{class}=-w_y\log P(y)
 $$
 
-The heteroscedastic return loss for predicted mean \(\mu\), target \(r\), and
-predicted log variance \(s\) is:
+The heteroscedastic return loss for predicted mean $\mu$, target $r$, and
+predicted log variance $s$ is:
 
 $$
 \mathcal{L}_{return}=
@@ -5022,8 +5022,8 @@ scratch.
    are deliberately separate.
 3. Validate timestamps, market sessions, coverage, duplicates, gaps, and symbol
    alignment.
-4. Build features with causal cutoffs. A row at time \(t\) may not use data from
-   \(t+1\).
+4. Build features with causal cutoffs. A row at time $t$ may not use data from
+   $t+1$.
 5. Mature 1, 3, 5, and 15-minute labels. Recent decisions remain unknown until
    enough future data exists.
 6. Label the **executed action**, not merely the original rule suggestion.
