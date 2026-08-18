@@ -4770,6 +4770,87 @@ Bracket submission and reconciliation now follow this sequence:
    P/L. It also produces journal evidence and can mature into 1, 3, 5, and
    15-minute supervised labels.
 
+#### Event-Driven Order State And Terminal Invariants
+
+`run-paper` uses two complementary Alpaca order-state paths:
+
+1. `BrokerOrderUpdateRuntime` subscribes to Alpaca `trade_updates` and persists
+   fills, partial fills, cancellations, rejections, and replacements as they
+   arrive. It never submits, replaces, or cancels an order.
+2. `PaperOrderReconciler` continues to request recent orders with `nested=true`
+   at startup, once per main loop, during safety flattening, and at shutdown.
+   This REST path repairs missed websocket events and associates each bracket
+   parent with its stop and take-profit children.
+
+The execution episode is the authoritative learning unit. Once `closed_at` is
+set or the episode enters `closed`, `flattened`, `submit_failed`, or `canceled`,
+a later child-order callback cannot reopen it. An unfilled bracket whose entry
+orders are all terminal closes as `canceled` with
+`close_reason=entry_not_filled`. Startup also repairs older contradictory rows
+before reconciliation, preventing a historical SHORT episode from creating a
+false mixed-direction block against a new LONG setup.
+
+Cancellation reports distinguish:
+
+- `expected_oco_sibling_filled`: one protective exit filled and Alpaca canceled
+  its OCO sibling;
+- `parent_entry_canceled`: Alpaca canceled children because the unfilled parent
+  was canceled;
+- `entry_timeout_*`: the bot abandoned an entry that did not become active in
+  its playbook-specific validity window;
+- explicit session-close, shutdown, direction-switch, stale-cleanup, broker,
+  and protective-leg cancellation reasons.
+
+These labels prevent normal bracket mechanics from being counted as multiple
+failed trades.
+
+#### Setup-Specific Entry Recovery
+
+An entry order is not allowed to wait for one universal 30-second period. The
+default validity windows are:
+
+| Route | Default timeout |
+|---|---:|
+| Fast microstructure or spread capture | 5 seconds |
+| Confirmed post-release news event | 8 seconds |
+| Minute playbook | 30 seconds |
+
+At most one reprice is permitted. It requires a fresh route-appropriate quote,
+a price movement no larger than `EXECUTION_ENTRY_MAX_REPRICE_PCT`, and stored
+stop/target geometry that still exceeds both the minimum reward-to-risk ratio
+and economic breakeven. If any condition fails, the coordinator cancels the
+entry. All replacements and cancellations still pass through the serialized,
+idempotent `OrderIntentCoordinator`.
+
+Relevant settings are:
+
+```dotenv
+EXECUTION_FAST_ENTRY_TIMEOUT_SECONDS=5
+EXECUTION_NEWS_ENTRY_TIMEOUT_SECONDS=8
+EXECUTION_MINUTE_ENTRY_TIMEOUT_SECONDS=30
+EXECUTION_ENTRY_MAX_REPRICES=1
+EXECUTION_ENTRY_MAX_REPRICE_PCT=0.00050
+```
+
+#### Raw Fast Transformer Dataset Progress And Resume
+
+Raw fast-microstructure dataset construction now uses the existing
+`(symbol, timestamp)` SQLite index directly. It prints one progress line per
+sample window and writes completed windows beside the requested artifact:
+
+```text
+fast_2021_2026_v1.seq.building\manifest.json
+fast_2021_2026_v1.seq.building\window_0000.json
+...
+```
+
+Rerunning the same command resumes these windows. The arguments must match the
+checkpoint manifest. After all arrays and `manifest.json` are validated and
+written to `fast_2021_2026_v1.seq`, the temporary `.building` directory is
+removed. A real 59.8 GB archive smoke test processed a selected 20-minute
+window in under one second; actual five-year duration depends on disk speed and
+the number of populated windows.
+
 Safety-created exits such as startup residual flattening, unprotected residual
 flattening, process shutdown, and abrupt session close are retained for audit
 but excluded from normal entry-model training. Scheduled retraining requires at

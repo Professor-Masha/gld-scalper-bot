@@ -61,6 +61,7 @@ from .offline_review import LocalRAGCoach
 from .options_intelligence import OptionsIntelligenceRuntime, options_intelligence_to_features
 from .order_blocks import analyze_order_blocks
 from .order_reconciler import PaperOrderReconciler
+from .broker_order_stream import BrokerOrderUpdateRuntime
 from .outcome_labeler import MultiHorizonOutcomeLabeler
 from .paper_exploration import PaperExplorationPolicy, model_rejection_blocks
 from .performance_tracking import AccountPerformanceTracker, run_performance_consistency_audit
@@ -795,6 +796,10 @@ def run_paper_command(args: argparse.Namespace) -> None:
         coordinator=order_coordinator,
     )
     order_reconciler = PaperOrderReconciler(settings, db, trading_client=trading_client)
+    broker_order_stream = None
+    if settings.enable_live_stream and not args.no_stream:
+        broker_order_stream = BrokerOrderUpdateRuntime(settings, execution_safety_state)
+        broker_order_stream.start()
     performance_tracker = AccountPerformanceTracker(settings, db, trading_client)
     entry_quality_gate = EntryQualityGate(settings)
     entry_cooldown_policy = EntryCooldownPolicy(settings, db)
@@ -1766,6 +1771,8 @@ def run_paper_command(args: argparse.Namespace) -> None:
         raise
     finally:
         execution_safety.state.freeze("process_shutdown")
+        if broker_order_stream is not None:
+            broker_order_stream.stop()
         if fast_scalp_runtime is not None:
             fast_scalp_runtime.stop()
         if position_runtime is not None:

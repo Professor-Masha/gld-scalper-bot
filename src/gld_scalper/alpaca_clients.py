@@ -36,6 +36,21 @@ def get_trading_client(settings: Settings | None = None) -> Any:
     )
 
 
+def get_trading_stream(settings: Settings | None = None) -> Any:
+    settings = settings or load_settings()
+    _require_paper(settings)
+    settings.require_credentials()
+    try:
+        from alpaca.trading.stream import TradingStream
+    except Exception as exc:  # pragma: no cover - depends on optional package
+        raise _alpaca_import_error(exc)
+    return TradingStream(
+        settings.alpaca_api_key,
+        settings.alpaca_secret_key,
+        paper=True,
+    )
+
+
 def get_stock_historical_client(settings: Settings | None = None) -> Any:
     settings = settings or load_settings()
     _require_paper(settings)

@@ -5,6 +5,7 @@ import hashlib
 import json
 import math
 import shutil
+import time
 from collections import Counter, deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -133,9 +134,20 @@ def build_transformer_sequence_artifact(
     if max_features < 8:
         raise ValueError("max_features must be at least eight")
 
+    path = _artifact_path(settings, scope, output)
     resolved_source = _resolve_source(database, scope, source, start_dt, end_dt)
+    fast_checkpoint_path: Path | None = None
     if scope == "fast_microstructure" and resolved_source == "raw":
-        timeline = _raw_fast_timeline(database, settings, start_dt, end_dt, stride, max_samples)
+        fast_checkpoint_path = path.with_name(f"{path.name}.building")
+        timeline = _raw_fast_timeline(
+            database,
+            settings,
+            start_dt,
+            end_dt,
+            stride,
+            max_samples,
+            checkpoint_path=fast_checkpoint_path,
+        )
     elif scope == "minute":
         timeline = (
             _decision_timeline(database, settings, "signal", start_dt, end_dt, stride)
@@ -159,8 +171,7 @@ def build_transformer_sequence_artifact(
         selected = {eligible[int(position)] for position in positions}
         timeline.eligible = [flag and index in selected for index, flag in enumerate(timeline.eligible)]
 
-    path = _artifact_path(settings, scope, output)
-    return _write_artifact(
+    result = _write_artifact(
         timeline,
         path=path,
         scope=scope,
@@ -169,6 +180,9 @@ def build_transformer_sequence_artifact(
         max_features=max_features,
         overwrite=overwrite,
     )
+    if fast_checkpoint_path is not None and fast_checkpoint_path.exists():
+        shutil.rmtree(fast_checkpoint_path)
+    return result
 
 
 def load_transformer_sequence_artifact(path: str | Path, *, mmap_mode: str | None = "r") -> LoadedSequenceArtifact:
@@ -425,6 +439,7 @@ def _raw_fast_timeline(
     end: datetime,
     stride: int,
     max_samples: int | None,
+    checkpoint_path: Path | None = None,
 ) -> _Timeline:
     quote_columns = _table_columns(database, "quotes")
     if not quote_columns:
@@ -433,7 +448,43 @@ def _raw_fast_timeline(
     # hundreds of millions of quotes. A LIMIT on one five-year GROUP BY would select
     # only the earliest period and still force SQLite to scan most of the archive.
     timeline = _empty_timeline(ENTRY_CLASSES, "historical_quotes_trades")
-    for window_number, (window_start, window_end) in enumerate(_fast_archive_windows(start, end, max_samples)):
+    windows = _fast_archive_windows(start, end, max_samples)
+    checkpoint_path = checkpoint_path or Path(".transformer-fast-building")
+    checkpoint_path.mkdir(parents=True, exist_ok=True)
+    checkpoint_manifest = checkpoint_path / "manifest.json"
+    signature = {
+        "format_version": 1,
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "stride": stride,
+        "max_samples": max_samples,
+        "window_count": len(windows),
+    }
+    if checkpoint_manifest.exists():
+        stored_signature = json.loads(checkpoint_manifest.read_text(encoding="utf-8"))
+        if stored_signature != signature:
+            raise RuntimeError(
+                f"Fast Transformer checkpoint does not match this build: {checkpoint_path}. "
+                "Remove that checkpoint directory or rerun with the original arguments."
+            )
+    else:
+        checkpoint_manifest.write_text(json.dumps(signature, indent=2, sort_keys=True), encoding="utf-8")
+
+    started = time.monotonic()
+    resumed_windows = 0
+    for window_number, (window_start, window_end) in enumerate(windows):
+        checkpoint_file = checkpoint_path / f"window_{window_number:04d}.json"
+        if checkpoint_file.exists():
+            _append_fast_checkpoint(timeline, checkpoint_file)
+            resumed_windows += 1
+            _print_fast_progress(
+                window_number + 1,
+                len(windows),
+                timeline,
+                started,
+                resumed=True,
+            )
+            continue
         quote_rows = database.conn.execute(
             """
             SELECT substr(timestamp, 1, 19) AS bucket,
@@ -442,12 +493,14 @@ def _raw_fast_timeline(
                    avg(spread_pct) AS spread_pct, avg(quote_imbalance) AS quote_imbalance,
                    count(*) AS quote_count
             FROM quotes
-            WHERE symbol = ? AND julianday(timestamp) >= julianday(?) AND julianday(timestamp) < julianday(?)
+            WHERE symbol = ? AND timestamp >= ? AND timestamp < ?
             GROUP BY bucket ORDER BY bucket
             """,
             (settings.bot_symbol, window_start.isoformat(), window_end.isoformat()),
         ).fetchall()
         if not quote_rows:
+            _write_fast_checkpoint(checkpoint_file, [])
+            _print_fast_progress(window_number + 1, len(windows), timeline, started)
             continue
         trade_map = {
             str(row["bucket"]): dict(row)
@@ -457,7 +510,7 @@ def _raw_fast_timeline(
                        sum(size) AS trade_volume, count(*) AS trade_count,
                        min(price) AS trade_low, max(price) AS trade_high
                 FROM market_trades
-                WHERE symbol = ? AND julianday(timestamp) >= julianday(?) AND julianday(timestamp) < julianday(?)
+                WHERE symbol = ? AND timestamp >= ? AND timestamp < ?
                 GROUP BY bucket ORDER BY bucket
                 """,
                 (settings.bot_symbol, window_start.isoformat(), window_end.isoformat()),
@@ -466,6 +519,7 @@ def _raw_fast_timeline(
         mids: list[float] = []
         vol_window: deque[float] = deque(maxlen=30)
         window_key = f"{_session_key(window_start)}:sample-{window_number}"
+        checkpoint_rows: list[dict[str, Any]] = []
         for raw in quote_rows:
             timestamp = ensure_utc(str(raw["bucket"]) + "+00:00")
             bid, ask = _finite(raw["bid_price"]), _finite(raw["ask_price"])
@@ -515,8 +569,62 @@ def _raw_fast_timeline(
             timeline.baseline_probabilities.append([math.nan, math.nan, math.nan])
             timeline.baseline_versions.append("")
             timeline.session_keys.append(window_key)
+            checkpoint_rows.append(
+                {
+                    "timestamp": timestamp.isoformat(),
+                    "features": timeline.features[-1],
+                    "cost": timeline.costs[-1],
+                    "regime": timeline.regimes[-1],
+                    "session_key": window_key,
+                }
+            )
+        _write_fast_checkpoint(checkpoint_file, checkpoint_rows)
+        _print_fast_progress(window_number + 1, len(windows), timeline, started)
     _label_raw_timeline(timeline, primary_horizon=1, stride=stride, settings=settings)
+    if resumed_windows:
+        print(f"resumed {resumed_windows} completed fast Transformer windows", flush=True)
     return timeline
+
+
+def _write_fast_checkpoint(path: Path, rows: list[dict[str, Any]]) -> None:
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(rows, separators=(",", ":")), encoding="utf-8")
+    temporary.replace(path)
+
+
+def _append_fast_checkpoint(timeline: _Timeline, path: Path) -> None:
+    rows = json.loads(path.read_text(encoding="utf-8"))
+    for row in rows:
+        timeline.timestamps.append(ensure_utc(row["timestamp"]))
+        timeline.features.append({str(key): float(value) for key, value in row["features"].items()})
+        timeline.labels.append(None)
+        timeline.returns.append([math.nan] * len(HORIZONS_MINUTES))
+        timeline.costs.append(float(row["cost"]))
+        timeline.eligible.append(False)
+        timeline.regimes.append(str(row["regime"]))
+        timeline.baseline_probabilities.append([math.nan, math.nan, math.nan])
+        timeline.baseline_versions.append("")
+        timeline.session_keys.append(str(row["session_key"]))
+
+
+def _print_fast_progress(
+    completed: int,
+    total: int,
+    timeline: _Timeline,
+    started: float,
+    *,
+    resumed: bool = False,
+) -> None:
+    elapsed = max(time.monotonic() - started, 0.001)
+    processed_this_run = max(completed, 1)
+    remaining_seconds = elapsed / processed_this_run * max(total - completed, 0)
+    state = "resumed" if resumed else "completed"
+    print(
+        f"fast dataset window {completed}/{total} {state}; "
+        f"timeline_rows={len(timeline.timestamps)} elapsed={elapsed:.1f}s "
+        f"estimated_remaining={remaining_seconds:.1f}s",
+        flush=True,
+    )
 
 
 def _fast_archive_windows(start: datetime, end: datetime, max_samples: int | None) -> list[tuple[datetime, datetime]]:

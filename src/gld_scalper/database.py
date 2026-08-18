@@ -238,6 +238,24 @@ class Database:
               AND LOWER(COALESCE(raw_json, '')) LIKE '%to_close%'
             """
         )
+        # A terminal timestamp is authoritative. Older callback ordering could let a
+        # late bracket-child cancellation recalculate a closed episode as active or
+        # submitting, which then created false mixed-direction reconciliation blocks.
+        self.conn.execute(
+            """
+            UPDATE execution_episodes
+            SET status = CASE
+                    WHEN status = 'closed' THEN 'closed'
+                    WHEN filled_qty > 0 AND remaining_qty <= 0.000000001 THEN 'closed'
+                    ELSE 'flattened'
+                END,
+                remaining_qty = 0,
+                close_reason = COALESCE(close_reason, 'terminal_state_repair'),
+                updated_at = COALESCE(updated_at, closed_at)
+            WHERE closed_at IS NOT NULL
+              AND status NOT IN ('closed', 'flattened', 'submit_failed', 'canceled')
+            """
+        )
 
     def _run_migrations(self) -> None:
         for column, definition in {
@@ -1070,6 +1088,11 @@ class Database:
                 COALESCE(SUM(CASE WHEN intent_type = 'exit' THEN filled_qty ELSE 0 END), 0) AS exit_filled,
                 COALESCE(SUM(CASE WHEN intent_type = 'entry' THEN filled_qty * COALESCE(filled_avg_price, 0) ELSE 0 END), 0) AS entry_value,
                 COALESCE(SUM(CASE WHEN intent_type = 'exit' THEN filled_qty * COALESCE(filled_avg_price, 0) ELSE 0 END), 0) AS exit_value
+                ,COUNT(CASE WHEN intent_type = 'entry' THEN 1 END) AS entry_order_count
+                ,COALESCE(SUM(CASE WHEN intent_type = 'entry' AND LOWER(status) IN
+                    ('accepted', 'accepted_for_bidding', 'calculated', 'held', 'new', 'partially_filled',
+                     'pending_cancel', 'pending_new', 'pending_replace', 'replaced', 'submitted',
+                     'partially_submitted', 'pending_activation') THEN 1 ELSE 0 END), 0) AS active_entry_count
             FROM execution_episode_orders WHERE episode_id = ?
             """,
             (episode_id,),
@@ -1081,7 +1104,7 @@ class Database:
         entry_avg = float(totals["entry_value"] or 0.0) / entry_filled if entry_filled > 0 else None
         exit_avg = float(totals["exit_value"] or 0.0) / exit_filled if exit_filled > 0 else None
         direction_row = self.conn.execute(
-            "SELECT direction FROM execution_episodes WHERE episode_id = ?",
+            "SELECT direction, status, closed_at, close_reason FROM execution_episodes WHERE episode_id = ?",
             (episode_id,),
         ).fetchone()
         direction = str(direction_row["direction"] or "") if direction_row else ""
@@ -1090,7 +1113,25 @@ class Database:
         if entry_avg is not None and exit_avg is not None and closed_qty > 0:
             move = exit_avg - entry_avg
             realized_pnl = move * closed_qty if direction == "LONG" else -move * closed_qty
-        status = "closed" if entry_filled > 0 and remaining <= 1e-9 else "active" if entry_filled > 0 else "submitting"
+        current_status = str(direction_row["status"] or "") if direction_row else ""
+        closed_at = direction_row["closed_at"] if direction_row else None
+        terminal = current_status in {"closed", "flattened", "submit_failed", "canceled"}
+        if terminal:
+            status = current_status
+            remaining = 0.0
+        elif closed_at:
+            # closed_at is authoritative even when an older callback sequence left a
+            # contradictory active/submitting status behind.
+            status = "closed" if entry_filled > 0 else "flattened"
+            remaining = 0.0
+        elif entry_filled > 0 and remaining <= 1e-9:
+            status = "closed"
+        elif entry_filled > 0:
+            status = "active"
+        elif int(totals["entry_order_count"] or 0) > 0 and int(totals["active_entry_count"] or 0) == 0:
+            status = "canceled"
+        else:
+            status = "submitting"
         exit_row = self.conn.execute(
             """
             SELECT role, close_reason FROM execution_episode_orders
@@ -1107,13 +1148,15 @@ class Database:
                 "take_profit": "take_profit",
                 "safety_flatten": "safety_flatten",
             }.get(role, role or "broker_exit")
+        elif status == "canceled":
+            close_reason = "entry_not_filled"
         self.conn.execute(
             """
             UPDATE execution_episodes
             SET submitted_qty=?, filled_qty=?, remaining_qty=?, entry_avg_price=?, exit_avg_price=?,
                 realized_pnl=?, status=?,
-                closed_at=CASE WHEN ? = 'closed' THEN ? ELSE closed_at END,
-                close_reason=CASE WHEN ? = 'closed' THEN COALESCE(?, close_reason, 'broker_exit') ELSE close_reason END,
+                closed_at=CASE WHEN ? IN ('closed', 'canceled') THEN COALESCE(closed_at, ?) ELSE closed_at END,
+                close_reason=CASE WHEN ? IN ('closed', 'canceled') THEN COALESCE(?, close_reason, 'broker_exit') ELSE close_reason END,
                 version=version+1, updated_at=?
             WHERE episode_id=?
             """,
@@ -1127,7 +1170,8 @@ class Database:
         rows = self.conn.execute(
             """
             SELECT * FROM execution_episodes
-            WHERE symbol = ? AND status NOT IN ('closed', 'flattened', 'submit_failed', 'canceled')
+            WHERE symbol = ? AND closed_at IS NULL
+              AND status NOT IN ('closed', 'flattened', 'submit_failed', 'canceled')
             ORDER BY opened_at, episode_id
             """,
             (str(symbol).upper(),),

@@ -191,6 +191,9 @@ class LiveDataStreamRuntime:
         tick_ages = [age for age in [quote_age, trade_age] if age is not None]
         tick_age = min(tick_ages) if tick_ages else None
         message_stale = bool(message_age is not None and message_age > self.settings.stale_data_seconds)
+        quote_stale = bool(quote_age is None or quote_age > self.settings.quote_stale_seconds)
+        trade_stale = bool(trade_age is None or trade_age > self.settings.quote_stale_seconds)
+        bar_stale = bool(bar_age is None or bar_age > self.settings.bar_stale_seconds)
         tick_stale = bool(tick_age is not None and tick_age > self.settings.quote_stale_seconds)
         if connected:
             no_ticks_after_grace = tick_age is None and startup_age > self.settings.quote_stale_seconds
@@ -216,6 +219,11 @@ class LiveDataStreamRuntime:
             "websocket_connected": connected,
             "stream_thread_alive": thread_alive,
             "stream_stale": stream_stale,
+            "stream_connected_but_stale": bool(connected and stream_stale),
+            "stream_message_stale": message_stale,
+            "stream_quote_stale": quote_stale,
+            "stream_trade_stale": trade_stale,
+            "stream_bar_stale": bar_stale,
             "stream_last_message_at": last_message_at.isoformat() if last_message_at else None,
             "stream_message_age_seconds": message_age,
             "stream_last_bar_at": last_bar_at.isoformat() if last_bar_at else None,

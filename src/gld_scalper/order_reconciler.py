@@ -51,12 +51,104 @@ class PaperOrderReconciler:
             persisted_orders += 1
             persisted_fills += self._persist_fill(order, now, node)
 
+        self._classify_and_record_cancellations(order_nodes, now)
         persisted_outcomes += self._persist_trade_outcomes(order_nodes, now)
         persisted_outcomes += self._persist_closed_episode_outcomes(now)
         pending = TradeLearningAnalyzer(self.settings, self.database).review_pending(limit=25)
         if pending["failed"]:
             logger.error("pending post-trade reviews failed count=%s", pending["failed"])
         return {"orders": persisted_orders, "fills": persisted_fills, "trade_outcomes": persisted_outcomes}
+
+    def process_trade_update(self, update: Any, now: datetime | None = None) -> dict[str, int]:
+        """Persist one Alpaca trade-update event without waiting for the REST polling loop."""
+        now = now or utc_now()
+        order = _field(update, "order")
+        if order is None:
+            return {"orders": 0, "fills": 0, "trade_outcomes": 0}
+        parent_id = _as_str(_field(order, "parent_order_id")) or None
+        root_direction = None if parent_id or _is_closing_order(order) else _position_side_from_order(order)
+        node = BrokerOrderNode(order, parent_id, root_direction)
+        self._persist_order(order, node)
+        fills = self._persist_fill(order, now, node)
+        self._classify_and_record_cancellations([node], now)
+        outcomes = self._persist_closed_episode_outcomes(now)
+        return {"orders": 1, "fills": fills, "trade_outcomes": outcomes}
+
+    def _classify_and_record_cancellations(self, nodes: list[BrokerOrderNode], now: datetime) -> None:
+        by_id = {
+            _as_str(_field(node.order, "id")): node.order
+            for node in nodes
+            if _as_str(_field(node.order, "id"))
+        }
+        children: dict[str, list[Any]] = {}
+        for node in nodes:
+            if node.parent_order_id:
+                children.setdefault(node.parent_order_id, []).append(node.order)
+        for node in nodes:
+            order = node.order
+            if _as_str(_field(order, "status")).lower() not in {"canceled", "cancelled"}:
+                continue
+            order_id = _as_str(_field(order, "id")) or None
+            client_order_id = _as_str(_field(order, "client_order_id")) or None
+            stored = self.database.get_order(alpaca_order_id=order_id, client_order_id=client_order_id) or {}
+            if stored.get("cancel_reason"):
+                continue
+            reason = _as_str(_field(order, "cancel_reason")) or self._cancel_reason_from_intent(order_id)
+            if not reason and node.parent_order_id:
+                parent = by_id.get(node.parent_order_id) or self.database.get_order(alpaca_order_id=node.parent_order_id)
+                parent_status = _as_str(_field(parent, "status")).lower()
+                siblings = children.get(node.parent_order_id, [])
+                stored_siblings = self.database.conn.execute(
+                    "SELECT status FROM orders WHERE parent_order_id=? AND alpaca_order_id<>?",
+                    (node.parent_order_id, order_id or ""),
+                ).fetchall()
+                if parent_status in {"canceled", "cancelled"}:
+                    reason = "parent_entry_canceled"
+                elif any(_as_str(_field(item, "status")).lower() == "filled" for item in siblings) or any(
+                    _as_str(item["status"]).lower() == "filled" for item in stored_siblings
+                ):
+                    reason = "expected_oco_sibling_filled"
+                else:
+                    reason = "protective_leg_canceled"
+            reason = _normalize_cancel_reason(reason or "broker_canceled")
+            with self.database.conn:
+                self.database.conn.execute(
+                    """UPDATE orders SET cancel_reason=?
+                       WHERE (alpaca_order_id=? OR (? IS NOT NULL AND client_order_id=?))
+                         AND COALESCE(cancel_reason, '')=''""",
+                    (reason, order_id, client_order_id, client_order_id),
+                )
+            self.database.insert_trading_journal(
+                {
+                    "timestamp": _field(order, "canceled_at") or _field(order, "updated_at") or now,
+                    "symbol": _as_str(_field(order, "symbol", self.settings.bot_symbol)).upper(),
+                    "event_type": "ORDER_CANCELED",
+                    "strategy_path": stored.get("strategy_path"),
+                    "playbook": stored.get("playbook"),
+                    "reason": reason,
+                    "order_id": order_id,
+                    "client_order_id": client_order_id,
+                    "side": _as_str(_field(order, "side")),
+                    "qty": _as_float(_field(order, "qty")),
+                    "status": "canceled",
+                    "broker_snapshot_json": _to_jsonable(order),
+                }
+            )
+
+    def _cancel_reason_from_intent(self, order_id: str | None) -> str:
+        if not order_id:
+            return ""
+        rows = self.database.conn.execute(
+            """SELECT details_json FROM order_intents
+               WHERE intent_type='cancel' AND details_json LIKE ?
+               ORDER BY created_at DESC LIMIT 5""",
+            (f'%"order_id": "{order_id}"%',),
+        ).fetchall()
+        for row in rows:
+            details = _json_mapping(row["details_json"])
+            if str(details.get("order_id") or "") == order_id:
+                return str(details.get("reason") or "")
+        return ""
 
     def _load_recent_orders(self) -> list[Any]:
         if self.trading_client is None:
@@ -728,6 +820,19 @@ def _exit_reason(order: Any) -> str:
     if order_type in {"stop", "stop_limit"}:
         return "stop_loss"
     return order_type or "closed"
+
+
+def _normalize_cancel_reason(reason: str) -> str:
+    value = str(reason or "").strip().lower().replace(" ", "_")
+    if value.startswith("stuck_"):
+        return f"entry_timeout_{value.removeprefix('stuck_')}"
+    aliases = {
+        "session_close": "session_close",
+        "process_shutdown": "process_shutdown",
+        "direction_switch": "direction_switch",
+        "stale_order_cleanup": "stale_order_cleanup",
+    }
+    return aliases.get(value, value or "broker_canceled")
 
 
 def _to_jsonable(value: Any) -> Any:

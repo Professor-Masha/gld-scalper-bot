@@ -298,6 +298,11 @@ class Settings:
     execution_session_flatten_minutes_before_close: int = 10
     execution_intent_timeout_seconds: int = 30
     execution_order_state_timeout_seconds: int = 30
+    execution_fast_entry_timeout_seconds: int = 5
+    execution_news_entry_timeout_seconds: int = 8
+    execution_minute_entry_timeout_seconds: int = 30
+    execution_entry_max_reprices: int = 1
+    execution_entry_max_reprice_pct: float = 0.00050
     execution_cancel_wait_seconds: int = 15
     execution_shutdown_timeout_seconds: int = 90
     execution_direction_switch_cooldown_seconds: int = 3
@@ -654,11 +659,18 @@ class Settings:
         if min(
             self.execution_intent_timeout_seconds,
             self.execution_order_state_timeout_seconds,
+            self.execution_fast_entry_timeout_seconds,
+            self.execution_news_entry_timeout_seconds,
+            self.execution_minute_entry_timeout_seconds,
             self.execution_cancel_wait_seconds,
             self.execution_shutdown_timeout_seconds,
             self.execution_direction_switch_cooldown_seconds,
         ) < 1:
             raise RuntimeError("Execution timeout and cooldown settings must be positive.")
+        if self.execution_entry_max_reprices not in {0, 1}:
+            raise RuntimeError("EXECUTION_ENTRY_MAX_REPRICES must be zero or one.")
+        if not 0.0 < self.execution_entry_max_reprice_pct <= 0.002:
+            raise RuntimeError("EXECUTION_ENTRY_MAX_REPRICE_PCT must be positive and no larger than 0.2%.")
         if min(
             self.execution_broker_rejection_threshold,
             self.execution_stream_failure_threshold,
@@ -976,6 +988,11 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         execution_session_flatten_minutes_before_close=_int_env("EXECUTION_SESSION_FLATTEN_MINUTES_BEFORE_CLOSE", 10),
         execution_intent_timeout_seconds=_int_env("EXECUTION_INTENT_TIMEOUT_SECONDS", 30),
         execution_order_state_timeout_seconds=_int_env("EXECUTION_ORDER_STATE_TIMEOUT_SECONDS", 30),
+        execution_fast_entry_timeout_seconds=_int_env("EXECUTION_FAST_ENTRY_TIMEOUT_SECONDS", 5),
+        execution_news_entry_timeout_seconds=_int_env("EXECUTION_NEWS_ENTRY_TIMEOUT_SECONDS", 8),
+        execution_minute_entry_timeout_seconds=_int_env("EXECUTION_MINUTE_ENTRY_TIMEOUT_SECONDS", 30),
+        execution_entry_max_reprices=_int_env("EXECUTION_ENTRY_MAX_REPRICES", 1),
+        execution_entry_max_reprice_pct=_float_env("EXECUTION_ENTRY_MAX_REPRICE_PCT", 0.00050),
         execution_cancel_wait_seconds=_int_env("EXECUTION_CANCEL_WAIT_SECONDS", 15),
         execution_shutdown_timeout_seconds=_int_env("EXECUTION_SHUTDOWN_TIMEOUT_SECONDS", 90),
         execution_direction_switch_cooldown_seconds=_int_env("EXECUTION_DIRECTION_SWITCH_COOLDOWN_SECONDS", 3),

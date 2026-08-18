@@ -392,3 +392,94 @@ def test_episode_accounting_closes_atomically_after_exit_fill(tmp_path):
     assert episode["filled_qty"] == 2
     assert episode["remaining_qty"] == 0
     assert episode["version"] >= 3
+
+
+def test_late_protective_cancellation_cannot_reopen_closed_episode(tmp_path):
+    settings = _settings(tmp_path)
+    db = Database(settings=settings)
+    db.init_db()
+    episode_id = "GLD-TERMINAL-LONG"
+    db.create_execution_episode(
+        {"episode_id": episode_id, "symbol": "GLD", "direction": "LONG", "planned_qty": 1}
+    )
+    db.record_execution_episode_order(
+        episode_id,
+        {"order_key": "entry", "role": "entry", "intent_type": "entry", "qty": 1,
+         "filled_qty": 1, "filled_avg_price": 100, "status": "filled"},
+    )
+    db.record_execution_episode_order(
+        episode_id,
+        {"order_key": "target", "role": "take_profit", "intent_type": "exit", "qty": 1,
+         "filled_qty": 1, "filled_avg_price": 101, "status": "filled"},
+    )
+    db.record_execution_episode_order(
+        episode_id,
+        {"order_key": "stop", "role": "stop", "intent_type": "protective", "qty": 1,
+         "filled_qty": 0, "status": "canceled"},
+    )
+
+    episode = db.conn.execute(
+        "SELECT status, remaining_qty, closed_at, close_reason FROM execution_episodes WHERE episode_id=?",
+        (episode_id,),
+    ).fetchone()
+    assert episode["status"] == "closed"
+    assert episode["remaining_qty"] == 0
+    assert episode["closed_at"] is not None
+    assert episode["close_reason"] == "take_profit"
+
+
+def test_unfilled_terminal_entry_closes_as_canceled(tmp_path):
+    settings = _settings(tmp_path)
+    db = Database(settings=settings)
+    db.init_db()
+    episode_id = "GLD-UNFILLED-LONG"
+    db.create_execution_episode(
+        {"episode_id": episode_id, "symbol": "GLD", "direction": "LONG", "planned_qty": 1}
+    )
+    db.record_execution_episode_order(
+        episode_id,
+        {"order_key": "entry", "role": "entry", "intent_type": "entry", "qty": 1,
+         "filled_qty": 0, "status": "canceled"},
+    )
+
+    episode = db.conn.execute(
+        "SELECT status, closed_at, close_reason FROM execution_episodes WHERE episode_id=?",
+        (episode_id,),
+    ).fetchone()
+    assert episode["status"] == "canceled"
+    assert episode["closed_at"] is not None
+    assert episode["close_reason"] == "entry_not_filled"
+    assert db.fetch_active_execution_episodes("GLD") == []
+
+
+def test_closed_at_remains_authoritative_after_late_callback(tmp_path):
+    settings = _settings(tmp_path)
+    db = Database(settings=settings)
+    db.init_db()
+    episode_id = "GLD-CLOSED-AT-LONG"
+    db.create_execution_episode(
+        {"episode_id": episode_id, "symbol": "GLD", "direction": "LONG", "planned_qty": 1}
+    )
+    db.record_execution_episode_order(
+        episode_id,
+        {"order_key": "entry", "role": "entry", "intent_type": "entry", "qty": 1,
+         "filled_qty": 1, "filled_avg_price": 100, "status": "filled"},
+    )
+    db.conn.execute(
+        "UPDATE execution_episodes SET status='active', closed_at=CURRENT_TIMESTAMP WHERE episode_id=?",
+        (episode_id,),
+    )
+    db.conn.commit()
+
+    db.record_execution_episode_order(
+        episode_id,
+        {"order_key": "late-stop", "role": "stop", "intent_type": "protective", "qty": 1,
+         "filled_qty": 0, "status": "canceled"},
+    )
+
+    episode = db.conn.execute(
+        "SELECT status, remaining_qty FROM execution_episodes WHERE episode_id=?", (episode_id,)
+    ).fetchone()
+    assert episode["status"] == "closed"
+    assert episode["remaining_qty"] == 0
+    assert db.fetch_active_execution_episodes("GLD") == []

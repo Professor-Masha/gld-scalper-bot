@@ -113,6 +113,12 @@ The council consumes one causal feature snapshot. It records specialist votes, c
 **Public interfaces:** `EntryBlockedError`, `SafetySnapshot`, `ExecutionSafetyState`, `OrderIntentCoordinator`, `ExecutionSafetySupervisor`.
 **Module constants:** `_ACTIVE_ORDER_STATUSES`.
 
+#### `broker_order_stream.py`
+**Public interfaces:** `BrokerOrderUpdateRuntime`.
+**Linkage:** owns the Alpaca trading websocket and forwards `trade_updates` to
+`PaperOrderReconciler.process_trade_update`. It has no broker-write methods;
+REST reconciliation remains the recovery and verification path.
+
 #### `exit_policy.py`
 **Public interfaces:** `ExitGeometry`, `economic_breakeven_pct`, `build_exit_geometry`.
 

@@ -712,32 +712,116 @@ class ExecutionSafetySupervisor:
         _position, open_orders, _clock = self._load_broker_state()
         now = utc_now()
         failures = 0
-        for order, parent_id in _flatten_order_nodes(open_orders):
-            status = _status(order)
-            if status not in {"new", "held", "replaced", "pending_cancel"}:
-                continue
-            if parent_id and status in {"new", "held"}:
-                continue
-            age = _order_age_seconds(order, now)
-            if age is None or age < self.settings.execution_order_state_timeout_seconds:
-                continue
-            order_id = _text(_field(order, "id"))
-            if not order_id:
-                failures += 1
-                continue
-            try:
-                current = self.trading_client.get_order_by_id(order_id)
-                if _status(current) not in _ACTIVE_ORDER_STATUSES:
+        database = Database(settings=self.settings)
+        try:
+            for order, parent_id in _flatten_order_nodes(open_orders):
+                status = _status(order)
+                if status not in {"accepted", "new", "pending_new", "held", "replaced", "pending_cancel"}:
                     continue
-                self.coordinator.cancel_order(order_id, reason=f"stuck_{status}")
-            except Exception as exc:
-                if not _is_terminal_cancel_error(exc):
+                if parent_id and status in {"accepted", "new", "pending_new", "held"}:
+                    continue
+                age = _order_age_seconds(order, now)
+                stored = database.get_order(
+                    alpaca_order_id=_text(_field(order, "id")) or None,
+                    client_order_id=_text(_field(order, "client_order_id")) or None,
+                ) or {}
+                timeout = self._entry_timeout_seconds(stored) if not parent_id else self.settings.execution_order_state_timeout_seconds
+                if age is None or age < timeout:
+                    continue
+                order_id = _text(_field(order, "id"))
+                if not order_id:
                     failures += 1
-                    logger.warning("stuck order recovery failed order_id=%s status=%s error=%s", order_id, status, exc)
+                    continue
+                try:
+                    current = self.trading_client.get_order_by_id(order_id)
+                    if _status(current) not in _ACTIVE_ORDER_STATUSES:
+                        continue
+                    if not parent_id and self._try_reprice_entry(database, current, stored, now):
+                        continue
+                    self.coordinator.cancel_order(order_id, reason=f"entry_timeout_{status}" if not parent_id else f"stuck_{status}")
+                except Exception as exc:
+                    if not _is_terminal_cancel_error(exc):
+                        failures += 1
+                        logger.warning("stuck order recovery failed order_id=%s status=%s error=%s", order_id, status, exc)
+        finally:
+            database.close()
         if failures:
             self._trip("order_state", f"{failures} stuck orders could not be recovered")
         else:
             self.state.record_success("order_state")
+
+    def _entry_timeout_seconds(self, stored: dict[str, Any]) -> int:
+        if str(stored.get("playbook") or "") == "news_event":
+            return self.settings.execution_news_entry_timeout_seconds
+        if str(stored.get("strategy_path") or "minute") == "fast":
+            return self.settings.execution_fast_entry_timeout_seconds
+        return self.settings.execution_minute_entry_timeout_seconds
+
+    def _try_reprice_entry(
+        self,
+        database: Database,
+        order: Any,
+        stored: dict[str, Any],
+        now: datetime,
+    ) -> bool:
+        if self.settings.execution_entry_max_reprices == 0:
+            return False
+        order_id = _text(_field(order, "id"))
+        prior = database.conn.execute(
+            """SELECT COUNT(*) AS count FROM order_intents
+               WHERE intent_type='replace' AND details_json LIKE ?""",
+            (f'%"order_id": "{order_id}"%',),
+        ).fetchone()
+        if int(prior["count"] or 0) >= self.settings.execution_entry_max_reprices:
+            return False
+        quote = database.get_latest_quote(self.settings.bot_symbol)
+        if not quote or not quote.get("timestamp"):
+            return False
+        quote_age = max(0.0, (now - ensure_utc(quote["timestamp"])).total_seconds())
+        strategy_path = str(stored.get("strategy_path") or "minute")
+        quote_limit = (
+            self.settings.fast_scalp_max_quote_age_seconds
+            if strategy_path == "fast"
+            else self.settings.minute_entry_max_quote_age_seconds
+        )
+        if quote_age > quote_limit:
+            return False
+        bid = _float(quote.get("bid_price"))
+        ask = _float(quote.get("ask_price"))
+        side = _text(_field(order, "side") or stored.get("side")).lower()
+        current_limit = _float(_field(order, "limit_price") or stored.get("limit_price"))
+        candidate = ask if side == "buy" else bid if side == "sell" else 0.0
+        if candidate <= 0 or current_limit <= 0 or abs(candidate / current_limit - 1.0) > self.settings.execution_entry_max_reprice_pct:
+            return False
+        if side == "buy" and candidate <= current_limit or side == "sell" and candidate >= current_limit:
+            return False
+        stop = _float(stored.get("stop_price"))
+        target = _float(stored.get("take_profit_price"))
+        risk = candidate - stop if side == "buy" else stop - candidate
+        reward = target - candidate if side == "buy" else candidate - target
+        economic_move = candidate * _float(stored.get("economic_breakeven_pct"))
+        if risk <= 0 or reward <= max(risk * self.settings.position_min_reward_risk, economic_move * 1.5):
+            return False
+        try:
+            from alpaca.trading.requests import ReplaceOrderRequest
+        except Exception:
+            return False
+        self.coordinator.replace_order(
+            order_id,
+            ReplaceOrderRequest(limit_price=round(candidate, 2)),
+            idempotency_key=f"entry_reprice:{order_id}:{round(candidate, 2)}",
+            episode_id=_root_client_order_id(_text(_field(order, "client_order_id"))),
+        )
+        logger.info(
+            "repriced stale entry order_id=%s strategy_path=%s old_limit=%.2f new_limit=%.2f quote_age=%.2f",
+            order_id,
+            strategy_path,
+            current_limit,
+            candidate,
+            quote_age,
+            extra={"event_type": "entry_repriced"},
+        )
+        return True
 
     def _load_broker_state(self) -> tuple[Any | None, list[Any], Any | None]:
         positions = list(self.trading_client.get_all_positions() or [])
@@ -914,6 +998,14 @@ def _flatten_order_nodes(orders: list[Any]) -> list[tuple[Any, str | None]]:
 def _single_direction(episodes: list[dict[str, Any]]) -> str:
     directions = {str(item.get("direction") or "").upper() for item in episodes if item.get("direction")}
     return next(iter(directions)) if len(directions) == 1 else "MIXED" if directions else ""
+
+
+def _root_client_order_id(client_order_id: str) -> str | None:
+    value = str(client_order_id or "")
+    for suffix in ("-TAKE", "-RUN"):
+        if value.upper().endswith(suffix):
+            return value[: -len(suffix)]
+    return value or None
 
 
 def _order_age_seconds(order: Any, now: datetime) -> float | None:

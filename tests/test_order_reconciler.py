@@ -187,6 +187,92 @@ def test_standalone_closing_leg_never_becomes_active_direction_episode(tmp_path)
     }
 
 
+def test_bracket_cancellations_are_classified_by_group_semantics(tmp_path):
+    settings = Settings(database_url=f"sqlite:///{tmp_path / 'cancel-groups.db'}")
+    db = Database(settings=settings)
+    db.init_db()
+    now = datetime(2026, 8, 5, 18, 50, tzinfo=timezone.utc)
+    canceled_child = SimpleNamespace(
+        id="stop-cascade", client_order_id="stop-cascade-client", symbol="GLD", side="sell",
+        order_type="stop", order_class="bracket", status="canceled", qty=1, filled_qty=0,
+        filled_avg_price=None, submitted_at=now, filled_at=None, legs=[],
+    )
+    canceled_parent = SimpleNamespace(
+        id="parent-cascade", client_order_id="GLD-CASCADE-LONG", symbol="GLD", side="buy",
+        order_type="limit", order_class="bracket", status="canceled", qty=1, filled_qty=0,
+        filled_avg_price=None, submitted_at=now, filled_at=None, legs=[canceled_child],
+    )
+    filled_target = SimpleNamespace(
+        id="target-filled", client_order_id="target-filled-client", symbol="GLD", side="sell",
+        order_type="limit", order_class="bracket", status="filled", qty=1, filled_qty=1,
+        filled_avg_price=101, submitted_at=now, filled_at=now, legs=[],
+    )
+    canceled_stop = SimpleNamespace(
+        id="stop-oco", client_order_id="stop-oco-client", symbol="GLD", side="sell",
+        order_type="stop", order_class="bracket", status="canceled", qty=1, filled_qty=0,
+        filled_avg_price=None, submitted_at=now, filled_at=None, legs=[],
+    )
+    filled_parent = SimpleNamespace(
+        id="parent-filled", client_order_id="GLD-OCO-LONG", symbol="GLD", side="buy",
+        order_type="limit", order_class="bracket", status="filled", qty=1, filled_qty=1,
+        filled_avg_price=100, submitted_at=now, filled_at=now, legs=[filled_target, canceled_stop],
+    )
+
+    PaperOrderReconciler(settings, db, FakeTradingClient([canceled_parent, filled_parent])).sync(now)
+
+    cascade = db.conn.execute("SELECT cancel_reason FROM orders WHERE alpaca_order_id='stop-cascade'").fetchone()
+    oco = db.conn.execute("SELECT cancel_reason FROM orders WHERE alpaca_order_id='stop-oco'").fetchone()
+    assert cascade["cancel_reason"] == "parent_entry_canceled"
+    assert oco["cancel_reason"] == "expected_oco_sibling_filled"
+
+
+def test_trade_update_is_persisted_without_full_rest_sync(tmp_path):
+    settings = Settings(database_url=f"sqlite:///{tmp_path / 'stream-update.db'}")
+    db = Database(settings=settings)
+    db.init_db()
+    now = datetime(2026, 8, 5, 18, 50, tzinfo=timezone.utc)
+    order = SimpleNamespace(
+        id="stream-entry", client_order_id="GLD-STREAM-LONG", parent_order_id=None,
+        symbol="GLD", side="buy", position_intent="buy_to_open", order_type="limit",
+        order_class="bracket", time_in_force="day", status="filled", qty=1,
+        filled_qty=1, filled_avg_price=100, submitted_at=now, filled_at=now, legs=[],
+    )
+
+    result = PaperOrderReconciler(settings, db).process_trade_update(
+        SimpleNamespace(event="fill", order=order), now
+    )
+
+    assert result["orders"] == 1
+    assert result["fills"] == 1
+    assert db.get_order(alpaca_order_id="stream-entry")["status"] == "filled"
+
+
+def test_single_stream_cancellation_uses_stored_oco_sibling(tmp_path):
+    settings = Settings(database_url=f"sqlite:///{tmp_path / 'stream-oco.db'}")
+    db = Database(settings=settings)
+    db.init_db()
+    now = datetime(2026, 8, 5, 18, 50, tzinfo=timezone.utc)
+    reconciler = PaperOrderReconciler(settings, db)
+    filled_target = SimpleNamespace(
+        id="stream-target", parent_order_id="stream-parent", client_order_id="stream-target-client",
+        symbol="GLD", side="sell", position_intent="sell_to_close", order_type="limit",
+        order_class="bracket", time_in_force="day", status="filled", qty=1, filled_qty=1,
+        filled_avg_price=101, submitted_at=now, filled_at=now, legs=[],
+    )
+    canceled_stop = SimpleNamespace(
+        id="stream-stop", parent_order_id="stream-parent", client_order_id="stream-stop-client",
+        symbol="GLD", side="sell", position_intent="sell_to_close", order_type="stop",
+        order_class="bracket", time_in_force="day", status="canceled", qty=1, filled_qty=0,
+        filled_avg_price=None, submitted_at=now, filled_at=None, canceled_at=now, legs=[],
+    )
+
+    reconciler.process_trade_update(SimpleNamespace(event="fill", order=filled_target), now)
+    reconciler.process_trade_update(SimpleNamespace(event="canceled", order=canceled_stop), now)
+
+    stored = db.get_order(alpaca_order_id="stream-stop")
+    assert stored["cancel_reason"] == "expected_oco_sibling_filled"
+
+
 def test_closed_atomic_episode_materializes_one_root_outcome_with_metadata(tmp_path):
     settings = Settings(database_url=f"sqlite:///{tmp_path / 'atomic-outcome.db'}")
     db = Database(settings=settings)

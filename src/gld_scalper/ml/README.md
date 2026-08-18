@@ -80,6 +80,14 @@ Return to the [project manual](../../../README.md).
 **Public interfaces:** `apply_transformer_to_signal`, `apply_transformer_to_fast_decision`.
 **Module constants:** `LABEL_TO_ACTION`.
 
+#### Raw Fast Dataset Checkpoints
+
+`transformer_dataset.py` queries raw quotes and trades with direct indexed
+timestamp ranges. Each selected archive window is atomically cached under
+`<artifact>.building`; rerunning identical arguments reloads completed windows
+and continues. The final `.seq` directory is created only after all labels and
+arrays are ready, and successful completion removes the checkpoint directory.
+
 #### `transformer_continual.py`
 **Public interfaces:** `TransformerContinualTrainingRunner`, `combine_transformer_artifacts`, `parse_scope_artifacts`.
 **Module constants:** `SEARCH_CONFIGURATIONS`.
