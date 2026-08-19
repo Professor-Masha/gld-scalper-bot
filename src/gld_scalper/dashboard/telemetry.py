@@ -1,0 +1,128 @@
+from __future__ import annotations
+
+import json
+import sqlite3
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+
+class TelemetryRepository:
+    """Read dashboard telemetry without participating in trading transactions."""
+
+    def __init__(self, database_path: Path) -> None:
+        self.database_path = database_path
+
+    def snapshot(self) -> dict[str, Any]:
+        if not self.database_path.exists():
+            return {"database_available": False, "database": str(self.database_path)}
+        try:
+            connection = self._connect()
+        except sqlite3.OperationalError as exc:
+            return {"database_available": False, "database": str(self.database_path), "database_error": str(exc)}
+        try:
+            performance = self._one(connection, """SELECT COUNT(*) AS trades,
+                COALESCE(SUM(net_pnl_after_costs),0) AS net_pnl, COALESCE(SUM(gross_pnl),0) AS gross_pnl,
+                COALESCE(SUM(CASE WHEN net_pnl_after_costs>0 THEN 1 ELSE 0 END),0) AS wins,
+                COALESCE(AVG(holding_seconds),0) AS avg_holding_seconds
+                FROM trade_outcomes WHERE COALESCE(exit_time,entry_time)>=datetime('now','start of day')""") or {}
+            trades = int(performance.get("trades") or 0)
+            performance["win_rate"] = float(performance.get("wins") or 0) / trades if trades else 0.0
+            return {
+                "database_available": True, "database": str(self.database_path),
+                "server_time": datetime.now(timezone.utc).isoformat(),
+                "account": self._one(connection, "SELECT * FROM account_snapshots ORDER BY timestamp DESC,id DESC LIMIT 1"),
+                "quote": self._one(connection, "SELECT * FROM quotes WHERE symbol='GLD' ORDER BY timestamp DESC,id DESC LIMIT 1"),
+                "signal": self._one(connection, "SELECT * FROM signals WHERE symbol='GLD' ORDER BY timestamp DESC,id DESC LIMIT 1"),
+                "transformer": self._one(connection, "SELECT * FROM transformer_predictions ORDER BY timestamp DESC,id DESC LIMIT 1"),
+                "macro": self._one(connection, "SELECT * FROM macro_context ORDER BY timestamp DESC,id DESC LIMIT 1"),
+                "safety": self._one(connection, "SELECT * FROM execution_safety_events ORDER BY timestamp DESC,id DESC LIMIT 1"),
+                "performance": performance,
+                "active_episodes": self._all(connection, """SELECT episode_id,direction,strategy_path,playbook,status,
+                    filled_qty,remaining_qty,entry_avg_price,realized_pnl,opened_at,updated_at
+                    FROM execution_episodes WHERE closed_at IS NULL ORDER BY opened_at DESC LIMIT 20"""),
+                "counts": {name: self._count(connection, table) for name, table in {
+                    "signals":"signals", "orders":"orders", "fills":"fills", "outcomes":"trade_outcomes", "models":"model_versions"
+                }.items()},
+            }
+        finally:
+            connection.close()
+
+    def trades(self, limit: int = 100) -> list[dict[str, Any]]:
+        return self._query("""SELECT trade_id,direction,strategy_path,playbook,entry_time,exit_time,entry_price,
+            exit_price,qty,gross_pnl,net_pnl_after_costs,pnl_pct,holding_seconds,exit_reason,win_loss,
+            confidence,exploration_trade,regime,spread_cost,slippage_cost,estimated_fees,
+            estimated_live_cost,profit_given_back,max_favorable_excursion,max_adverse_excursion
+            FROM trade_outcomes
+            ORDER BY COALESCE(exit_time,entry_time) DESC LIMIT ?""", (max(1,min(limit,5000)),))
+
+    def decisions(self, limit: int = 100) -> list[dict[str, Any]]:
+        return self._query("""SELECT timestamp,decision,confidence,bullish_score,bearish_score,no_trade_score,
+            regime,reason,model_version FROM signals ORDER BY timestamp DESC,id DESC LIMIT ?""", (max(1,min(limit,500)),))
+
+    def models(self) -> list[dict[str, Any]]:
+        return self._query("""SELECT model_version,model_type,model_scope,status,created_at,training_start,
+            training_end,feature_profile,metrics_json,rejection_reason FROM model_versions ORDER BY created_at DESC LIMIT 100""")
+
+    def equity_curve(self, limit: int = 500) -> list[dict[str, Any]]:
+        return list(reversed(self._query("""SELECT timestamp,equity,realized_pl,unrealized_pl,drawdown_pct
+            FROM account_snapshots ORDER BY timestamp DESC,id DESC LIMIT ?""", (max(10,min(limit,2000)),))))
+
+    def market_series(self, limit: int = 390) -> list[dict[str, Any]]:
+        return list(reversed(self._query("""SELECT timestamp,open,high,low,close,volume,vwap
+            FROM bars WHERE symbol='GLD' AND timeframe='1Min'
+            ORDER BY timestamp DESC,id DESC LIMIT ?""", (max(30,min(limit,2000)),))))
+
+    def diagnostics(self, limit: int = 100) -> dict[str, Any]:
+        return {
+            "stream": self._query("SELECT * FROM stream_diagnostics ORDER BY timestamp DESC,id DESC LIMIT ?", (limit,)),
+            "safety": self._query("SELECT * FROM execution_safety_events ORDER BY timestamp DESC,id DESC LIMIT ?", (limit,)),
+            "audits": self._query("SELECT * FROM performance_consistency_audits ORDER BY timestamp DESC,id DESC LIMIT ?", (limit,)),
+        }
+
+    def llm_activity(self, limit: int = 30) -> dict[str, list[dict[str, Any]]]:
+        bounded = max(1, min(limit, 100))
+        return {
+            "reviews": self._query("SELECT * FROM llm_reviews ORDER BY id DESC LIMIT ?", (bounded,)),
+            "advice": self._query("SELECT * FROM llm_training_advice ORDER BY id DESC LIMIT ?", (bounded,)),
+            "labels": self._query("SELECT * FROM llm_signal_labels ORDER BY id DESC LIMIT ?", (bounded,)),
+        }
+
+    def _query(self, sql: str, parameters: tuple[Any,...] = ()) -> list[dict[str,Any]]:
+        if not self.database_path.exists(): return []
+        connection = self._connect()
+        try: return self._all(connection, sql, parameters)
+        except sqlite3.OperationalError: return []
+        finally: connection.close()
+
+    def _connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(f"file:{self.database_path.as_posix()}?mode=ro", uri=True, timeout=3, check_same_thread=False)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA query_only=ON")
+        connection.execute("PRAGMA busy_timeout=3000")
+        return connection
+
+    @staticmethod
+    def _one(connection: sqlite3.Connection, sql: str) -> dict[str,Any] | None:
+        try:
+            row=connection.execute(sql).fetchone(); return _row(row) if row else None
+        except sqlite3.OperationalError: return None
+    @staticmethod
+    def _all(connection: sqlite3.Connection, sql: str, parameters: tuple[Any,...]=()) -> list[dict[str,Any]]:
+        try:
+            return [_row(row) for row in connection.execute(sql,parameters).fetchall()]
+        except sqlite3.OperationalError:
+            return []
+    @staticmethod
+    def _count(connection: sqlite3.Connection, table: str) -> int:
+        try: return int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+        except sqlite3.OperationalError: return 0
+
+
+def _row(row: sqlite3.Row) -> dict[str,Any]:
+    result=dict(row)
+    for key,value in list(result.items()):
+        if key.endswith("_json") and isinstance(value,str):
+            try: result[key]=json.loads(value)
+            except json.JSONDecodeError: pass
+    return result

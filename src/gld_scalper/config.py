@@ -284,6 +284,10 @@ class Settings:
     position_min_stop_improvement: float = 0.02
     position_stop_replace_cooldown_seconds: int = 2
     position_profitable_time_exit_buffer_pct: float = 0.00010
+    position_min_net_profit_pct: float = 0.00010
+    position_soft_exit_min_hold_seconds: int = 30
+    position_allow_discretionary_loss_exit: bool = False
+    position_structural_profit_exit_votes: int = 1
     position_invalidation_min_loss_pct: float = 0.00025
     position_invalidation_min_confidence: float = 0.80
     position_invalidation_required_votes: int = 2
@@ -628,12 +632,18 @@ class Settings:
             raise RuntimeError("Dynamic stop replacement must improve by at least $0.01 and wait at least one second.")
         if not 0.0 <= self.position_profitable_time_exit_buffer_pct < self.position_emergency_stop_pct:
             raise RuntimeError("POSITION_PROFITABLE_TIME_EXIT_BUFFER_PCT is outside the supported range.")
+        if not 0.0 <= self.position_min_net_profit_pct < self.position_emergency_stop_pct:
+            raise RuntimeError("POSITION_MIN_NET_PROFIT_PCT is outside the supported range.")
+        if self.position_soft_exit_min_hold_seconds < 0:
+            raise RuntimeError("Position soft-exit minimum hold cannot be negative.")
         if not 0.0 <= self.position_invalidation_min_loss_pct < self.position_emergency_stop_pct:
             raise RuntimeError("POSITION_INVALIDATION_MIN_LOSS_PCT must be below the emergency stop.")
         if not 0.0 <= self.position_invalidation_min_confidence <= 1.0:
             raise RuntimeError("POSITION_INVALIDATION_MIN_CONFIDENCE must be between 0 and 1.")
         if self.position_invalidation_required_votes < 1 or self.position_force_flatten_minutes_before_close < 1:
             raise RuntimeError("Position invalidation votes and force-flatten minutes must be positive.")
+        if self.position_structural_profit_exit_votes < 1:
+            raise RuntimeError("POSITION_STRUCTURAL_PROFIT_EXIT_VOTES must be positive.")
         if not (
             self.position_close_management_minutes_before_close
             > self.position_close_risk_reduction_minutes_before_close
@@ -974,6 +984,10 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         position_min_stop_improvement=_float_env("POSITION_MIN_STOP_IMPROVEMENT", 0.02),
         position_stop_replace_cooldown_seconds=_int_env("POSITION_STOP_REPLACE_COOLDOWN_SECONDS", 2),
         position_profitable_time_exit_buffer_pct=_float_env("POSITION_PROFITABLE_TIME_EXIT_BUFFER_PCT", 0.00010),
+        position_min_net_profit_pct=_float_env("POSITION_MIN_NET_PROFIT_PCT", 0.00010),
+        position_soft_exit_min_hold_seconds=_int_env("POSITION_SOFT_EXIT_MIN_HOLD_SECONDS", 30),
+        position_allow_discretionary_loss_exit=_bool_env("POSITION_ALLOW_DISCRETIONARY_LOSS_EXIT", False),
+        position_structural_profit_exit_votes=_int_env("POSITION_STRUCTURAL_PROFIT_EXIT_VOTES", 1),
         position_invalidation_min_loss_pct=_float_env("POSITION_INVALIDATION_MIN_LOSS_PCT", 0.00025),
         position_invalidation_min_confidence=_float_env("POSITION_INVALIDATION_MIN_CONFIDENCE", 0.80),
         position_invalidation_required_votes=_int_env("POSITION_INVALIDATION_REQUIRED_VOTES", 2),

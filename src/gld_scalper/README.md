@@ -22,6 +22,7 @@ Return to the [project manual](../../README.md).
 | [`config.py`](../../src/gld_scalper/config.py) | Typed environment configuration, defaults, validation, data-mode separation, and credential guards. |
 | [`data_collector.py`](../../src/gld_scalper/data_collector.py) | Python module exposing `HistoricalDataCollector`. |
 | [`database.py`](../../src/gld_scalper/database.py) | SQLite connection owner, schema migrations, transactional repositories, and episode/order/outcome persistence. |
+| [`dashboard/`](../../src/gld_scalper/dashboard/README.md) | Local FastAPI command center, read-only telemetry, allowlisted process supervision, masked settings, TradingView, and live logs. |
 | [`decision_council.py`](../../src/gld_scalper/decision_council.py) | Fast deterministic data-health, microstructure, Bull/Bear, and risk council with auditable votes and hard blocks. |
 | [`ema_cross_strategy.py`](../../src/gld_scalper/ema_cross_strategy.py) | Python module exposing `EMACrossState`, `EMACrossEvent`, `EMACrossSelection`, `EMACrossEvaluation`. |
 | [`entry_quality.py`](../../src/gld_scalper/entry_quality.py) | Python module exposing `EntryGateResult`, `time_of_day_profile`, `EntryQualityGate`, `EntryCooldownPolicy`. |
@@ -327,6 +328,18 @@ idempotency, reconciles state, and owns circuit-breaker entry freezes.
 `order_reconciler.py` imports broker order/fill truth and atomically closes
 episodes. `shortability.py` verifies that a proposed short can be supported by
 the broker before submission.
+
+`position_manager.py` keeps broker stops immediately effective but gives new
+positions a configurable grace before discretionary loss exits. Its
+invalidation quorum counts evidence groups, so correlated structure features
+cannot manufacture consensus. Protected-exit replacement also validates the
+Alpaca long/short bracket price relationship before calling the broker; an
+unsafe replacement is deferred to the active stop and recorded for audit.
+Normal configuration disables discretionary exits at a loss. One structural
+reversal can close an economically profitable position, but the threshold must
+cover measured entry cost, expected exit spread, slippage, fees, and the
+configured minimum net-profit buffer. Model and indicator disagreement remains
+advisory for an open losing episode and cannot outrank its broker stop.
 
 Only modules in this group should handle an Alpaca trading client. Even here,
 order-changing operations should pass through the shared coordinator rather

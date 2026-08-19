@@ -15,6 +15,9 @@ Return to the [project manual](../README.md).
 
 | File | Responsibility |
 |---|---|
+| [`launch_dashboard.ps1`](../scripts/launch_dashboard.ps1) | Starts or reuses the local dashboard server and opens Edge in standalone app mode. |
+| [`stop_dashboard.ps1`](../scripts/stop_dashboard.ps1) | Validates and stops only the recorded dashboard server process. |
+| [`install_dashboard_shortcut.ps1`](../scripts/install_dashboard_shortcut.ps1) | Creates the current user's Desktop application shortcut. |
 | [`install_git_hooks.ps1`](../scripts/install_git_hooks.ps1) | Windows PowerShell operations entry point. |
 | [`install_ubuntu.sh`](../scripts/install_ubuntu.sh) | POSIX shell operations entry point. |
 | [`run_backfill.sh`](../scripts/run_backfill.sh) | POSIX shell operations entry point. |
@@ -29,6 +32,9 @@ same implementation.
 
 | Script | Connection to Python |
 |---|---|
+| `launch_dashboard.ps1` | Health-checks localhost, starts `gld_scalper.main dashboard` in a hidden process when needed, then opens the local app. |
+| `stop_dashboard.ps1` | Checks the PID and command line before stopping the dashboard; it does not stop or replace the bot's safety shutdown. |
+| `install_dashboard_shortcut.ps1` | Uses Windows Script Host to create a Desktop `.lnk` that invokes the launcher without exposing a console window. |
 | `run_paper.sh` | Changes to the project context and invokes `python -m gld_scalper.main run-paper`. |
 | `run_backfill.sh` | Invokes the CLI backfill command using environment configuration. |
 | `train_model.sh` | Invokes the classical training command; promotion remains controlled by Python. |

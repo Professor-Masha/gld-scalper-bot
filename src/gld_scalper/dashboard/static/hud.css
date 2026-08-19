@@ -1,0 +1,1 @@
+body{background:transparent}.hud-3d{position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:0;opacity:.42}.shell{position:relative;z-index:1;background-color:rgba(2,8,6,.88)}.sidebar{background-color:rgba(2,8,6,.94)}@media(prefers-reduced-motion:reduce){.hud-3d{opacity:.25}}

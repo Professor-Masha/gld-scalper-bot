@@ -1,0 +1,11 @@
+{
+  "name": "Mashcorp GLD Command Center",
+  "short_name": "GLD Command",
+  "description": "Local paper-trading operations dashboard for the Mashcorp GLD Scalper Bot.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#020609",
+  "theme_color": "#020609",
+  "icons": [{"src":"/static/assets/mashcorp-mc-icon.png","sizes":"1024x1024","type":"image/png","purpose":"any maskable"}]
+}

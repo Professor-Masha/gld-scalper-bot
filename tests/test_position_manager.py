@@ -6,6 +6,7 @@ from gld_scalper.database import Database
 from gld_scalper.position_manager import (
     DynamicPositionRuntime,
     ManagedTrade,
+    _bracket_safe_exit_limit,
     _managed_trades_from_orders,
 )
 
@@ -97,6 +98,7 @@ def test_negative_trade_gets_recovery_room_without_invalidation():
 
 def test_negative_trade_exits_only_after_required_invalidation_votes():
     settings = Settings(
+        position_allow_discretionary_loss_exit=True,
         position_invalidation_min_loss_pct=0.00025,
         position_invalidation_min_confidence=0.80,
         position_invalidation_required_votes=2,
@@ -118,6 +120,106 @@ def test_negative_trade_exits_only_after_required_invalidation_votes():
         "request_exit",
         "setup_invalidated: opposite deterministic signal, opposite ML signal",
     )
+
+
+def test_negative_trade_does_not_soft_exit_during_initial_hold_window():
+    settings = Settings(
+        position_allow_discretionary_loss_exit=True,
+        position_soft_exit_min_hold_seconds=30,
+        position_invalidation_min_loss_pct=0.00025,
+        position_invalidation_required_votes=2,
+    )
+    runtime = DynamicPositionRuntime(settings)
+    now = datetime(2026, 7, 13, 15, 0, tzinfo=timezone.utc)
+    episode = _episode(now)
+    episode.update_mark(199.9)
+    runtime._latest_quote = {"bid_price": 199.89, "ask_price": 199.91}
+    runtime.update_context(
+        {
+            "decision": "SHORT",
+            "confidence": 0.90,
+            "ml_predicted_direction": "short_good",
+            "ml_confidence": 0.90,
+        }
+    )
+
+    action = runtime._next_action(episode, episode.pnl_pct(199.9), 0.0001, now + timedelta(seconds=15))
+
+    assert action is None
+
+
+def test_correlated_structure_signals_count_as_one_invalidation_group():
+    settings = Settings(position_invalidation_required_votes=2)
+    runtime = DynamicPositionRuntime(settings)
+
+    runtime.update_context(
+        {
+            "order_block_direction": "bearish",
+            "order_block_strength": 0.90,
+            "fvg_direction": "bearish",
+        }
+    )
+
+    invalidated, reason = runtime._setup_invalidated("LONG")
+
+    assert invalidated is False
+    assert "opposite order block" in reason
+    assert "opposite fair-value-gap structure" in reason
+
+
+def test_bracket_safe_exit_limit_preserves_alpaca_price_ordering():
+    assert _bracket_safe_exit_limit("LONG", 200.10, 199.80) == 200.10
+    assert _bracket_safe_exit_limit("SHORT", 199.90, 200.20) == 199.90
+    assert _bracket_safe_exit_limit("LONG", 199.79, 199.80) is None
+    assert _bracket_safe_exit_limit("SHORT", 200.21, 200.20) is None
+
+
+def test_conflicting_models_cannot_force_a_discretionary_loss_exit_by_default():
+    runtime = DynamicPositionRuntime(Settings(position_invalidation_required_votes=2))
+    now = datetime(2026, 7, 13, 15, 0, tzinfo=timezone.utc)
+    episode = _episode(now - timedelta(minutes=2))
+    episode.update_mark(199.8)
+    runtime._latest_quote = {"bid_price": 199.79, "ask_price": 199.81}
+    runtime.update_context(
+        {
+            "decision": "SHORT",
+            "confidence": 0.95,
+            "ml_predicted_direction": "short_good",
+            "ml_confidence": 0.95,
+        }
+    )
+
+    action = runtime._next_action(episode, episode.pnl_pct(199.8), 0.0001, now)
+
+    assert action is None
+
+
+def test_one_structural_vote_exits_only_above_after_cost_profit_floor():
+    runtime = DynamicPositionRuntime(
+        Settings(position_structural_profit_exit_votes=1, position_min_net_profit_pct=0.0001)
+    )
+    now = datetime(2026, 7, 13, 15, 0, tzinfo=timezone.utc)
+    episode = _episode(now - timedelta(minutes=2))
+    runtime._latest_quote = {"bid_price": 200.05, "ask_price": 200.07}
+    runtime.update_context({"order_block_direction": "bearish", "order_block_strength": 0.90})
+
+    below_cost = runtime._next_action(episode, episode.pnl_pct(200.03), 0.0001, now)
+    above_cost = runtime._next_action(episode, episode.pnl_pct(200.06), 0.0001, now)
+
+    assert below_cost is None
+    assert above_cost is not None
+    assert above_cost[0] == "request_exit"
+    assert above_cost[1].startswith("structural_reversal_profit_exit")
+
+
+def test_realized_entry_cost_raises_profit_exit_threshold():
+    runtime = DynamicPositionRuntime(Settings(position_min_net_profit_pct=0.0001))
+    episode = _episode(datetime(2026, 7, 13, 15, 0, tzinfo=timezone.utc))
+    episode.details["realized_entry_cost_pct"] = 0.0004
+
+    threshold = runtime._economic_breakeven_pct(episode, 0.0001)
+
+    assert threshold >= 0.00055
 
 
 def test_profitable_trade_arms_breakeven_before_trailing():

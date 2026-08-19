@@ -10,6 +10,8 @@ Normal paper mode is intentionally conservative. The optional controlled paper-l
 
 This bot is paper trading only. It is not financial advice, and paper trading results do not guarantee live trading results. Alpaca paper trading is a simulation, not a perfect copy of live market execution.
 
+The local command center uses the bot's SQLite/Alpaca bars rather than an embedded chart service. It includes responsive candlesticks and volume, cost-aware analytics, visible backtest results, automatic Transformer scope presets, discovered single- and multi-candidate training, an offline AI research console, and a locally vendored Three.js HUD. The interface source map and security boundary are in `src/gld_scalper/dashboard/README.md`.
+
 ## What The Bot Does Every Minute
 
 1. Syncs recent Alpaca GLD paper orders back into SQLite.
@@ -378,17 +380,81 @@ never repair the symptom by deleting episode history.
 
 This is the consolidated operator guide for the current bot. The detailed
 sections later in this README explain every subsystem and equation; this section
-explains the order in which those subsystems are used. The application is a
-PowerShell/CLI service rather than a graphical desktop interface. Its four
+explains the order in which those subsystems are used. The application now has
+a local browser command center in addition to its PowerShell interface. Its five
 operator interfaces are:
 
-1. **PowerShell CLI**: initialize databases, collect data, label outcomes, train,
+1. **Local dashboard**: start and stop paper trading, inspect TradingView GLD,
+   monitor account and execution telemetry, review decisions and root episodes,
+   launch training jobs, tail logs, and update masked local connections.
+2. **PowerShell CLI**: initialize databases, collect data, label outcomes, train,
    inspect status, export evidence, and start or stop paper trading.
-2. **SQLite**: durable paper memory for decisions, predictions, episodes, fills,
+3. **SQLite**: durable paper memory for decisions, predictions, episodes, fills,
    outcomes, advisories, promotion history, and safety events.
-3. **CSV exports and reports**: human-readable analysis grouped by data domain.
-4. **Logs and status commands**: operational health, loaded model roles,
+4. **CSV exports and reports**: human-readable analysis grouped by data domain.
+5. **Logs and status commands**: operational health, loaded model roles,
    Transformer prediction counts, reconciliation state, and training progress.
+
+### Local Dashboard
+
+Install the project dependencies once, then launch the command center:
+
+```powershell
+cd "D:\ALPACA TEST\gld_scalper_bot"
+.\.venv\Scripts\python.exe -m pip install -e .
+.\.venv\Scripts\python.exe -m gld_scalper.main dashboard
+```
+
+The browser opens `http://127.0.0.1:8765`. Keep the dashboard terminal window
+open while using it. Use `--no-browser` when running on a server with an SSH
+tunnel, and never expose the port publicly. The server rejects non-local binds,
+does not enable CORS, and requires a random same-origin token for state-changing
+requests.
+
+For normal daily use, install the Desktop launcher once:
+
+```powershell
+cd "D:\ALPACA TEST\gld_scalper_bot"
+powershell.exe -ExecutionPolicy Bypass -File .\scripts\install_dashboard_shortcut.ps1
+```
+
+Double-click **Mashcorp GLD Command Center** on the Desktop. The launcher starts
+the Python dashboard server in the background, waits for its health endpoint,
+and opens Microsoft Edge in standalone application mode. It reuses an existing
+dashboard instead of starting a duplicate. ChatGPT and Codex are not required.
+
+To stop only the dashboard server later:
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\scripts\stop_dashboard.ps1
+```
+
+Stopping the dashboard server is not a substitute for stopping an active paper
+bot. Stop paper trading from the dashboard first so broker reconciliation and
+the normal shutdown sequence can complete.
+
+The dashboard is an operator shell, not a replacement execution engine. Start
+controls launch the existing allowlisted CLI command in a child process. Paper
+orders still pass through the synchronized order coordinator, execution safety,
+reconciliation, and broker clients. TradingView is visual analysis only and
+cannot submit an Alpaca order.
+
+| View | Operational responsibility |
+|---|---|
+| Overview | GLD quote, account equity, daily P/L, latest decision, open episodes, quick commands, and live bot log. |
+| Market | Embedded `AMEX:GLD` TradingView workstation plus quote, macro, Transformer, and safety context. |
+| Performance | Equity curve, after-cost P/L, win rate, holding time, and closed root outcomes. |
+| Trades | Auditable root trading episodes rather than duplicated partial-exit tranches. |
+| Intelligence | Agent votes, conventional ML, Transformer state, macro context, and decision history. |
+| Training | Classical candidate, continual loop, Transformer dataset/candidate, and backtest controls. |
+| System | Managed process states, execution safety, and per-job terminal output. |
+| Settings | Masked Alpaca and LLM settings stored only in the ignored local `.env`. |
+
+Blank credential fields preserve the existing values. The endpoint and child
+environment remain locked to Alpaca paper trading. Job output is written under
+`logs/dashboard/`; the bot continues writing `logs/bot.log`. See
+[`src/gld_scalper/dashboard/README.md`](src/gld_scalper/dashboard/README.md) for
+the backend security and process-lifecycle contract.
 
 ### Current Architecture JPEGs
 
@@ -1236,15 +1302,31 @@ The exit hierarchy is deliberately different from the old tight fixed-stop behav
 
 1. Every entry is created with a broker-resident catastrophic stop. Alpaca can execute this protection even if the local process or internet connection later fails.
 2. An ordinary temporary loss receives recovery room. Reaching `MAX_HOLDING_MINUTES` does not close a losing trade by itself.
-3. A losing episode can request an early protected exit only when at least `POSITION_INVALIDATION_REQUIRED_VOTES` independent context sources strongly invalidate the setup. The possible votes are the deterministic signal, the ML model, the order-block engine, and macro context.
-4. A profitable episode can move its stop to breakeven after `POSITION_BREAKEVEN_TRIGGER_PCT`.
-5. A stronger favorable move activates a one-direction trailing stop. The stop may tighten but can never move backward and increase risk.
-6. A trade beyond the normal holding period is closed only when its profit exceeds the configured buffer and estimated spread allowance.
-7. Any remaining episode is flattened shortly before the regular session close so a paper scalp does not silently become an overnight position.
+3. A losing episode cannot request a discretionary invalidation exit during the first `POSITION_SOFT_EXIT_MIN_HOLD_SECONDS` (default 30 seconds). This grace does not delay its broker-resident stop, session flattening, or an emergency shutdown.
+4. Normal paper operation sets `POSITION_ALLOW_DISCRETIONARY_LOSS_EXIT=false`. Conflicting deterministic, ML, technical, or macro opinions therefore cannot liquidate a losing position. The optional multi-group invalidation mechanism remains available for controlled research, but is disabled by default.
+5. A single qualifying structural reversal (`POSITION_STRUCTURAL_PROFIT_EXIT_VOTES=1`) may request an exit only after the position clears its complete after-cost profit floor. Order blocks, RSI divergence, and fair-value-gap evidence are recorded separately but belong to the same structural family.
+6. A profitable episode can move its stop to breakeven after `POSITION_BREAKEVEN_TRIGGER_PCT`.
+7. A stronger favorable move activates a one-direction trailing stop. The stop may tighten but can never move backward and increase risk.
+8. A trade beyond the normal holding period is closed only when its profit exceeds the complete after-cost floor.
+9. Any remaining episode is flattened shortly before the regular session close so a paper scalp does not silently become an overnight position.
 
-The bot cannot honestly guarantee that every exit will be profitable. A catastrophic stop, a strongly invalidated setup, or session-close protection may realize a loss. This is intentional: refusing every losing exit can turn a small scalp loss into an uncontrolled position. Stop orders can also fill away from their stop price during a gap or fast market.
+For normal exits, the required directional move is the maximum of the stored entry estimate, the current conservative estimate, and the realized-cost floor:
 
-The manager changes an existing bracket leg through Alpaca order replacement. Every request, failure, old stop, new stop, current mark, P/L, maximum favorable excursion, and maximum adverse excursion is saved in `position_management_events`. Restart state is saved in `position_management_state` and reconciled against the broker before further management.
+```text
+required move = realized entry cost
+              + estimated exit half-spread
+              + estimated one-way slippage
+              + estimated exit fee
+              + minimum net-profit buffer
+```
+
+`POSITION_MIN_NET_PROFIT_PCT` defaults to `0.00010`, or 0.01% of entry price, after estimated costs. Actual entry fill costs are loaded from SQLite rather than discarded. The final outcome still records gross P/L, entry and exit spread cost, measured adverse slippage, estimated fees, total estimated live cost, and net P/L after costs.
+
+GLD is a US-listed ETF, not a leveraged CFD, so the bot does not invent a swap charge. Alpaca paper trading also does not reproduce every live friction. The configurable estimates cover spread, slippage, and fees; compulsory live regulatory charges remain represented by the conservative per-share estimate. The strategy is intraday and does not intentionally carry margin interest or stock-borrow exposure overnight.
+
+The bot cannot honestly guarantee that every exit will be profitable. A catastrophic stop, execution-safety flatten, or session-close protection may realize a loss. This is intentional: refusing every losing exit can turn a small scalp loss into an uncontrolled position. Stop orders can also fill away from their stop price during a gap or fast market. The after-cost gate applies to discretionary profit-taking, structural reversal, trailing, giveback, liquidity, and profitable time exits; it cannot override mandatory safety.
+
+The manager changes an existing bracket leg through Alpaca order replacement. Before replacing a take-profit leg with a marketable protected-exit limit, it validates Alpaca's bracket ordering rule: a long bracket's take-profit must remain above its stop, while a short bracket's take-profit must remain below its stop. If the current market is already through that boundary, the replacement is deferred to the still-active broker stop instead of sending a predictably invalid request. The deferral is recorded as `PROTECTED_EXIT_DEFERRED`, and repeated attempts are rate-limited. Every request, deferral, failure, old stop, new stop, current mark, P/L, maximum favorable excursion, and maximum adverse excursion is saved in `position_management_events`. Restart state is saved in `position_management_state` and reconciled against the broker before further management.
 
 #### Sub-Minute Price Record
 

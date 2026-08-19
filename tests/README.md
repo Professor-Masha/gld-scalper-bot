@@ -1,5 +1,9 @@
 # Automated Test Suite
 
+`test_dashboard.py` verifies masked credential persistence, paper-mode forcing,
+project-contained paths, allowlisted process commands, read-only performance
+telemetry, and the local dashboard route surface.
+
 Unit and integration-style regression tests for safety, strategy, persistence, and learning.
 
 Return to the [project manual](../README.md).

@@ -19,6 +19,8 @@ dependencies = [
   "pydantic>=2.6.0",
   "pydantic-settings>=2.2.0",
   "python-dotenv>=1.0.0",
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.34.0",
   "pytest>=8.0.0",
   "tzdata>=2024.1",
 ]
@@ -41,7 +43,7 @@ gld-scalper = "gld_scalper.main:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-gld_scalper = ["schema.sql"]
+gld_scalper = ["schema.sql", "dashboard/static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

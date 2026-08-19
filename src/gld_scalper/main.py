@@ -734,6 +734,12 @@ def status_command(args: argparse.Namespace) -> None:
     print(json.dumps(status, indent=2, sort_keys=True))
 
 
+def dashboard_command(args: argparse.Namespace) -> None:
+    from .dashboard import run_dashboard
+
+    run_dashboard(host=args.host, port=args.port, open_browser=not args.no_browser)
+
+
 def run_paper_command(args: argparse.Namespace) -> None:
     settings = load_settings()
     settings.validate_safety()
@@ -2281,6 +2287,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     status = subparsers.add_parser("status", help="Show bot status")
     status.set_defaults(func=status_command)
+
+    dashboard = subparsers.add_parser("dashboard", help="Launch the local GLD operations dashboard")
+    dashboard.add_argument("--host", default="127.0.0.1", choices=["127.0.0.1", "localhost", "::1"])
+    dashboard.add_argument("--port", type=int, default=8765)
+    dashboard.add_argument("--no-browser", action="store_true", help="Do not open the browser automatically")
+    dashboard.set_defaults(func=dashboard_command)
     return parser
 
 

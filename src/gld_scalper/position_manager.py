@@ -424,10 +424,20 @@ class DynamicPositionRuntime:
             and (pnl_pct < economic_breakeven or episode.max_favorable_excursion < economic_breakeven * 1.5)
         ):
             return "request_exit", "session_close_risk_reduction", 0.0
+        structural_votes, structural_reason = self._structural_reversal_votes(episode.direction)
+        if (
+            len(structural_votes) >= self.settings.position_structural_profit_exit_votes
+            and pnl_pct >= economic_breakeven
+        ):
+            return "request_exit", f"structural_reversal_profit_exit: {structural_reason}", 0.0
         invalidated, invalidation_reason = self._setup_invalidated(episode.direction)
-        if invalidated and pnl_pct >= economic_breakeven:
-            return "request_exit", "confluence_reversal_profit_exit", 0.0
-        if invalidated and pnl_pct <= -self.settings.position_invalidation_min_loss_pct:
+        holding_seconds = (now - episode.entry_time).total_seconds()
+        if (
+            self.settings.position_allow_discretionary_loss_exit
+            and invalidated
+            and holding_seconds >= self.settings.position_soft_exit_min_hold_seconds
+            and pnl_pct <= -self.settings.position_invalidation_min_loss_pct
+        ):
             return "request_exit", invalidation_reason, 0.0
         with self._context_lock:
             context = dict(self._context)
@@ -573,15 +583,48 @@ class DynamicPositionRuntime:
         pnl_pct: float,
         now: datetime,
     ) -> None:
-        if episode.last_action_at is not None and episode.exit_requested:
+        if episode.last_action_at is not None and (episode.exit_requested or episode.last_action == reason):
             age = (now - episode.last_action_at).total_seconds()
             if age < max(5, self.settings.position_stop_replace_cooldown_seconds):
                 return
         from alpaca.trading.requests import ReplaceOrderRequest
 
         quote = self._latest_quote or {}
-        marketable_limit = _float(quote.get("bid_price")) if episode.direction == "LONG" else _float(quote.get("ask_price"))
-        marketable_limit = round(marketable_limit or mark, 2)
+        marketable_price = _float(quote.get("bid_price")) if episode.direction == "LONG" else _float(quote.get("ask_price"))
+        marketable_limit = _bracket_safe_exit_limit(
+            episode.direction,
+            marketable_price or mark,
+            episode.current_stop_price,
+        )
+        if marketable_limit is None:
+            episode.last_action = reason
+            episode.last_action_at = now
+            self._record_event(
+                database,
+                episode,
+                "PROTECTED_EXIT_DEFERRED",
+                reason,
+                mark,
+                pnl_pct,
+                now,
+                None,
+                None,
+                "protected_by_stop",
+                {
+                    "marketable_price": marketable_price or mark,
+                    "stop_price": episode.current_stop_price,
+                    "reason": "marketable limit would violate Alpaca bracket price ordering",
+                },
+            )
+            logger.info(
+                "protected exit deferred to broker stop trade_id=%s reason=%s marketable=%.2f stop=%.2f",
+                episode.trade_id,
+                reason,
+                marketable_price or mark,
+                episode.current_stop_price,
+                extra={"event_type": "protected_exit_deferred"},
+            )
+            return
         try:
             request = ReplaceOrderRequest(limit_price=marketable_limit)
             if self.coordinator is not None:
@@ -620,6 +663,7 @@ class DynamicPositionRuntime:
         opposite_ml = "short_good" if direction == "LONG" else "long_good"
         opposite_macro = "bearish_gold_environment" if direction == "LONG" else "bullish_gold_environment"
         votes: list[str] = []
+        vote_groups: set[str] = set()
         reason = str(context.get("signal_reason") or "").lower()
         if (
             context.get("signal_decision") == opposite_signal
@@ -627,32 +671,55 @@ class DynamicPositionRuntime:
             and "paper learning probe" not in reason
         ):
             votes.append("opposite deterministic signal")
+            vote_groups.add("deterministic")
         if (
             context.get("ml_predicted_direction") == opposite_ml
             and _float(context.get("ml_confidence")) >= self.settings.position_invalidation_min_confidence
         ):
             votes.append("opposite ML signal")
+            vote_groups.add("ml")
         if (
             context.get("order_block_direction") == opposite_context
             and _float(context.get("order_block_strength")) >= 0.65
         ):
             votes.append("opposite order block")
+            vote_groups.add("structure")
         if (
             context.get("technical_direction") == opposite_signal
             and _float(context.get("technical_confidence")) >= self.settings.position_invalidation_min_confidence
         ):
             votes.append("opposite grouped technical route")
+            vote_groups.add("technical")
         if context.get("rsi_divergence") == opposite_context:
             votes.append("opposite RSI divergence")
+            vote_groups.add("structure")
         if context.get("fvg_direction") == opposite_context:
             votes.append("opposite fair-value-gap structure")
+            vote_groups.add("structure")
         if (
             context.get("macro_bias") == opposite_macro
             and _float(context.get("macro_confidence")) >= 0.60
         ):
             votes.append("opposite macro context")
+            vote_groups.add("macro")
         required = self.settings.position_invalidation_required_votes
-        return len(votes) >= required, f"setup_invalidated: {', '.join(votes)}"
+        return len(vote_groups) >= required, f"setup_invalidated: {', '.join(votes)}"
+
+    def _structural_reversal_votes(self, direction: str) -> tuple[list[str], str]:
+        with self._context_lock:
+            context = dict(self._context)
+        opposite = "bearish" if direction == "LONG" else "bullish"
+        votes: list[str] = []
+        if (
+            context.get("order_block_direction") == opposite
+            and _float(context.get("order_block_strength")) >= 0.65
+        ):
+            votes.append("opposite order block")
+        if context.get("rsi_divergence") == opposite:
+            votes.append("opposite RSI divergence")
+        if context.get("fvg_direction") == opposite:
+            votes.append("opposite fair-value-gap structure")
+        return votes, ", ".join(votes)
 
     def _minutes_to_close(self, now: datetime) -> float | None:
         clock = self._clock
@@ -667,7 +734,15 @@ class DynamicPositionRuntime:
     def _economic_breakeven_pct(self, episode: ManagedTrade, spread_pct: float) -> float:
         stored = _float(episode.details.get("economic_breakeven_pct"))
         runtime = economic_breakeven_pct(self.settings, spread_pct=spread_pct)
-        return max(stored, runtime)
+        entry_cost_pct = _float(episode.details.get("realized_entry_cost_pct"))
+        fee_pct = safe_div(self.settings.estimated_fee_per_share, episode.entry_price)
+        expected_exit_cost_pct = (
+            max(0.0, spread_pct) / 2.0
+            + self.settings.estimated_round_trip_slippage_pct / 2.0
+            + fee_pct
+        )
+        realized_cost_floor = entry_cost_pct + expected_exit_cost_pct + self.settings.position_min_net_profit_pct
+        return max(stored, runtime, realized_cost_floor)
 
     def _spread_pct(self, mark: float) -> float:
         quote = self._latest_quote or {}
@@ -771,6 +846,11 @@ def _managed_trades_from_orders(
         root_trade_id = _root_episode_id(trade_id)
         stored_order = database.get_order(client_order_id=trade_id) or database.get_order(client_order_id=root_trade_id) or {}
         risk_details = _json_mapping(stored_order.get("risk_details_json"))
+        entry_cost_row = database.conn.execute(
+            "SELECT COALESCE(SUM(estimated_live_cost), 0) AS cost FROM fills WHERE order_id = ?",
+            (_string(_field(order, "id")),),
+        ).fetchone()
+        entry_live_cost = _float(entry_cost_row["cost"]) if entry_cost_row is not None else 0.0
         decision = database.fetch_trade_decision(trade_id) or database.fetch_trade_decision(root_trade_id) or {}
         decision_features = _json_mapping(decision.get("feature_snapshot_json"))
         stop_price = _float(_field(stop_leg, "stop_price"))
@@ -815,6 +895,7 @@ def _managed_trades_from_orders(
                 details={
                     "broker_order_status": _status(order),
                     "economic_breakeven_pct": stored_order.get("economic_breakeven_pct") or risk_details.get("economic_breakeven_pct"),
+                    "realized_entry_cost_pct": safe_div(entry_live_cost, entry_price * qty),
                     "playbook": stored_order.get("playbook") or decision_features.get("playbook"),
                     "strategy_path": stored_order.get("strategy_path") or decision_features.get("strategy_path"),
                 },
@@ -892,3 +973,16 @@ def _root_episode_id(trade_id: str) -> str:
         if upper.endswith(suffix):
             return trade_id[: -len(suffix)]
     return trade_id
+
+
+def _bracket_safe_exit_limit(direction: str, marketable_price: float, stop_price: float) -> float | None:
+    """Return a marketable child-limit only when it preserves Alpaca bracket ordering."""
+    marketable = round(marketable_price, 2)
+    stop = round(stop_price, 2)
+    if marketable <= 0 or stop <= 0:
+        return None
+    if direction == "LONG":
+        minimum = round(stop + 0.01, 2)
+        return marketable if marketable >= minimum else None
+    maximum = round(stop - 0.01, 2)
+    return marketable if marketable <= maximum else None
