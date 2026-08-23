@@ -2,6 +2,12 @@
 
 Version-controlled visual and supporting documentation used by the root manual.
 
+[`BOT_WHITE_PAPER.md`](BOT_WHITE_PAPER.md) is the concise, versioned technical
+white paper for the platform. It covers the problem, architecture, equations,
+playbooks, execution, risk, ML, causal Transformers, Ollama/Kimi/FinGPT roles,
+validation, security, limitations, and deployment governance. The local
+command center renders this same source in its **White Paper** workspace.
+
 Return to the [project manual](../README.md).
 
 ## Folder Contract

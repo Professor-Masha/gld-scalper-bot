@@ -43,7 +43,7 @@ gld-scalper = "gld_scalper.main:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-gld_scalper = ["schema.sql", "dashboard/static/*"]
+gld_scalper = ["schema.sql", "dashboard/static/*", "dashboard/static/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

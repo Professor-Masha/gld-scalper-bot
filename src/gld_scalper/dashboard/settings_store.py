@@ -9,9 +9,12 @@ from typing import Mapping
 
 ALLOWED_SETTINGS = {
     "ALPACA_API_KEY", "ALPACA_SECRET_KEY", "ALPACA_ENDPOINT", "ALPACA_DATA_FEED",
-    "LLM_PROVIDER", "LLM_BASE_URL", "LLM_MODEL",
+    "LLM_PROVIDER", "LLM_BASE_URL", "LLM_MODEL", "MOONSHOT_API_KEY",
+    "ENABLE_LLM_ANALYSIS", "ENABLE_LLM_MACRO_CONTEXT", "ENABLE_LLM_REVIEW_COACH",
+    "ENABLE_LLM_TRAINING_ADVICE", "ENABLE_LLM_TRAINING_LABELS",
+    "LLM_OFFLINE_ONLY", "ENABLE_LLM_LIVE_TRADING",
 }
-SECRET_SETTINGS = {"ALPACA_API_KEY", "ALPACA_SECRET_KEY"}
+SECRET_SETTINGS = {"ALPACA_API_KEY", "ALPACA_SECRET_KEY", "MOONSHOT_API_KEY"}
 _KEY_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]*$")
 
 
@@ -33,6 +36,8 @@ class EnvFileStore:
             "llm_provider": values.get("LLM_PROVIDER", "ollama"),
             "llm_base_url": values.get("LLM_BASE_URL", "http://127.0.0.1:11434"),
             "llm_model": values.get("LLM_MODEL", "llama3.2:1b"),
+            "kimi_api_key_configured": bool(values.get("MOONSHOT_API_KEY")),
+            "fingpt_pipeline_enabled": values.get("ENABLE_LLM_ANALYSIS", "false").lower() == "true",
         }
 
     def read(self) -> dict[str, str]:

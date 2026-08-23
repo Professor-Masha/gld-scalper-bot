@@ -20,8 +20,10 @@ from .process_manager import ProcessManager
 from .analytics import PerformanceAnalytics
 from .catalog import TransformerCatalog
 from .job_results import JobResultRepository
+from .llm_providers import LLMProviderService
 from .settings_store import EnvFileStore
 from .telemetry import TelemetryRepository
+from .whitepaper import WhitePaperRepository
 
 
 STATIC_ROOT = Path(__file__).with_name("static")
@@ -39,6 +41,18 @@ class SettingsRequest(BaseModel):
     llm_provider: str = "ollama"
     llm_base_url: str = "http://127.0.0.1:11434"
     llm_model: str = "llama3.2:1b"
+    moonshot_api_key: str = ""
+
+
+class ProviderRequest(BaseModel):
+    provider: str
+    base_url: str = ""
+    model: str = ""
+    api_key: str = ""
+
+
+class ProviderTestRequest(BaseModel):
+    provider: str | None = None
 
 
 class DashboardService:
@@ -48,6 +62,8 @@ class DashboardService:
         self.processes = ProcessManager(self.project_root, self.env_store.child_environment)
         self.catalog = TransformerCatalog(self.project_root)
         self.results = JobResultRepository(self.project_root / "logs" / "dashboard")
+        self.llm_providers = LLMProviderService(self.project_root, self.env_store)
+        self.whitepaper = WhitePaperRepository(self.project_root)
 
     @property
     def telemetry(self) -> TelemetryRepository:
@@ -132,6 +148,12 @@ class DashboardService:
         if action == "report": return ["report", "--date", str(options.get("date") or "today")]
         if action == "llm_analysis": return ["llm-analyze", "--query", str(options.get("query") or "Analyze performance, execution, and learning quality.")[:2000]]
         if action == "llm_cycle": return ["llm-offline-cycle", "--cadence", _choice(options,"cadence",{"hourly","daily"},"daily")]
+        if action == "llm_macro": return ["llm-macro-context"]
+        if action == "llm_coach":
+            return ["review-coach", "--query", str(options.get("query") or "Review GLD performance, execution, risk, and missed opportunities")[:1000],
+                "--limit", str(_integer(options,"limit",12,1,100))]
+        if action == "llm_council":
+            return ["tradingagents-advisory", "--horizon", _choice(options,"horizon",{"hourly","daily"},"daily")]
         if action == "llm_advice": return ["llm-training-advice"]
         if action == "llm_labels": return ["llm-label-signals", "--limit", str(_integer(options,"limit",25,1,500))]
         if action == "llm_train":
@@ -200,11 +222,18 @@ def create_dashboard_app(project_root: Path = PROJECT_ROOT) -> FastAPI:
     async def transformer_catalog(): return await asyncio.to_thread(service.catalog.payload)
     @app.get("/api/results/{name}")
     async def job_result(name: str):
-        if name not in {"backtest", "llm_analysis", "llm_advice", "llm_labels", "llm_train", "llm_cycle", "llm_status"}:
+        if name not in {
+            "backtest", "llm_analysis", "llm_advice", "llm_labels", "llm_train",
+            "llm_cycle", "llm_status", "llm_macro", "llm_coach", "llm_council",
+        }:
             raise HTTPException(404, "Unsupported result type")
         return {"name": name, "result": await asyncio.to_thread(service.results.latest, name)}
     @app.get("/api/llm/activity")
     async def llm_activity(limit: int = 30): return await asyncio.to_thread(service.telemetry.llm_activity, limit)
+    @app.get("/api/llm/providers")
+    async def llm_providers(): return await asyncio.to_thread(service.llm_providers.catalog)
+    @app.get("/api/whitepaper")
+    async def whitepaper(): return await asyncio.to_thread(service.whitepaper.payload)
     @app.get("/api/diagnostics")
     async def diagnostics(): return await asyncio.to_thread(service.telemetry.diagnostics)
     @app.get("/api/processes")
@@ -228,11 +257,37 @@ def create_dashboard_app(project_root: Path = PROJECT_ROOT) -> FastAPI:
     async def save_settings(request: SettingsRequest, x_dashboard_token: str | None = Header(default=None)):
         authorize(x_dashboard_token)
         if request.alpaca_data_feed not in {"iex","sip"}: raise HTTPException(400,"Data feed must be iex or sip")
+        if request.llm_provider not in {"ollama", "kimi"}: raise HTTPException(400, "LLM provider must be ollama or kimi")
+        if request.llm_provider == "kimi" and request.llm_base_url.rstrip("/") != "https://api.moonshot.ai/v1":
+            raise HTTPException(400, "Kimi must use the official Moonshot endpoint")
         changes = {"ALPACA_API_KEY":request.alpaca_api_key, "ALPACA_SECRET_KEY":request.alpaca_secret_key,
             "ALPACA_ENDPOINT":"https://paper-api.alpaca.markets/v2", "ALPACA_DATA_FEED":request.alpaca_data_feed,
-            "LLM_PROVIDER":request.llm_provider, "LLM_BASE_URL":request.llm_base_url, "LLM_MODEL":request.llm_model}
+            "LLM_PROVIDER":request.llm_provider, "LLM_BASE_URL":request.llm_base_url, "LLM_MODEL":request.llm_model,
+            "MOONSHOT_API_KEY": request.moonshot_api_key}
         await asyncio.to_thread(service.env_store.update, changes)
         return service.env_store.public_settings()
+
+    @app.post("/api/llm/providers/activate")
+    async def activate_provider(request: ProviderRequest, x_dashboard_token: str | None = Header(default=None)):
+        authorize(x_dashboard_token)
+        try:
+            return await asyncio.to_thread(
+                service.llm_providers.activate,
+                request.provider,
+                base_url=request.base_url,
+                model=request.model,
+                api_key=request.api_key,
+            )
+        except (ValueError, RuntimeError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.post("/api/llm/providers/test")
+    async def test_provider(request: ProviderTestRequest, x_dashboard_token: str | None = Header(default=None)):
+        authorize(x_dashboard_token)
+        try:
+            return await asyncio.to_thread(service.llm_providers.test, request.provider)
+        except (ValueError, RuntimeError) as exc:
+            raise HTTPException(409, str(exc)) from exc
 
     @app.websocket("/ws/live")
     async def live(websocket: WebSocket):

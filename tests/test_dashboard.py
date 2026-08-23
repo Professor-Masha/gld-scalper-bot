@@ -9,6 +9,7 @@ from gld_scalper.dashboard.app import DashboardService, create_dashboard_app
 from gld_scalper.dashboard.analytics import PerformanceAnalytics
 from gld_scalper.dashboard.catalog import TransformerCatalog
 from gld_scalper.dashboard.job_results import JobResultRepository
+from gld_scalper.dashboard.llm_providers import LLMProviderService
 from gld_scalper.dashboard.settings_store import EnvFileStore
 from gld_scalper.dashboard.telemetry import TelemetryRepository
 from gld_scalper.database import Database
@@ -29,6 +30,41 @@ def test_env_store_masks_and_preserves_secrets(tmp_path: Path) -> None:
     assert "secret-value" not in str(public)
     assert raw["ALPACA_PAPER"] == "true"
     assert raw["BOT_DATA_MODE"] == "paper"
+
+
+def test_llm_provider_activation_preserves_secrets_and_enforces_offline_mode(tmp_path: Path) -> None:
+    path = tmp_path / ".env"
+    path.write_text("MOONSHOT_API_KEY=existing-secret\n", encoding="utf-8")
+    store = EnvFileStore(path)
+    service = LLMProviderService(tmp_path, store)
+
+    result = service.activate(
+        "kimi",
+        base_url="https://api.moonshot.ai/v1",
+        model="moonshot-v1-8k",
+        api_key="",
+    )
+
+    raw = store.read()
+    assert result["active_provider"] == "kimi"
+    assert raw["MOONSHOT_API_KEY"] == "existing-secret"
+    assert raw["LLM_OFFLINE_ONLY"] == "true"
+    assert raw["ENABLE_LLM_LIVE_TRADING"] == "false"
+    assert "existing-secret" not in str(result)
+
+
+def test_llm_provider_catalog_distinguishes_engine_from_fingpt(tmp_path: Path) -> None:
+    source = tmp_path / "FINGPT" / "FinGPT-1.0.0" / "fingpt" / "FinGPT_RAG"
+    source.mkdir(parents=True)
+    store = EnvFileStore(tmp_path / ".env")
+    store.update({"LLM_PROVIDER": "ollama"})
+
+    payload = LLMProviderService(tmp_path, store).catalog()
+
+    assert {item["id"] for item in payload["providers"]} == {"ollama", "kimi"}
+    assert payload["fingpt"]["available"] is True
+    assert payload["fingpt"]["reasoning_engine"] == "ollama"
+    assert payload["safety"]["live_broker_authority"] is False
 
 
 def test_dashboard_command_builder_rejects_paths_outside_project(tmp_path: Path) -> None:
@@ -77,6 +113,10 @@ def test_dashboard_app_is_local_and_serves_expected_routes(tmp_path: Path) -> No
     assert "/api/market-series" in paths
     assert "/api/analytics" in paths
     assert "/api/transformer/catalog" in paths
+    assert "/api/llm/providers" in paths
+    assert "/api/llm/providers/activate" in paths
+    assert "/api/llm/providers/test" in paths
+    assert "/api/whitepaper" in paths
     assert "/api/processes/{action}/start" in paths
     assert "/ws/live" in paths
     assert len(app.state.dashboard_token) >= 32

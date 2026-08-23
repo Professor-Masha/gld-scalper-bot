@@ -384,7 +384,7 @@ explains the order in which those subsystems are used. The application now has
 a local browser command center in addition to its PowerShell interface. Its five
 operator interfaces are:
 
-1. **Local dashboard**: start and stop paper trading, inspect TradingView GLD,
+1. **Local dashboard**: start and stop paper trading, inspect native GLD charts,
    monitor account and execution telemetry, review decisions and root episodes,
    launch training jobs, tail logs, and update masked local connections.
 2. **PowerShell CLI**: initialize databases, collect data, label outcomes, train,
@@ -436,25 +436,32 @@ the normal shutdown sequence can complete.
 The dashboard is an operator shell, not a replacement execution engine. Start
 controls launch the existing allowlisted CLI command in a child process. Paper
 orders still pass through the synchronized order coordinator, execution safety,
-reconciliation, and broker clients. TradingView is visual analysis only and
-cannot submit an Alpaca order.
+reconciliation, and broker clients. The native chart and Three.js decision
+field are visual analysis only and cannot submit an Alpaca order.
 
 | View | Operational responsibility |
 |---|---|
 | Overview | GLD quote, account equity, daily P/L, latest decision, open episodes, quick commands, and live bot log. |
-| Market | Embedded `AMEX:GLD` TradingView workstation plus quote, macro, Transformer, and safety context. |
+| Market | Native SQLite/Alpaca GLD candles plus quote, macro, Transformer, and safety context. |
 | Performance | Equity curve, after-cost P/L, win rate, holding time, and closed root outcomes. |
 | Trades | Auditable root trading episodes rather than duplicated partial-exit tranches. |
 | Intelligence | Agent votes, conventional ML, Transformer state, macro context, and decision history. |
 | Training | Classical candidate, continual loop, Transformer dataset/candidate, and backtest controls. |
+| AI Lab | Select and test Ollama or Kimi; run FinGPT-assisted macro, RAG, council, labeling, advice, and guarded candidate workflows. |
+| 3D Core | Full-bleed interactive Three.js visualization of live direction probabilities, uncertainty, and market state. |
+| Backtest Lab | Run chronological simulations and inspect return, drawdown, win rate, profit factor, direction, and trade economics in charts. |
+| White Paper | Read the versioned technical, mathematical, risk, training, security, and governance specification in the application. |
 | System | Managed process states, execution safety, and per-job terminal output. |
 | Settings | Masked Alpaca and LLM settings stored only in the ignored local `.env`. |
 
 Blank credential fields preserve the existing values. The endpoint and child
 environment remain locked to Alpaca paper trading. Job output is written under
 `logs/dashboard/`; the bot continues writing `logs/bot.log`. See
-[`src/gld_scalper/dashboard/README.md`](src/gld_scalper/dashboard/README.md) for
-the backend security and process-lifecycle contract.
+[`docs/BOT_WHITE_PAPER.md`](docs/BOT_WHITE_PAPER.md) for the concise technical
+white paper and the later sections of this README for the full operator and
+developer reference.
+See [`src/gld_scalper/dashboard/README.md`](src/gld_scalper/dashboard/README.md)
+for the backend security and process-lifecycle contract.
 
 ### Current Architecture JPEGs
 
