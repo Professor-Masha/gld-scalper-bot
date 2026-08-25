@@ -6,7 +6,13 @@ import pytest
 from gld_scalper.config import Settings
 from gld_scalper.kimi_tier0 import KimiBudgetError, KimiTier0Ledger, kimi_tier0_status
 from gld_scalper.llm_analysis import require_offline_llm_enabled
-from gld_scalper.llm_provider import KimiClient, make_llm_client
+from gld_scalper.llm_provider import (
+    KimiClient,
+    LLMError,
+    OllamaClient,
+    compact_json_text,
+    make_llm_client,
+)
 
 
 def _settings(tmp_path, **overrides):
@@ -102,3 +108,38 @@ def test_kimi_status_is_redacted_and_reports_remaining_budget(tmp_path):
     assert "test-secret-key" not in json.dumps(result)
     assert result["configured_limits"]["concurrency"] == 1
     assert result["usage"]["remaining_tokens_last_24_hours"] == 20_000
+
+
+def test_compact_json_text_remains_valid_and_bounded():
+    source = json.dumps({"rows": [{"text": "x" * 4_000, "value": index} for index in range(80)]})
+
+    compacted = compact_json_text(source, max_chars=2_000)
+
+    assert len(compacted) <= 2_000
+    assert isinstance(json.loads(compacted), dict)
+
+
+def test_ollama_retries_with_smaller_response_after_timeout(tmp_path, monkeypatch):
+    settings = Settings(
+        database_url=f"sqlite:///{tmp_path / 'ollama.db'}",
+        llm_provider="ollama",
+        llm_base_url="http://127.0.0.1:11434",
+        llm_model="llama3.2:1b",
+    )
+    payloads = []
+
+    def fake_post(url, payload, **kwargs):
+        payloads.append(payload)
+        if len(payloads) == 1:
+            raise LLMError("Ollama request timed out after 240 seconds")
+        return {"message": {"content": '{"summary":"recovered"}'}}
+
+    monkeypatch.setattr("gld_scalper.llm_provider._post_json", fake_post)
+
+    response = OllamaClient(settings).chat_json(system="Return JSON.", user=json.dumps({"evidence": "x" * 30_000}))
+
+    assert response.json_content()["summary"] == "recovered"
+    assert payloads[0]["keep_alive"] == "15m"
+    assert payloads[0]["options"]["num_predict"] == 640
+    assert payloads[1]["options"]["num_predict"] == 320
+    assert payloads[1]["options"]["num_ctx"] == 4_096

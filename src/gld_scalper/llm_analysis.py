@@ -7,7 +7,14 @@ from typing import Any
 
 from .config import PROJECT_ROOT, Settings
 from .database import Database
-from .llm_provider import LLMError, make_llm_client
+from .kimi_tier0 import KimiBudgetError
+from .llm_provider import (
+    LLMError,
+    compact_json_text,
+    make_llm_client,
+    make_ollama_fallback_client,
+    recoverable_provider_error,
+)
 from .macro_context import MacroContextBuilder, _resolve_path
 from .utils.math_utils import clamp
 from .utils.time_utils import utc_now
@@ -321,7 +328,22 @@ class LLMAnalysisService:
             ),
             "request": user_payload,
         }
-        response = self.client.chat_json(system=SYSTEM_PROMPT, user=json.dumps(request, sort_keys=True, default=str))
+        serialized = json.dumps(request, sort_keys=True, default=str)
+        limit = 60_000 if self.settings.llm_provider.lower() == "kimi" else 18_000
+        serialized = compact_json_text(serialized, max_chars=limit)
+        try:
+            response = self.client.chat_json(system=SYSTEM_PROMPT, user=serialized)
+        except (LLMError, KimiBudgetError) as exc:
+            if self.settings.llm_provider.lower() != "kimi" or not recoverable_provider_error(exc):
+                raise
+            fallback = make_ollama_fallback_client(self.settings)
+            response = fallback.chat_json(system=SYSTEM_PROMPT, user=serialized)
+            response.raw["fallback"] = {
+                "from": "kimi",
+                "to": "ollama",
+                "reason": str(exc)[:240],
+            }
+            self.client = fallback
         return response.json_content()
 
     def _analysis_context(self) -> dict[str, Any]:

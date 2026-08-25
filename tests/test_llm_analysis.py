@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from gld_scalper.config import Settings
 from gld_scalper.database import Database
 from gld_scalper.llm_analysis import LLMAnalysisService
-from gld_scalper.llm_provider import LLMResponse
+from gld_scalper.llm_provider import LLMError, LLMResponse
 from gld_scalper.ml.dataset_builder import build_training_dataset
 
 
@@ -17,6 +17,14 @@ class FakeLLMClient:
 
     def chat_json(self, *, system, user):
         return LLMResponse(provider=self.provider, model=self.model, content=json.dumps(self.response), raw={"fake": True})
+
+
+class FailingKimiClient:
+    provider = "kimi"
+    model = "kimi-k2.6"
+
+    def chat_json(self, *, system, user):
+        raise LLMError("Kimi API returned HTTP 429: quota or account balance unavailable")
 
 
 def test_llm_data_analysis_persists_review(tmp_path):
@@ -141,3 +149,35 @@ def test_llm_training_advice_persists_advice(tmp_path):
 
     assert "feature stability" in result["summary"]
     assert db.count_rows("llm_training_advice") == 1
+
+
+def test_kimi_quota_failure_falls_back_to_local_ollama(tmp_path, monkeypatch):
+    settings = Settings(
+        database_url=f"sqlite:///{tmp_path / 'fallback.db'}",
+        llm_provider="kimi",
+        llm_base_url="https://api.moonshot.ai/v1",
+        llm_model="kimi-k2.6",
+        llm_api_key="test-key",
+    )
+    db = Database(settings=settings)
+    db.init_db()
+    fallback = FakeLLMClient(
+        {
+            "summary": "Local fallback completed the review.",
+            "bull_case": "Evidence exists.",
+            "bear_case": "No edge is proven.",
+            "risk_critique": "Keep risk controls.",
+            "execution_critique": "No broker authority.",
+            "journal_review": "Review stored.",
+            "missed_opportunity_explanations": [],
+            "setup_quality_notes": [],
+            "recommendations": ["Collect clean outcomes."],
+        }
+    )
+    monkeypatch.setattr("gld_scalper.llm_analysis.make_ollama_fallback_client", lambda _settings: fallback)
+
+    result = LLMAnalysisService(settings, db, client=FailingKimiClient()).run_data_analysis()
+
+    assert result["summary"] == "Local fallback completed the review."
+    assert result["review_type"] == "ollama_data_analysis"
+    assert result["evidence"]["provider"] == "ollama"

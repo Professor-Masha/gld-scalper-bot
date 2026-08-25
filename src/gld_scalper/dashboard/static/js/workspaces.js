@@ -56,7 +56,11 @@ function aiMarkup() {
 }
 
 function coreMarkup() {
-  return `<div class="scene-stage"><div class="scene-heading"><span class="eyebrow">LIVE THREE.JS DECISION FIELD</span><h2>GLD Intelligence Core</h2><p>Drag or move the pointer to inspect the active signal field.</p></div><div class="scene-readout scene-left"><span>MARKET VECTOR</span><strong id="sceneDecision">NO DATA</strong><small id="sceneReason">Awaiting telemetry</small></div><div class="scene-readout scene-right"><span>MODEL COORDINATES</span><dl><div><dt>LONG</dt><dd id="sceneLong">0%</dd></div><div><dt>SHORT</dt><dd id="sceneShort">0%</dd></div><div><dt>ABSTAIN</dt><dd id="sceneAbstain">0%</dd></div><div><dt>UNCERTAINTY</dt><dd id="sceneUncertainty">--</dd></div></dl></div><div class="scene-caption"><span class="status-dot"></span><strong>VISUALIZATION ONLY</strong><small>Signals, risk and execution remain deterministic services.</small></div></div>`;
+  return `<div class="scene-stage"><div class="scene-heading"><span class="eyebrow">LIVE OPERATIONAL KNOWLEDGE GRAPH</span><h2>GLD System Graph</h2><p>Obsidian-style 3D map of the bot's actual data, intelligence, risk, execution, and learning paths.</p></div>
+    <div class="scene-readout scene-left"><span>DECISION PATH</span><strong id="sceneDecision">NO DATA</strong><small id="sceneReason">Awaiting telemetry</small><dl class="scene-probabilities"><div><dt>LONG</dt><dd id="sceneLong">0%</dd></div><div><dt>SHORT</dt><dd id="sceneShort">0%</dd></div><div><dt>ABSTAIN</dt><dd id="sceneAbstain">0%</dd></div></dl></div>
+    <div class="scene-readout scene-right graph-node-card"><span>SELECTED NODE</span><strong id="graphNodeLabel">Decision Council</strong><em id="graphNodeStatus">IDLE</em><p id="graphNodeDescription">Combines deterministic agents, playbook quality and model evidence.</p><small id="graphNodeMetric">Awaiting telemetry</small></div>
+    <div class="graph-legend"><span><i class="legend-data"></i>DATA</span><span><i class="legend-agent"></i>AGENTS</span><span><i class="legend-model"></i>MODELS</span><span><i class="legend-risk"></i>RISK</span><span><i class="legend-execution"></i>EXECUTION</span><span><i class="legend-memory"></i>MEMORY</span></div>
+    <div class="scene-caption"><span class="status-dot"></span><strong>DRAG TO ORBIT · SCROLL TO ZOOM · SELECT A NODE</strong><small>Graph state is live telemetry; LLM nodes remain advisory and have no broker authority.</small></div></div>`;
 }
 
 function backtestMarkup() {

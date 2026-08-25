@@ -7,6 +7,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from ..llm_provider import LLMError, _post_json
 from .settings_store import EnvFileStore
 
 
@@ -102,22 +103,65 @@ class LLMProviderService:
         if selected == "ollama":
             payload = self._get_json(f"{str(base_url).rstrip('/')}/api/tags", timeout=8)
             names = [str(item.get("name") or "") for item in payload.get("models", []) if isinstance(item, dict)]
-            available = any(name == model or name.startswith(f"{model}:") for name in names)
-            message = "Ollama is reachable and the selected model is installed." if available else "Ollama is reachable, but the selected model is not installed."
-            detail = {"installed_models": names, "model_available": available}
+            installed = any(name == model or name.startswith(f"{model}:") for name in names)
+            if not installed:
+                available = False
+                message = "Ollama is reachable, but the selected model is not installed."
+                detail = {"installed_models": names, "model_available": False, "generation_tested": False}
+            else:
+                response = _post_json(
+                    f"{str(base_url).rstrip('/')}/api/chat",
+                    {
+                        "model": model,
+                        "messages": [
+                            {"role": "system", "content": "Return strict JSON only."},
+                            {"role": "user", "content": 'Return {"status":"ok"}.'},
+                        ],
+                        "format": "json",
+                        "stream": False,
+                        "keep_alive": "15m",
+                        "options": {"temperature": 0, "num_ctx": 1_024, "num_predict": 32},
+                    },
+                    timeout=90,
+                    provider="Ollama health check",
+                )
+                content = str(response.get("message", {}).get("content") or "")
+                available = bool(content)
+                message = "Ollama generated a valid research response." if available else "Ollama answered but returned empty content."
+                detail = {"installed_models": names, "model_available": True, "generation_tested": True}
         else:
             key = values.get("MOONSHOT_API_KEY", "")
             if not key:
                 raise RuntimeError("Kimi API key is not configured")
-            payload = self._get_json(
-                f"{str(base_url).rstrip('/')}/models",
-                timeout=12,
-                headers={"Authorization": f"Bearer {key}"},
-            )
-            names = [str(item.get("id") or "") for item in payload.get("data", []) if isinstance(item, dict)]
-            available = not names or model in names
-            message = "Kimi authenticated successfully." if available else "Kimi authenticated, but the selected model was not listed."
-            detail = {"available_models": names[:30], "model_available": available}
+            try:
+                payload = _post_json(
+                    f"{str(base_url).rstrip('/')}/chat/completions",
+                    {
+                        "model": model,
+                        "messages": [
+                            {"role": "system", "content": "Return strict JSON only."},
+                            {"role": "user", "content": 'Return {"status":"ok"}.'},
+                        ],
+                        "response_format": {"type": "json_object"},
+                        "stream": False,
+                        "temperature": 0,
+                        "max_completion_tokens": 32,
+                    },
+                    timeout=30,
+                    headers={"Authorization": f"Bearer {key}"},
+                    provider="Kimi health check",
+                )
+            except LLMError as exc:
+                raise RuntimeError(str(exc)) from exc
+            choices = payload.get("choices")
+            content = ""
+            if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+                message_payload = choices[0].get("message")
+                if isinstance(message_payload, dict):
+                    content = str(message_payload.get("content") or "")
+            available = bool(content)
+            message = "Kimi authenticated and generated a research response." if available else "Kimi authenticated but returned no completion content."
+            detail = {"model_available": available, "generation_tested": True}
         return {
             "provider": selected,
             "model": model,
