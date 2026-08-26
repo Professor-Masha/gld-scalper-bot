@@ -10,6 +10,7 @@ This package provides the browser-based paper-trading command center. It does no
 - **Training:** scope-aware dataset presets, discovered `.seq` archives, single or bounded multi-candidate Transformer training, and classical ML controls.
 - **Backtest Lab:** chronological simulation controls, structured metrics, direction/economics bars, an outcome donut, and raw result evidence.
 - **AI Lab:** selectable Ollama or Kimi engines, generation-level diagnostics, and eight FinGPT-assisted research, RAG, council, labeling, advice, and candidate workflows. Large evidence payloads are compacted for the local 1B model. Recoverable Kimi quota/availability failures fall back to local Ollama for the current research job; the configured provider is not silently rewritten. The LLM has no broker authority.
+- **Volatility Lab:** a video-reference-inspired research workstation using local GLD one-minute bars. Interactive controls recalculate log-return volatility, empirical low/normal/high/extreme clusters, transition persistence, historical VaR and CVaR, horizon volatility, and a bounded position-size multiplier. A synchronized Three.js temporal network, regime timeline, return histogram, and transition matrix explain the result. Nothing is written into live risk settings.
 - **3D Core:** an Obsidian-style Three.js knowledge graph of real bot services and flows. Nodes represent the stream, feature engine, deterministic agents, classical ML, Transformer shadow runtime, decision council, risk, execution, Alpaca paper broker, SQLite, journal, outcomes, and offline LLM research. Status, pulse, color, and selected-node details are driven by telemetry.
 - **White Paper:** an in-app reader for `docs/BOT_WHITE_PAPER.md`.
 - **System/Settings:** process supervision, safety logs, paper credentials, and provider settings.
@@ -31,6 +32,7 @@ The locally vendored Three.js HUD is visual only. Its low-power renderer pauses 
 - `static/index.html`: operational views for market, performance, trades, intelligence, training, system diagnostics, and local settings.
 - `static/styles.css`: responsive cyan/green command-center visual system.
 - `static/app.js`: live WebSocket updates, native chart telemetry, research providers, forms, process controls, tables, settings, and terminal output.
+- `static/js/volatility-lab.js`: local causal volatility simulation, tail-risk metrics, synchronized canvas charts, and an animated Three.js temporal regime graph.
 
 ## Security Boundary
 

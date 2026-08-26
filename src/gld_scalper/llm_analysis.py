@@ -324,6 +324,7 @@ class LLMAnalysisService:
             "response_instruction": (
                 "Return one JSON object with the expected keys. "
                 "Use the provided data to create specific, non-placeholder content. "
+                "Limit every string to 240 characters and every list to at most three short items. "
                 "Do not copy key descriptions, do not return an API error object, markdown, comments, or a schema explanation."
             ),
             "request": user_payload,

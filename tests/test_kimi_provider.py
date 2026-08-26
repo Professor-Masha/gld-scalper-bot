@@ -9,6 +9,7 @@ from gld_scalper.llm_analysis import require_offline_llm_enabled
 from gld_scalper.llm_provider import (
     KimiClient,
     LLMError,
+    LLMResponse,
     OllamaClient,
     compact_json_text,
     make_llm_client,
@@ -143,3 +144,25 @@ def test_ollama_retries_with_smaller_response_after_timeout(tmp_path, monkeypatc
     assert payloads[0]["options"]["num_predict"] == 640
     assert payloads[1]["options"]["num_predict"] == 320
     assert payloads[1]["options"]["num_ctx"] == 4_096
+
+
+def test_llm_response_repairs_only_end_truncated_json():
+    response = LLMResponse(
+        provider="ollama",
+        model="llama3.2:1b",
+        content='{"summary":"complete","recommendations":["first","second item was cut',
+        raw={},
+    )
+
+    parsed = response.json_content()
+
+    assert parsed["summary"] == "complete"
+    assert parsed["recommendations"][1] == "second item was cut"
+    assert response.raw["response_repair"] == "closed_truncated_json"
+
+
+def test_llm_response_rejects_non_truncation_syntax_errors():
+    response = LLMResponse(provider="ollama", model="test", content='{"summary": invalid}', raw={})
+
+    with pytest.raises(LLMError, match="invalid JSON"):
+        response.json_content()

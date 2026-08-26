@@ -3,12 +3,13 @@ import { MarketChart, SignalMatrixChart, LineChart, BarChart, DonutChart } from 
 import { HudScene } from "/static/js/hud-scene.js";
 import { mountWorkspaces } from "/static/js/workspaces.js";
 import { WhitePaperView } from "/static/js/whitepaper-view.js";
+import { VolatilityLab } from "/static/js/volatility-lab.js";
 
 const token = document.querySelector('meta[name="dashboard-token"]').content;
 const client = new ApiClient(token);
-const state = { snapshot: null, trades: [], decisions: [], equity: [], activeView: "overview", socket: null, hud: null, providerCatalog: null };
+const state = { snapshot: null, trades: [], decisions: [], equity: [], activeView: "overview", socket: null, hud: null, volatility: null, providerCatalog: null };
 const charts = {};
-const titles = {overview:"System Overview",market:"GLD Market",performance:"Performance",analytics:"Performance Analytics",trades:"Trading Episodes",intelligence:"Decision Intelligence",training:"Training Laboratory",ai:"AI Research and Training Lab",core3d:"3D Intelligence Core",backtest:"Backtest Analytics Lab",whitepaper:"Bot White Paper",system:"System Diagnostics",settings:"Local Settings"};
+const titles = {overview:"System Overview",market:"GLD Market",performance:"Performance",analytics:"Performance Analytics",trades:"Trading Episodes",intelligence:"Decision Intelligence",training:"Training Laboratory",ai:"AI Research and Training Lab",volatility:"Volatility and Tail-Risk Lab",core3d:"3D Intelligence Core",backtest:"Backtest Analytics Lab",whitepaper:"Bot White Paper",system:"System Diagnostics",settings:"Local Settings"};
 const $ = (id) => document.getElementById(id);
 const esc = (value) => String(value ?? "--").replace(/[&<>'"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]));
 const num = (value, digits=2) => Number.isFinite(Number(value)) ? Number(value).toLocaleString(undefined,{minimumFractionDigits:digits,maximumFractionDigits:digits}) : "--";
@@ -21,6 +22,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   addEventListener("hud-node-selected",event=>renderGraphNode(event.detail));
   state.hud=new HudScene();
   ensureAdvancedViews(); upgradeTrainingForms();
+  state.volatility=new VolatilityLab($("view-volatility"));
   if (window.lucide) lucide.createIcons();
   charts.core=new SignalMatrixChart($("coreCanvas")); charts.overview=new MarketChart($("overviewMarketCanvas")); charts.market=new MarketChart($("marketCanvas"));
   charts.equity=new LineChart($("equityCanvas")); charts.pnl=new LineChart($("analyticsPnlCanvas")); charts.direction=new BarChart($("analyticsDirectionCanvas")); charts.playbook=new BarChart($("analyticsPlaybookCanvas")); charts.outcomes=new DonutChart($("analyticsOutcomeCanvas"));
@@ -49,9 +51,11 @@ function showView(view){
   document.querySelectorAll(".nav-item").forEach(item=>item.classList.toggle("active",item.dataset.view===view));
   $(`view-${view}`).classList.add("active"); $("viewTitle").textContent=titles[view]; $("sidebar").classList.remove("open");
   document.body.classList.toggle("scene-mode",view==="core3d"); state.hud?.setFocus(view==="core3d");
+  state.volatility?.setActive(view==="volatility");
   if(view==="market") refreshMarket(390);
   if(["performance","analytics","trades","intelligence"].includes(view)) refreshTables();
   if(view==="analytics") refreshAnalytics(); if(view==="ai"){refreshLlmActivity();refreshProviders();}
+  if(view==="volatility") refreshVolatility();
   if(view==="backtest") refreshBacktestResult(); if(view==="whitepaper") loadWhitePaper();
   if(view==="system") refreshSystemLogs(); if(view==="settings") loadSettings();
 }
@@ -75,6 +79,8 @@ function bindActions(){
   $("refreshAnalytics").addEventListener("click",refreshAnalytics); $("refreshBacktest").addEventListener("click",refreshBacktestResult);
   $("refreshBacktestLab").addEventListener("click",refreshBacktestResult);
   $("testProvider").addEventListener("click",testProvider);
+  $("runVolatility").addEventListener("click",refreshVolatility);
+  [["volWindow","volWindowValue"," bars"],["volHorizon","volHorizonValue"," min"],["volConfidence","volConfidenceValue","%"],["volRisk","volRiskValue","%"]].forEach(([input,output,suffix])=>$(input).addEventListener("input",()=>setText(output,`${$(input).value}${suffix}`)));
   $("providerGrid").addEventListener("click",event=>{const button=event.target.closest("[data-provider]");if(button)selectProvider(button.dataset.provider);});
 }
 function bindForms(){
@@ -144,6 +150,7 @@ function renderTerminal(element,lines){element.textContent=(lines||[]).join("\n"
 async function loadSettings(){try{const data=await api("/api/settings"),form=$("settingsForm");form.alpaca_data_feed.value=data.alpaca_data_feed;form.llm_provider.value=data.llm_provider;form.llm_base_url.value=data.llm_base_url;form.llm_model.value=data.llm_model;$("credentialState").textContent=`API key: ${data.alpaca_api_key_hint||"not configured"} · Secret: ${data.alpaca_secret_key_configured?"configured":"missing"}`;}catch(error){toast(error.message,true);}}
 async function saveSettings(event){event.preventDefault();const form=event.currentTarget,payload={};new FormData(form).forEach((value,key)=>payload[key]=value);try{await api("/api/settings",{method:"POST",body:payload});form.alpaca_api_key.value="";form.alpaca_secret_key.value="";if(form.moonshot_api_key)form.moonshot_api_key.value="";toast("Local settings saved. New processes will use them.");loadSettings();refreshProviders();}catch(error){toast(error.message,true);}}
 async function refreshMarket(limit=390){try{const rows=await api(`/api/market-series?limit=${limit}`);charts.overview.setData(rows.slice(-390));charts.market.setData(rows);setText("marketBarCount",`${rows.length} local 1-minute bars`);}catch(error){toast(error.message,true);}}
+async function refreshVolatility(){try{const rows=await api("/api/market-series?limit=2000");state.volatility.run(rows,{window:$("volWindow").value,horizon:$("volHorizon").value,confidence:$("volConfidence").value,risk:$("volRisk").value});}catch(error){toast(error.message,true);}}
 function drawEquity(){const values=state.equity.map(x=>Number(x.equity)).filter(Number.isFinite);$("equityEmpty").style.display=values.length>1?"none":"grid";charts.equity.setData(values);}
 async function loadTransformerCatalog(){try{const data=await api("/api/transformer/catalog");state.transformerCatalog=data;applyTransformerPreset($("transformerScope").value);const select=$("transformerArtifact");select.innerHTML=data.artifacts.map(a=>`<option value="${esc(a.path)}">${esc(a.scope)} · ${esc(a.name)} · ${a.sample_count.toLocaleString()} samples</option>`).join("");$("batchArtifacts").innerHTML=data.artifacts.map(a=>`<label class="candidate-check"><input type="checkbox" name="batch_artifact" value="${esc(a.path)}" data-scope="${esc(a.scope)}" checked><span><strong>${esc(a.scope)}</strong><small>${esc(a.name)} · ${a.sample_count.toLocaleString()} samples · ${a.sequence_length} steps</small></span></label>`).join("")||'<div class="empty-state">No complete .seq archives found</div>';}catch(error){toast(error.message,true);}}
 function applyTransformerPreset(scope){const preset=state.transformerCatalog?.presets?.[scope];if(!preset)return;const form=$("transformerDatasetForm");Object.entries(preset).forEach(([key,value])=>{if(form.elements[key])form.elements[key].value=value;});setText("datasetPresetDetail",`${scope.replaceAll("_"," ")} · ${preset.sequence_length} steps · up to ${Number(preset.max_samples).toLocaleString()} samples`);}

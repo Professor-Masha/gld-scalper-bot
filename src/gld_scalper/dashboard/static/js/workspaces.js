@@ -5,6 +5,7 @@ export function mountWorkspaces() {
   const nav = document.querySelector(".nav");
   const systemButton = nav.querySelector('[data-view="system"]');
   if (!nav.querySelector('[data-view="core3d"]')) {
+    systemButton.insertAdjacentHTML("beforebegin", navButton("volatility", "waves", "Volatility Lab"));
     systemButton.insertAdjacentHTML("beforebegin", navButton("core3d", "orbit", "3D Core"));
     systemButton.insertAdjacentHTML("beforebegin", navButton("backtest", "flask-conical", "Backtest Lab"));
     systemButton.insertAdjacentHTML("beforebegin", navButton("whitepaper", "book-open-text", "White Paper"));
@@ -13,9 +14,24 @@ export function mountWorkspaces() {
   const system = document.getElementById("view-system");
   if (!document.getElementById("view-analytics")) system.before(makeView("analytics", analyticsMarkup()));
   if (!document.getElementById("view-ai")) system.before(makeView("ai", aiMarkup()));
+  if (!document.getElementById("view-volatility")) system.before(makeView("volatility", volatilityMarkup()));
   if (!document.getElementById("view-core3d")) system.before(makeView("core3d", coreMarkup(), "scene-view"));
   if (!document.getElementById("view-backtest")) system.before(makeView("backtest", backtestMarkup()));
   if (!document.getElementById("view-whitepaper")) system.before(makeView("whitepaper", whitePaperMarkup()));
+}
+
+function volatilityMarkup(){
+  return `<div class="volatility-shell"><aside class="panel volatility-controls"><div class="panel-head"><div><span class="eyebrow">LOCAL GLD RESEARCH</span><h2>Volatility Controls</h2></div><span class="badge blue">Advisory</span></div>
+    <label>Rolling window <output id="volWindowValue">22 bars</output><input id="volWindow" type="range" min="5" max="90" value="22"></label>
+    <label>Forecast horizon <output id="volHorizonValue">5 min</output><input id="volHorizon" type="range" min="1" max="30" value="5"></label>
+    <label>Tail confidence <output id="volConfidenceValue">99%</output><input id="volConfidence" type="range" min="90" max="99.9" step="0.1" value="99"></label>
+    <label>Risk budget <output id="volRiskValue">0.25%</output><input id="volRisk" type="range" min="0.05" max="1" step="0.05" value="0.25"></label>
+    <button class="button primary wide" id="runVolatility"><i data-lucide="play"></i>Run local simulation</button><p class="control-note">Research output never changes position size or submits an order. Promotion into risk rules requires backtest and paper validation.</p></aside>
+    <section class="panel volatility-network-panel"><div class="panel-head"><div><span class="eyebrow">TEMPORAL REGIME GRAPH</span><h2>Volatility Cluster Network</h2></div><span class="status-dot"></span></div><div class="volatility-network"><canvas id="volatilityNetwork"></canvas><div class="network-axis">LOW <span></span> NORMAL <span></span> HIGH <span></span> EXTREME</div></div></section>
+    <aside class="panel volatility-verdict"><div class="panel-head"><h2>Tail-Risk Verdict</h2><span class="badge">Latest bars</span></div><strong id="volatilityVerdict" class="vol-verdict">WAITING</strong><p id="volatilityNarrative">Load local bars to classify the current regime.</p><dl class="data-list"><div><dt>Current volatility</dt><dd id="volCurrent">--</dd></div><div><dt>Forecast volatility</dt><dd id="volForecast">--</dd></div><div><dt>Regime percentile</dt><dd id="volPercentile">--</dd></div><div><dt>Persistence</dt><dd id="volPersistence">--</dd></div><div><dt>Historical VaR</dt><dd id="volVar">--</dd></div><div><dt>CVaR / expected shortfall</dt><dd id="volCvar">--</dd></div><div><dt>Size multiplier</dt><dd id="volMultiplier">--</dd></div><div><dt>Tail exposure</dt><dd id="volTailRisk">--</dd></div></dl></aside>
+    <article class="panel volatility-chart"><div class="panel-head"><h2>Rolling Volatility and Regimes</h2><span class="badge blue">1-minute returns</span></div><canvas id="volatilityTimeline"></canvas></article>
+    <article class="panel volatility-chart"><div class="panel-head"><h2>Return Distribution</h2><span class="badge">VaR tail highlighted</span></div><canvas id="returnDistribution"></canvas></article>
+    <article class="panel transition-panel"><div class="panel-head"><h2>Regime Transition Matrix</h2><span class="badge">Conditional %</span></div><table><thead><tr><th>FROM / TO</th><th>LOW</th><th>NORMAL</th><th>HIGH</th><th>EXTREME</th></tr></thead><tbody id="volTransitionMatrix"></tbody></table></article></div>`;
 }
 
 function makeView(id, markup, extraClass = "") {

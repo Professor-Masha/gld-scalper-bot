@@ -206,6 +206,12 @@ The dashboard binds to localhost. State-changing requests require a random sessi
 
 The interface can supervise paper trading, data collection, labeling, ML training, Transformer training, research jobs, analytics, and backtests. It cannot directly submit an order. The execution engine remains the sole broker-authority boundary.
 
+### Volatility And Tail-Risk Research Workstation
+
+The Volatility Lab reconstructs the useful workflow shown in the supplied self-improving-agent reference: controls, a moving temporal network, a statistical verdict, and synchronized diagnostics. It uses only chronologically ordered local GLD one-minute closes. Log returns are calculated as `ln(P_t / P_(t-1))`; rolling sample deviation estimates current volatility. Empirical quartile-style thresholds divide the rolling series into low, normal, high, and extreme regimes. The transition matrix estimates the conditional probability of the next regime, while current run length and same-state transition probability measure persistence.
+
+Historical Value at Risk selects the configured loss quantile. Conditional Value at Risk averages observations in that tail. The displayed size multiplier is the risk budget divided by CVaR, reduced by a regime factor and clamped to a conservative range. This is an explanatory research value, not a live risk instruction. It cannot modify settings, place an order, or override freshness, liquidity, reconciliation, session, drawdown, or circuit-breaker controls. A production sizing rule based on this research requires separate chronological backtesting and clean paper validation.
+
 ## Limitations And Risks
 
 - IEX data is not a complete view of the US consolidated market.

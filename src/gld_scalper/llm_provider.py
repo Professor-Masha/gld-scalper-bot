@@ -25,7 +25,11 @@ class LLMResponse:
         try:
             parsed = json.loads(self.content)
         except json.JSONDecodeError as exc:
-            raise LLMError(f"LLM returned invalid JSON: {exc}") from exc
+            repaired = _repair_truncated_json(self.content, exc)
+            if repaired is None:
+                raise LLMError(f"LLM returned invalid JSON: {exc}") from exc
+            parsed = repaired
+            self.raw["response_repair"] = "closed_truncated_json"
         if not isinstance(parsed, dict):
             raise LLMError("LLM JSON response must be an object.")
         return parsed
@@ -233,6 +237,46 @@ def _compact_value(value: Any, *, string_limit: int, list_limit: int) -> Any:
     if isinstance(value, str) and len(value) > string_limit:
         return value[:string_limit] + "...[truncated]"
     return value
+
+
+def _repair_truncated_json(content: str, error: json.JSONDecodeError) -> dict[str, Any] | None:
+    """Close a response cut off inside a JSON string/container.
+
+    This deliberately handles only end-of-response truncation. Syntax errors
+    in the middle of an otherwise complete answer remain hard failures.
+    """
+    if not content.lstrip().startswith("{") or error.pos < max(0, len(content) - 40):
+        return None
+    stack: list[str] = []
+    in_string = False
+    escaped = False
+    for character in content:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_string = False
+            continue
+        if character == '"':
+            in_string = True
+        elif character in "{[":
+            stack.append(character)
+        elif character == "}" and stack and stack[-1] == "{":
+            stack.pop()
+        elif character == "]" and stack and stack[-1] == "[":
+            stack.pop()
+    if not in_string or not stack:
+        return None
+    candidate = content[:-1] if escaped and content.endswith("\\") else content
+    candidate += '"'
+    candidate += "".join("}" if opener == "{" else "]" for opener in reversed(stack))
+    try:
+        parsed = json.loads(candidate)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 def _post_json(

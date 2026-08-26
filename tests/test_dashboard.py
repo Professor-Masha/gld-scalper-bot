@@ -122,6 +122,18 @@ def test_dashboard_app_is_local_and_serves_expected_routes(tmp_path: Path) -> No
     assert len(app.state.dashboard_token) >= 32
 
 
+def test_dashboard_includes_volatility_research_workspace() -> None:
+    static_root = Path(__file__).parents[1] / "src" / "gld_scalper" / "dashboard" / "static"
+    workspace_source = (static_root / "js" / "workspaces.js").read_text(encoding="utf-8")
+    lab_source = (static_root / "js" / "volatility-lab.js").read_text(encoding="utf-8")
+
+    assert "Volatility Lab" in workspace_source
+    assert "volatilityNetwork" in workspace_source
+    assert "varLoss" in lab_source
+    assert "cvar" in lab_source
+    assert "new THREE.WebGLRenderer" in lab_source
+
+
 def test_transformer_catalog_and_bounded_batch_command(tmp_path: Path) -> None:
     (tmp_path / ".env").write_text("", encoding="utf-8")
     artifact = tmp_path / "data" / "paper" / "ml_training" / "transformer" / "fast.seq"

@@ -448,6 +448,7 @@ field are visual analysis only and cannot submit an Alpaca order.
 | Intelligence | Agent votes, conventional ML, Transformer state, macro context, and decision history. |
 | Training | Classical candidate, continual loop, Transformer dataset/candidate, and backtest controls. |
 | AI Lab | Select and generation-test Ollama or Kimi; run FinGPT-assisted macro, RAG, council, labeling, advice, and guarded candidate workflows. Oversized local prompts are compacted, slow Ollama calls receive one reduced retry, and recoverable Kimi failures can fall back to local Ollama for advisory research. |
+| Volatility Lab | Use up to 2,000 local GLD one-minute bars to explore rolling volatility clusters, empirical regime transitions, persistence, historical VaR/CVaR, forecast volatility, and a bounded tail-risk size multiplier. The animated temporal network and diagnostics are research-only. |
 | 3D Core | Full-bleed Obsidian-style Three.js graph of the actual stream, feature, agent, model, risk, execution, broker, journal, outcome, database, and LLM services. Live telemetry animates node and edge state; drag, zoom, and node selection expose the topology. |
 | Backtest Lab | Run chronological simulations and inspect return, drawdown, win rate, profit factor, direction, and trade economics in charts. |
 | White Paper | Read the versioned technical, mathematical, risk, training, security, and governance specification in the application. |
