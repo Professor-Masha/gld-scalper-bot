@@ -98,8 +98,22 @@ class DashboardService:
                 "configuration_error": str(exc),
             }
 
+    def _telemetry_available(self) -> tuple[bool, bool, str | None]:
+        try:
+            return self.telemetry.available(), True, None
+        except (RuntimeError, ValueError) as exc:
+            return False, False, str(exc)
+
     def control_status(self, *, snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
-        current = snapshot or self._telemetry_snapshot()
+        if snapshot is None:
+            database_available, configuration_valid, configuration_error = self._telemetry_available()
+            current = {
+                "database_available": database_available,
+                "configuration_valid": configuration_valid,
+                "configuration_error": configuration_error,
+            }
+        else:
+            current = snapshot
         processes = current.get("processes") or self.processes.statuses()
         paper = next((item for item in processes if item.get("name") == "paper"), None)
         audit = self.audit.verify()
@@ -132,16 +146,19 @@ class DashboardService:
         }
 
     def readiness(self) -> dict[str, Any]:
-        snapshot = self._telemetry_snapshot()
+        database_available, configuration_valid, configuration_error = self._telemetry_available()
         audit = self.audit.verify()
         checks = {
-            "database": bool(snapshot.get("database_available")),
-            "configuration": snapshot.get("configuration_valid", True) is not False,
+            "database": database_available,
+            "configuration": configuration_valid,
             "audit_ledger": bool(audit.get("valid")),
             "paper_mode": True,
             "allowlisted_commands": True,
         }
-        return {"ready": all(checks.values()), "checks": checks, "api_version": API_VERSION}
+        result = {"ready": all(checks.values()), "checks": checks, "api_version": API_VERSION}
+        if configuration_error:
+            result["configuration_error"] = configuration_error
+        return result
 
     def start(self, action: str, options: dict[str, Any]) -> dict[str, Any]:
         command = self._command(action, options)

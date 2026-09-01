@@ -48,6 +48,20 @@ class TelemetryRepository:
         finally:
             connection.close()
 
+    def available(self) -> bool:
+        if not self.database_path.exists():
+            return False
+        connection: sqlite3.Connection | None = None
+        try:
+            connection = self._connect()
+            connection.execute("SELECT 1").fetchone()
+            return True
+        except sqlite3.OperationalError:
+            return False
+        finally:
+            if connection is not None:
+                connection.close()
+
     def trades(self, limit: int = 100) -> list[dict[str, Any]]:
         return self._query("""SELECT trade_id,direction,strategy_path,playbook,entry_time,exit_time,entry_price,
             exit_price,qty,gross_pnl,net_pnl_after_costs,pnl_pct,holding_seconds,exit_reason,win_loss,
