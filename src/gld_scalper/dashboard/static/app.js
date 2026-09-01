@@ -7,9 +7,9 @@ import { VolatilityLab } from "/static/js/volatility-lab.js";
 
 const token = document.querySelector('meta[name="dashboard-token"]').content;
 const client = new ApiClient(token);
-const state = { snapshot: null, trades: [], decisions: [], equity: [], activeView: "overview", socket: null, hud: null, volatility: null, providerCatalog: null };
+const state = { snapshot: null, trades: [], decisions: [], equity: [], activeView: "overview", socket: null, hud: null, volatility: null, providerCatalog: null, controlPlane: null, eventSequence: 0 };
 const charts = {};
-const titles = {overview:"System Overview",market:"GLD Market",performance:"Performance",analytics:"Performance Analytics",trades:"Trading Episodes",intelligence:"Decision Intelligence",training:"Training Laboratory",ai:"AI Research and Training Lab",volatility:"Volatility and Tail-Risk Lab",core3d:"3D Intelligence Core",backtest:"Backtest Analytics Lab",whitepaper:"Bot White Paper",system:"System Diagnostics",settings:"Local Settings"};
+const titles = {overview:"System Overview",market:"GLD Market",performance:"Performance",analytics:"Performance Analytics",trades:"Trading Episodes",intelligence:"Decision Intelligence",training:"Training Laboratory",ai:"AI Research and Training Lab",volatility:"Volatility and Tail-Risk Lab",core3d:"3D Intelligence Core",backtest:"Backtest Analytics Lab",whitepaper:"Bot White Paper",system:"JARVIS Control Plane",settings:"Local Settings"};
 const $ = (id) => document.getElementById(id);
 const esc = (value) => String(value ?? "--").replace(/[&<>'"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]));
 const num = (value, digits=2) => Number.isFinite(Number(value)) ? Number(value).toLocaleString(undefined,{minimumFractionDigits:digits,maximumFractionDigits:digits}) : "--";
@@ -27,9 +27,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   charts.core=new SignalMatrixChart($("coreCanvas")); charts.overview=new MarketChart($("overviewMarketCanvas")); charts.market=new MarketChart($("marketCanvas"));
   charts.equity=new LineChart($("equityCanvas")); charts.pnl=new LineChart($("analyticsPnlCanvas")); charts.direction=new BarChart($("analyticsDirectionCanvas")); charts.playbook=new BarChart($("analyticsPlaybookCanvas")); charts.outcomes=new DonutChart($("analyticsOutcomeCanvas"));
   charts.btDirection=new BarChart($("btDirectionCanvas")); charts.btOutcome=new DonutChart($("btOutcomeCanvas")); charts.btEconomics=new BarChart($("btEconomicsCanvas"));
-  bindNavigation(); bindActions(); bindForms(); bindMarketRanges();
+  bindNavigation(); bindActions(); bindForms(); bindMarketRanges(); bindCommandPalette();
   setInterval(updateClock,1000); updateClock(); connectSocket();
-  await Promise.all([refreshSnapshot(), refreshTables(), loadSettings(), refreshLogs(), loadTransformerCatalog(), refreshMarket(390), refreshAnalytics(), refreshBacktestResult(), refreshProviders(), loadWhitePaper()]);
+  await Promise.all([refreshSnapshot(), refreshControlPlane(), refreshTables(), loadSettings(), refreshLogs(), loadTransformerCatalog(), refreshMarket(390), refreshAnalytics(), refreshBacktestResult(), refreshProviders(), loadWhitePaper()]);
 });
 
 function ensureAdvancedViews(){ mountWorkspaces(); }
@@ -57,7 +57,7 @@ function showView(view){
   if(view==="analytics") refreshAnalytics(); if(view==="ai"){refreshLlmActivity();refreshProviders();}
   if(view==="volatility") refreshVolatility();
   if(view==="backtest") refreshBacktestResult(); if(view==="whitepaper") loadWhitePaper();
-  if(view==="system") refreshSystemLogs(); if(view==="settings") loadSettings();
+  if(view==="system"){refreshSystemLogs();refreshControlPlane();} if(view==="settings") loadSettings();
 }
 function bindActions(){
   $("startPaperTop").addEventListener("click",()=>confirmAction("Start paper trading","The execution engine will connect to Alpaca paper trading and may place paper orders.",()=>startAction("paper",{no_retraining:true})));
@@ -76,6 +76,7 @@ function bindActions(){
   document.addEventListener("click",event=>{const button=event.target.closest("[data-process-stop]");if(button)stopAction(button.dataset.processStop);});
   $("refreshLogs").addEventListener("click",refreshLogs); $("logSource").addEventListener("change",refreshLogs);
   $("refreshProcesses").addEventListener("click",refreshSnapshot); $("systemLogSource").addEventListener("change",refreshSystemLogs);
+  $("verifyAudit").addEventListener("click",refreshControlPlane);
   $("refreshAnalytics").addEventListener("click",refreshAnalytics); $("refreshBacktest").addEventListener("click",refreshBacktestResult);
   $("refreshBacktestLab").addEventListener("click",refreshBacktestResult);
   $("testProvider").addEventListener("click",testProvider);
@@ -103,9 +104,24 @@ async function startAction(action,options={}){try{const result=await client.star
 async function stopAction(action){try{const result=await client.stop(action);toast(`${action}: ${result.state}`);refreshSnapshot();}catch(error){toast(error.message,true);}}
 function confirmAction(title,message,callback){const dialog=$("confirmDialog");$("dialogTitle").textContent=title;$("dialogMessage").textContent=message;dialog.showModal();dialog.addEventListener("close",()=>{if(dialog.returnValue==="confirm")callback();},{once:true});}
 
+function bindCommandPalette(){
+  const dialog=$("commandPalette"),input=$("commandSearch"),commands=[
+    ...Object.entries(titles).map(([view,label])=>({label:`Open ${label}`,detail:"Navigation",run:()=>showView(view)})),
+    {label:"Start paper bot",detail:"Audited paper command",run:()=>confirmAction("Start paper trading","Start live paper execution now?",()=>startAction("paper",{no_retraining:true}))},
+    {label:"Stop paper bot",detail:"Graceful reconciled shutdown",run:()=>confirmAction("Stop paper trading","Freeze entries and perform the graceful shutdown sequence?",()=>stopAction("paper"))},
+    {label:"Refresh control-plane status",detail:"Read-only",run:refreshControlPlane},
+  ];
+  const render=()=>{const query=input.value.trim().toLowerCase(),matches=commands.filter(item=>`${item.label} ${item.detail}`.toLowerCase().includes(query)).slice(0,12);$("commandResults").innerHTML=matches.map((item,index)=>`<button type="button" data-command-index="${commands.indexOf(item)}"><span>${esc(item.label)}</span><small>${esc(item.detail)}</small>${index===0?"<kbd>ENTER</kbd>":""}</button>`).join("")||'<div class="empty-state">No approved command matches</div>';};
+  const open=()=>{dialog.showModal();input.value="";render();setTimeout(()=>input.focus(),0);};
+  $("openCommandPalette").addEventListener("click",open);input.addEventListener("input",render);
+  $("commandResults").addEventListener("click",event=>{const button=event.target.closest("[data-command-index]");if(!button)return;dialog.close();commands[Number(button.dataset.commandIndex)].run();});
+  input.addEventListener("keydown",event=>{if(event.key==="Enter"){event.preventDefault();$("commandResults").querySelector("button")?.click();}});
+  document.addEventListener("keydown",event=>{if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==="k"){event.preventDefault();dialog.open?dialog.close():open();}});
+}
+
 function connectSocket(){
-  const protocol=location.protocol==="https:"?"wss":"ws"; const socket=new WebSocket(`${protocol}://${location.host}/ws/live`);state.socket=socket;
-  socket.onopen=()=>{socket.send(token);setLink(true);}; socket.onmessage=event=>{state.snapshot=JSON.parse(event.data);renderSnapshot(state.snapshot);if($("logSource").value==="bot")renderTerminal($("terminalOutput"),state.snapshot.log_tail||[]);};
+  const protocol=location.protocol==="https:"?"wss":"ws"; const socket=new WebSocket(`${protocol}://${location.host}/api/v1/events`);state.socket=socket;
+  socket.onopen=()=>{socket.send(token);setLink(true);}; socket.onmessage=event=>{const envelope=JSON.parse(event.data);if(envelope.event_type!=="system.snapshot")return;state.eventSequence=envelope.sequence;state.snapshot=envelope.payload;renderSnapshot(state.snapshot);if($("logSource").value==="bot")renderTerminal($("terminalOutput"),state.snapshot.log_tail||[]);};
   socket.onclose=()=>{setLink(false);setTimeout(connectSocket,2500);};socket.onerror=()=>setLink(false);
 }
 function setLink(linked){$("socketDot").className=`status-dot ${linked?"":"error"}`;$("socketStatus").textContent=linked?"TELEMETRY LINKED":"LINK OFFLINE";}
@@ -116,7 +132,18 @@ function renderSnapshot(data){
   const mid=(Number(q.bid_price)+Number(q.ask_price))/2; setText("gldPrice",Number.isFinite(mid)?money(mid):"--");setText("gldSpread",`spread ${pct(q.spread_pct,true)}`);
   setText("equity",money(a.equity));setText("equityDelta",`realized ${money(a.realized_pl||0)}`);setValue("netPnl",money(p.net_pnl),p.net_pnl);setText("grossPnl",`gross ${money(p.gross_pnl)}`);setText("winRate",pct(p.win_rate,true));setText("tradeCount",`${p.trades||0} root episodes`);setText("drawdown",pct(a.drawdown_pct,true));setText("buyingPower",`buying power ${money(a.buying_power)}`);
   const paper=(data.processes||[]).find(item=>item.name==="paper"&&["running","stopping"].includes(item.state));setText("botState",paper?paper.state.toUpperCase():"OFFLINE");setText("botPid",paper?`PID ${paper.pid}`:"no process");$("botState").className=paper?"positive":"";$("startPaperTop").disabled=Boolean(paper);$("stopPaperTop").disabled=!paper;
-  renderDecision(s,t);renderEpisodes(data.active_episodes||[]);renderProcesses(data.processes||[]);renderDataLists(q,safe,m,t);renderAgents(s,t,m);renderMarketClock();state.hud?.update({signal:s,transformer:t,quote:q,safety:safe,processes:data.processes||[],activeEpisodes:data.active_episodes||[],counts:data.counts||{},databaseAvailable:Boolean(data.database_available),provider:state.providerCatalog?.active_provider});renderSceneReadout(s,t);
+  renderDecision(s,t);renderEpisodes(data.active_episodes||[]);renderProcesses(data.processes||[]);renderDataLists(q,safe,m,t);renderAgents(s,t,m);renderControlStatus(data.control_plane||{});renderMarketClock();state.hud?.update({signal:s,transformer:t,quote:q,safety:safe,processes:data.processes||[],activeEpisodes:data.active_episodes||[],counts:data.counts||{},databaseAvailable:Boolean(data.database_available),provider:state.providerCatalog?.active_provider});renderSceneReadout(s,t);
+}
+
+function renderControlStatus(control){
+  state.controlPlane={...(state.controlPlane||{}),status:control};const gateway=String(control.state||"CONNECTING");setText("gatewayState",gateway);setText("gatewayVersion",control.api_version||1);$("gatewayDot").className=`status-dot ${gateway==="DEGRADED"?"error":gateway==="CONNECTING"?"muted":""}`;setText("controlGateway",gateway);setText("controlApi",`API v${control.api_version||1} · ${state.eventSequence||0} events`);setText("controlAudit",control.audit?.valid?"VERIFIED":"CHECK");setText("controlAuditCount",`${control.audit?.records||0} records`);
+}
+
+async function refreshControlPlane(){
+  try{
+    const [health,readiness,status,audit,verification]=await Promise.all([api("/api/v1/system/health"),api("/api/v1/system/readiness"),api("/api/v1/system/status"),api("/api/v1/audit/events?limit=100"),api("/api/v1/audit/verify")]);
+    state.controlPlane={health,readiness,status,audit,verification};renderControlStatus(status);setText("controlReadiness",readiness.ready?"READY":"DEGRADED");setText("controlChecks",`${Object.values(readiness.checks||{}).filter(Boolean).length}/${Object.keys(readiness.checks||{}).length} checks`);setText("controlAudit",verification.valid?"VERIFIED":"FAILED");setText("controlAuditCount",`${verification.records||0} records`);setText("auditHead",String(verification.head_hash||"GENESIS").slice(0,12));list("gatewayContract",[["Service",health.service],["API version",`v${health.api_version}`],["State",status.state],["Environment",status.environment],["Trading authority",status.trading_authority],["UI broker authority",yesNo(status.ui_broker_authority)],["Correlation",client.lastCorrelationId||"pending"]]);list("readinessChecks",Object.entries(readiness.checks||{}).map(([key,value])=>[key.replaceAll("_"," "),value?"PASS":"FAIL"]));$("auditRows").innerHTML=audit.map(item=>`<tr><td>${esc(item.sequence)}</td><td>${time(item.timestamp)}</td><td>${esc(item.event_type)}</td><td>${esc(item.action)}</td><td>${tag(item.status)}</td><td>${esc(item.actor_id)}</td><td title="${esc(item.correlation_id)}">${esc(String(item.correlation_id||"").slice(0,18))}</td></tr>`).join("")||emptyRow(7);toast(verification.valid?"Control-plane audit chain verified.":"Audit verification failed.",!verification.valid);
+  }catch(error){toast(error.message,true);}
 }
 function renderDecision(signal,transformer){
   const decision=signal.decision||"NO DATA",confidence=Number(signal.confidence||0),long=Number(transformer.probability_long??(signal.bullish_score||0)/100),short=Number(transformer.probability_short??(signal.bearish_score||0)/100),abstain=Number(transformer.probability_no_trade??(signal.no_trade_score||0)/100);

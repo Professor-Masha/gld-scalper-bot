@@ -64,6 +64,13 @@ class TelemetryRepository:
         return self._query("""SELECT model_version,model_type,model_scope,status,created_at,training_start,
             training_end,feature_profile,metrics_json,rejection_reason FROM model_versions ORDER BY created_at DESC LIMIT 100""")
 
+    def orders(self, limit: int = 100) -> list[dict[str, Any]]:
+        return self._query("""SELECT id,alpaca_order_id AS order_id,client_order_id,parent_order_id,
+            symbol,side,qty,order_type,status,limit_price AS submitted_price,filled_avg_price,
+            filled_qty,submitted_at,filled_at,cancel_reason,strategy_path,playbook
+            FROM orders ORDER BY COALESCE(filled_at,submitted_at) DESC,id DESC LIMIT ?""",
+            (max(1, min(limit, 1000)),))
+
     def equity_curve(self, limit: int = 500) -> list[dict[str, Any]]:
         return list(reversed(self._query("""SELECT timestamp,equity,realized_pl,unrealized_pl,drawdown_pct
             FROM account_snapshots ORDER BY timestamp DESC,id DESC LIMIT ?""", (max(10,min(limit,2000)),))))

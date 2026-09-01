@@ -452,7 +452,7 @@ field are visual analysis only and cannot submit an Alpaca order.
 | 3D Core | Full-bleed Obsidian-style Three.js graph of the actual stream, feature, agent, model, risk, execution, broker, journal, outcome, database, and LLM services. Live telemetry animates node and edge state; drag, zoom, and node selection expose the topology. |
 | Backtest Lab | Run chronological simulations and inspect return, drawdown, win rate, profit factor, direction, and trade economics in charts. |
 | White Paper | Read the versioned technical, mathematical, risk, training, security, and governance specification in the application. |
-| System | Managed process states, execution safety, and per-job terminal output. |
+| Control Plane | Backend-derived gateway state, health/readiness checks, managed jobs, execution safety, tamper-evident operator audit, correlation IDs, and per-job terminal output. |
 | Settings | Masked Alpaca and LLM settings stored only in the ignored local `.env`. |
 
 Blank credential fields preserve the existing values. The endpoint and child
@@ -463,6 +463,33 @@ white paper and the later sections of this README for the full operator and
 developer reference.
 See [`src/gld_scalper/dashboard/README.md`](src/gld_scalper/dashboard/README.md)
 for the backend security and process-lifecycle contract.
+See [`docs/architecture/JARVIS_CONTROL_PLANE.md`](docs/architecture/JARVIS_CONTROL_PLANE.md)
+for the Parts I-VII infrastructure mapping, implemented `/api/v1` contract,
+security boundary, architecture decision, and deliberately deferred production
+services.
+
+### JARVIS Control-Plane Contract
+
+The local interface now uses a versioned control plane rather than treating a
+button click as system truth. Material operations receive a command ID,
+idempotency key, actor, correlation ID, status, and structured result. Duplicate
+requests with the same idempotency key replay the first result rather than
+starting another bot or training process. The `/api/v1/events` WebSocket wraps
+state in versioned, sequenced event envelopes.
+
+`GET /api/v1/system/health` reports gateway liveness. `GET
+/api/v1/system/readiness` separately verifies the SQLite telemetry path,
+paper-mode lock, command allowlist, and audit-chain integrity. Commands are
+written to the ignored local
+`logs/dashboard/control_plane_audit.jsonl` ledger with recursive secret
+redaction and a SHA-256 hash link to the previous record. This ledger records
+operator activity; SQLite and Alpaca reconciliation remain authoritative for
+trading state.
+
+Press `Ctrl+K` in the interface to open the deterministic command palette. Its
+commands use the same token-authenticated, allowlisted, audited gateway as the
+visible controls. The palette and all LLM interfaces remain unable to call
+Alpaca directly.
 
 ### Current Architecture JPEGs
 

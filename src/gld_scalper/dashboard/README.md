@@ -13,17 +13,21 @@ This package provides the browser-based paper-trading command center. It does no
 - **Volatility Lab:** a video-reference-inspired research workstation using local GLD one-minute bars. Interactive controls recalculate log-return volatility, empirical low/normal/high/extreme clusters, transition persistence, historical VaR and CVaR, horizon volatility, and a bounded position-size multiplier. A synchronized Three.js temporal network, regime timeline, return histogram, and transition matrix explain the result. Nothing is written into live risk settings.
 - **3D Core:** an Obsidian-style Three.js knowledge graph of real bot services and flows. Nodes represent the stream, feature engine, deterministic agents, classical ML, Transformer shadow runtime, decision council, risk, execution, Alpaca paper broker, SQLite, journal, outcomes, and offline LLM research. Status, pulse, color, and selected-node details are driven by telemetry.
 - **White Paper:** an in-app reader for `docs/BOT_WHITE_PAPER.md`.
-- **System/Settings:** process supervision, safety logs, paper credentials, and provider settings.
+- **Control Plane:** backend-derived health/readiness, API version, managed jobs, safety state, correlation IDs, and a tamper-evident operator-command ledger.
+- **Settings:** paper credentials and offline provider settings with secret masking.
 
 ## Class Boundaries
 
-`DashboardService` validates actions. `ProcessManager` owns child jobs. `TelemetryRepository` performs read-only SQLite queries. `TransformerCatalog` supplies presets and complete archives. `PerformanceAnalytics` builds chart-ready summaries. `JobResultRepository` parses structured job output. `LLMProviderService` manages secret-safe provider selection and verifies actual text generation rather than treating a model-list response as proof of inference. `WhitePaperRepository` exposes the versioned local document. Browser classes are documented in `static/js/README.md`.
+`DashboardService` validates actions. `ControlPlane` serializes typed commands and enforces idempotency and a local command-rate bound. `AuditLedger` writes redacted SHA-256-linked evidence. `contracts.py` owns API/event schemas and version identifiers. `ProcessManager` owns child jobs. `TelemetryRepository` performs read-only SQLite queries. `TransformerCatalog` supplies presets and complete archives. `PerformanceAnalytics` builds chart-ready summaries. `JobResultRepository` parses structured job output. `LLMProviderService` manages secret-safe provider selection and verifies actual text generation rather than treating a model-list response as proof of inference. `WhitePaperRepository` exposes the versioned local document. Browser classes are documented in `static/js/README.md`.
 
 The locally vendored Three.js HUD is visual only. Its low-power renderer pauses with a hidden tab and cannot affect signals, risk, or execution.
 
 ## Files
 
-- `app.py`: FastAPI application, local-only middleware, per-session control token, REST/WebSocket routes, validated action-to-CLI mapping, and the Uvicorn launcher.
+- `app.py`: FastAPI application, local-only middleware, per-session control token, compatibility routes, versioned `/api/v1` routes, sequenced WebSocket envelopes, and the Uvicorn launcher.
+- `contracts.py`: Pydantic command, result, training-job, and event-envelope schemas shared by the versioned gateway.
+- `control_plane.py`: serialized typed command dispatcher, idempotent replay, rate limiting, and audit completion records.
+- `audit.py`: append-only redacted JSONL records, SHA-256 hash chaining, verification, and recent-event lookup.
 - `process_manager.py`: starts one named child process per operation, records PID/state, writes output to `logs/dashboard`, prevents duplicate starts, and sends graceful interrupt signals.
 - `settings_store.py`: masks Alpaca and Kimi credentials, updates `.env` atomically, preserves blank secret fields, and enforces paper/offline safety for dashboard-launched children.
 - `llm_providers.py`: defines Ollama/Kimi profiles, activation rules, small generation tests, and FinGPT source discovery without exposing provider secrets. A successful model-list request alone is not reported as a healthy LLM.
@@ -42,10 +46,14 @@ The server binds only to `127.0.0.1`, `localhost`, or `::1`. State-changing requ
 
 1. `gld-scalper dashboard` creates `DashboardService`.
 2. The browser loads the static interface and receives a one-session control token.
-3. `/ws/live` sends a SQLite snapshot and log tail every two seconds.
-4. A start control maps its form to a fixed CLI argument list.
-5. `ProcessManager` launches that CLI in its own process group and captures output. The Desktop launcher separately records the dashboard server PID and exact start time so its stop script cannot target a reused PID.
-6. Paper execution continues through the existing bot; the dashboard only observes its database and process state.
-7. Stop sends `CTRL_BREAK_EVENT` on Windows so the bot can run its normal safety shutdown.
+3. `/api/v1/events` sends a versioned, traced, sequenced SQLite snapshot and log tail every two seconds.
+4. A start control creates a typed command with an idempotency key.
+5. `ControlPlane` serializes the operation, records the request, and maps it to a fixed CLI argument list.
+6. `ProcessManager` launches that CLI in its own process group and captures output. The Desktop launcher separately records the dashboard server PID and exact start time so its stop script cannot target a reused PID.
+7. Completion or rejection is recorded in the hash-chained audit ledger with its correlation ID.
+8. Paper execution continues through the existing bot; the dashboard only observes its database and process state.
+9. Stop sends `CTRL_BREAK_EVENT` on Windows so the bot can run its normal safety shutdown.
+
+The browser/PWA remains the current presentation client. The Parts I-VII JavaFX proposal is treated as a possible future client of the same stable gateway, not as justification for introducing a duplicate interface or rewriting the Python engine. See `docs/architecture/JARVIS_CONTROL_PLANE.md`.
 
 FinGPT is a workflow and financial-RAG layer, not a third reasoning endpoint. It uses the active Ollama or Kimi engine. Provider tests never grant broker authority, and every training result remains subject to the normal validation and promotion gates. On the target 8 GB laptop, Ollama receives bounded context, keeps the selected model warm for 15 minutes, and retries one timeout with a smaller response budget. Kimi can still reject generation when the remote account has no balance even if authentication and model discovery succeed; the AI Lab now reports that condition and the analysis service can use Ollama as a local fallback.

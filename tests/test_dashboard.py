@@ -6,6 +6,9 @@ import pytest
 
 from gld_scalper.config import Settings
 from gld_scalper.dashboard.app import DashboardService, create_dashboard_app
+from gld_scalper.dashboard.audit import AuditLedger
+from gld_scalper.dashboard.contracts import CommandRequest, EventEnvelope
+from gld_scalper.dashboard.control_plane import ControlPlane
 from gld_scalper.dashboard.analytics import PerformanceAnalytics
 from gld_scalper.dashboard.catalog import TransformerCatalog
 from gld_scalper.dashboard.job_results import JobResultRepository
@@ -119,7 +122,62 @@ def test_dashboard_app_is_local_and_serves_expected_routes(tmp_path: Path) -> No
     assert "/api/whitepaper" in paths
     assert "/api/processes/{action}/start" in paths
     assert "/ws/live" in paths
+    assert "/api/v1/system/health" in paths
+    assert "/api/v1/system/readiness" in paths
+    assert "/api/v1/system/status" in paths
+    assert "/api/v1/training/jobs" in paths
+    assert "/api/v1/audit/events" in paths
+    assert "/api/v1/events" in paths
     assert len(app.state.dashboard_token) >= 32
+
+
+def test_control_plane_audit_is_redacted_hash_chained_and_idempotent(tmp_path: Path) -> None:
+    starts: list[tuple[str, dict[str, object]]] = []
+    ledger = AuditLedger(tmp_path / "audit.jsonl")
+
+    def start(name: str, options: dict[str, object]) -> dict[str, object]:
+        starts.append((name, options))
+        return {"name": name, "pid": 4312, "state": "running"}
+
+    plane = ControlPlane(audit=ledger, start=start, stop=lambda name: {"name": name, "state": "stopping"})
+    request = CommandRequest(
+        command_type="bot.start",
+        parameters={"options": {"no_retraining": True, "api_key": "must-not-leak"}},
+        idempotency_key="stable-paper-start-key",
+    )
+
+    first = plane.execute(request)
+    second = plane.execute(request)
+
+    assert first.accepted is True
+    assert second.idempotent_replay is True
+    assert starts == [("paper", {"no_retraining": True, "api_key": "must-not-leak"})]
+    assert ledger.verify()["valid"] is True
+    assert ledger.verify()["records"] == 2
+    assert "must-not-leak" not in ledger.path.read_text(encoding="utf-8")
+
+
+def test_event_envelope_has_versioned_traceable_contract() -> None:
+    event = EventEnvelope(event_type="decision.created", symbol="GLD", sequence=7, payload={"decision": "NO_TRADE"})
+
+    assert event.version == 1
+    assert event.event_id.startswith("evt-")
+    assert event.trace_id.startswith("trace-")
+    assert event.sequence == 7
+    assert event.payload["decision"] == "NO_TRADE"
+
+
+def test_dashboard_control_status_is_backend_derived(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text("", encoding="utf-8")
+    service = DashboardService(tmp_path)
+
+    status = service.control_status(snapshot={"database_available": True, "processes": []})
+    readiness = service.readiness()
+
+    assert status["state"] == "READY"
+    assert status["environment"] == "paper"
+    assert status["ui_broker_authority"] is False
+    assert readiness["checks"]["paper_mode"] is True
 
 
 def test_dashboard_includes_volatility_research_workspace() -> None:

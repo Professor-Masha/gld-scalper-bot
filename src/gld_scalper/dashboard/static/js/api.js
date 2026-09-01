@@ -1,10 +1,14 @@
 export class ApiClient {
-  constructor(token) { this.token = token; }
+  constructor(token) { this.token = token; this.lastCorrelationId = null; }
   async request(path, options = {}) {
     const config = { ...options, headers: { ...(options.headers || {}) } };
-    if (options.method && options.method !== "GET") config.headers["X-Dashboard-Token"] = this.token;
+    if (options.method && options.method !== "GET") {
+      config.headers["X-Dashboard-Token"] = this.token;
+      config.headers["X-Idempotency-Key"] ||= `ui-${crypto.randomUUID()}`;
+    }
     if (options.body) { config.headers["Content-Type"] = "application/json"; config.body = JSON.stringify(options.body); }
     const response = await fetch(path, config);
+    this.lastCorrelationId = response.headers.get("X-Correlation-ID");
     const payload = await response.json().catch(() => ({ detail: response.statusText }));
     if (!response.ok) throw new Error(payload.detail || "Request failed");
     return payload;

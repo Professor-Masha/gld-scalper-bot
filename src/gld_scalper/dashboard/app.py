@@ -16,6 +16,16 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from ..config import PROJECT_ROOT, load_settings
+from .audit import AuditLedger
+from .contracts import (
+    API_VERSION,
+    BotCommandRequest,
+    CommandRequest,
+    EventEnvelope,
+    TrainingJobRequest,
+    new_identifier,
+)
+from .control_plane import ControlPlane
 from .process_manager import ProcessManager
 from .analytics import PerformanceAnalytics
 from .catalog import TransformerCatalog
@@ -64,6 +74,8 @@ class DashboardService:
         self.results = JobResultRepository(self.project_root / "logs" / "dashboard")
         self.llm_providers = LLMProviderService(self.project_root, self.env_store)
         self.whitepaper = WhitePaperRepository(self.project_root)
+        self.audit = AuditLedger(self.project_root / "logs" / "dashboard" / "control_plane_audit.jsonl")
+        self.control_plane = ControlPlane(audit=self.audit, start=self.start, stop=self.stop)
 
     @property
     def telemetry(self) -> TelemetryRepository:
@@ -71,9 +83,65 @@ class DashboardService:
         return TelemetryRepository(settings.database_path)
 
     def snapshot(self) -> dict[str, Any]:
-        snapshot = self.telemetry.snapshot()
+        snapshot = self._telemetry_snapshot()
         snapshot["processes"] = self.processes.statuses()
+        snapshot["control_plane"] = self.control_status(snapshot=snapshot)
         return snapshot
+
+    def _telemetry_snapshot(self) -> dict[str, Any]:
+        try:
+            return self.telemetry.snapshot()
+        except (RuntimeError, ValueError) as exc:
+            return {
+                "database_available": False,
+                "configuration_valid": False,
+                "configuration_error": str(exc),
+            }
+
+    def control_status(self, *, snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
+        current = snapshot or self._telemetry_snapshot()
+        processes = current.get("processes") or self.processes.statuses()
+        paper = next((item for item in processes if item.get("name") == "paper"), None)
+        audit = self.audit.verify()
+        database_available = bool(current.get("database_available"))
+        if paper and paper.get("state") in {"running", "stopping"}:
+            state = "RUNNING" if paper.get("state") == "running" else "DEGRADED"
+        elif database_available and audit.get("valid"):
+            state = "READY"
+        else:
+            state = "DEGRADED"
+        return {
+            "api_version": API_VERSION,
+            "state": state,
+            "environment": "paper",
+            "trading_authority": "python-risk-engine",
+            "ui_broker_authority": False,
+            "database_available": database_available,
+            "audit": audit,
+            "paper_process": paper,
+            "training_processes": [item for item in processes if item.get("name") != "paper"],
+        }
+
+    def health(self) -> dict[str, Any]:
+        audit = self.audit.verify()
+        return {
+            "status": "healthy" if audit.get("valid") else "degraded",
+            "api_version": API_VERSION,
+            "service": "gld-dashboard-gateway",
+            "audit_integrity": bool(audit.get("valid")),
+        }
+
+    def readiness(self) -> dict[str, Any]:
+        snapshot = self._telemetry_snapshot()
+        audit = self.audit.verify()
+        checks = {
+            "database": bool(snapshot.get("database_available")),
+            "configuration": snapshot.get("configuration_valid", True) is not False,
+            "audit_ledger": bool(audit.get("valid")),
+            "paper_mode": True,
+            "allowlisted_commands": True,
+        }
+        return {"ready": all(checks.values()), "checks": checks, "api_version": API_VERSION}
 
     def start(self, action: str, options: dict[str, Any]) -> dict[str, Any]:
         command = self._command(action, options)
@@ -196,7 +264,13 @@ def create_dashboard_app(project_root: Path = PROJECT_ROOT) -> FastAPI:
     @app.middleware("http")
     async def local_only(request: Request, call_next):
         if request.client and request.client.host not in LOCAL_HOSTS: raise HTTPException(403, "Dashboard is local-only")
-        return await call_next(request)
+        correlation_id = request.headers.get("X-Correlation-ID") or new_identifier("trace")
+        request.state.correlation_id = correlation_id
+        response = await call_next(request)
+        response.headers["X-Correlation-ID"] = correlation_id
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        return response
 
     @app.get("/", response_class=HTMLResponse)
     async def index() -> HTMLResponse:
@@ -243,16 +317,98 @@ def create_dashboard_app(project_root: Path = PROJECT_ROOT) -> FastAPI:
     @app.get("/api/settings")
     async def settings(): return service.env_store.public_settings()
 
+    # Versioned control-plane contract. Legacy /api routes remain available for
+    # the installed dashboard and are routed through the same implementation.
+    @app.get("/api/v1/system/health")
+    async def v1_health(): return await asyncio.to_thread(service.health)
+    @app.get("/api/v1/system/readiness")
+    async def v1_readiness(): return await asyncio.to_thread(service.readiness)
+    @app.get("/api/v1/system/status")
+    async def v1_status(): return await asyncio.to_thread(service.control_status)
+    @app.get("/api/v1/market/GLD/snapshot")
+    async def v1_market_snapshot():
+        snapshot = await asyncio.to_thread(service.telemetry.snapshot)
+        return {"symbol": "GLD", "quote": snapshot.get("quote"), "signal": snapshot.get("signal"), "server_time": snapshot.get("server_time")}
+    @app.get("/api/v1/market/GLD/bars")
+    async def v1_market_bars(timeframe: str = "1Min", limit: int = 500):
+        if timeframe != "1Min": raise HTTPException(400, "The dashboard gateway currently exposes 1Min bars")
+        return {"symbol": "GLD", "timeframe": timeframe, "bars": await asyncio.to_thread(service.telemetry.market_series, limit)}
+    @app.get("/api/v1/account")
+    async def v1_account(): return (await asyncio.to_thread(service.telemetry.snapshot)).get("account") or {}
+    @app.get("/api/v1/positions")
+    async def v1_positions(): return (await asyncio.to_thread(service.telemetry.snapshot)).get("active_episodes") or []
+    @app.get("/api/v1/orders")
+    async def v1_orders(limit: int = 100): return await asyncio.to_thread(service.telemetry.orders, limit)
+    @app.get("/api/v1/decisions/latest")
+    async def v1_latest_decision():
+        values = await asyncio.to_thread(service.telemetry.decisions, 1)
+        return values[0] if values else {}
+    @app.get("/api/v1/models")
+    async def v1_models(): return await asyncio.to_thread(service.telemetry.models)
+    @app.get("/api/v1/training/jobs")
+    async def v1_training_jobs(): return [item for item in service.processes.statuses() if item.get("name") != "paper"]
+    @app.get("/api/v1/audit/events")
+    async def v1_audit_events(limit: int = 100): return await asyncio.to_thread(service.audit.tail, limit)
+    @app.get("/api/v1/audit/verify")
+    async def v1_audit_verify(): return await asyncio.to_thread(service.audit.verify)
+
+    async def execute_control_command(command: CommandRequest):
+        try:
+            result = await asyncio.to_thread(service.control_plane.execute, command)
+        except (ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return result.model_dump(mode="json")
+
+    @app.post("/api/v1/bot/start")
+    async def v1_bot_start(request: BotCommandRequest, x_dashboard_token: str | None = Header(default=None)):
+        authorize(x_dashboard_token)
+        return await execute_control_command(CommandRequest(
+            actor_id=request.actor_id, command_type="bot.start", parameters={"options": request.options},
+            idempotency_key=request.idempotency_key,
+        ))
+    @app.post("/api/v1/bot/stop")
+    async def v1_bot_stop(request: BotCommandRequest, x_dashboard_token: str | None = Header(default=None)):
+        authorize(x_dashboard_token)
+        return await execute_control_command(CommandRequest(
+            actor_id=request.actor_id, command_type="bot.stop", parameters={},
+            idempotency_key=request.idempotency_key,
+        ))
+    @app.post("/api/v1/training/jobs")
+    async def v1_training_start(request: TrainingJobRequest, x_dashboard_token: str | None = Header(default=None)):
+        authorize(x_dashboard_token)
+        return await execute_control_command(CommandRequest(
+            actor_id=request.actor_id, command_type="job.start",
+            parameters={"action": request.action, "options": request.options},
+            idempotency_key=request.idempotency_key,
+        ))
+    @app.post("/api/v1/training/jobs/{action}/cancel")
+    async def v1_training_cancel(action: str, request: BotCommandRequest, x_dashboard_token: str | None = Header(default=None)):
+        authorize(x_dashboard_token)
+        return await execute_control_command(CommandRequest(
+            actor_id=request.actor_id, command_type="job.stop", parameters={"action": action},
+            idempotency_key=request.idempotency_key,
+        ))
+
     @app.post("/api/processes/{action}/start")
-    async def start(action: str, request: StartRequest, x_dashboard_token: str | None = Header(default=None)):
+    async def start(action: str, request: StartRequest, x_dashboard_token: str | None = Header(default=None), x_idempotency_key: str | None = Header(default=None)):
         authorize(x_dashboard_token)
-        try: return await asyncio.to_thread(service.start, action, request.options)
-        except (ValueError,RuntimeError) as exc: raise HTTPException(409, str(exc)) from exc
+        command_type = "bot.start" if action == "paper" else "job.start"
+        parameters = {"options": request.options} if action == "paper" else {"action": action, "options": request.options}
+        result = await execute_control_command(CommandRequest(
+            command_type=command_type, parameters=parameters,
+            idempotency_key=x_idempotency_key or new_identifier("idem"),
+        ))
+        return result["result"] | {"correlation_id": result["correlation_id"], "command_id": result["command_id"]}
     @app.post("/api/processes/{action}/stop")
-    async def stop(action: str, x_dashboard_token: str | None = Header(default=None)):
+    async def stop(action: str, x_dashboard_token: str | None = Header(default=None), x_idempotency_key: str | None = Header(default=None)):
         authorize(x_dashboard_token)
-        try: return await asyncio.to_thread(service.stop, action)
-        except (ValueError,RuntimeError,subprocess.SubprocessError) as exc: raise HTTPException(409,str(exc)) from exc
+        command_type = "bot.stop" if action == "paper" else "job.stop"
+        parameters = {} if action == "paper" else {"action": action}
+        result = await execute_control_command(CommandRequest(
+            command_type=command_type, parameters=parameters,
+            idempotency_key=x_idempotency_key or new_identifier("idem"),
+        ))
+        return result["result"] | {"correlation_id": result["correlation_id"], "command_id": result["command_id"]}
     @app.post("/api/settings")
     async def save_settings(request: SettingsRequest, x_dashboard_token: str | None = Header(default=None)):
         authorize(x_dashboard_token)
@@ -265,6 +421,11 @@ def create_dashboard_app(project_root: Path = PROJECT_ROOT) -> FastAPI:
             "LLM_PROVIDER":request.llm_provider, "LLM_BASE_URL":request.llm_base_url, "LLM_MODEL":request.llm_model,
             "MOONSHOT_API_KEY": request.moonshot_api_key}
         await asyncio.to_thread(service.env_store.update, changes)
+        await asyncio.to_thread(
+            service.audit.append,
+            event_type="settings.updated", actor_id="local-operator", status="completed",
+            correlation_id=new_identifier("trace"), action="settings.update", details={"changes": changes},
+        )
         return service.env_store.public_settings()
 
     @app.post("/api/llm/providers/activate")
@@ -304,6 +465,30 @@ def create_dashboard_app(project_root: Path = PROJECT_ROOT) -> FastAPI:
                 await websocket.send_text(json.dumps(payload, default=str))
                 await asyncio.sleep(2)
         except WebSocketDisconnect: pass
+
+    @app.websocket("/api/v1/events")
+    async def v1_events(websocket: WebSocket):
+        if websocket.client and websocket.client.host not in LOCAL_HOSTS: await websocket.close(code=1008); return
+        await websocket.accept()
+        try:
+            supplied_token = await asyncio.wait_for(websocket.receive_text(), timeout=5)
+            if not secrets.compare_digest(supplied_token, token):
+                await websocket.close(code=1008)
+                return
+            sequence = 0
+            trace_id = new_identifier("trace")
+            while True:
+                sequence += 1
+                payload = await asyncio.to_thread(service.snapshot)
+                payload["log_tail"] = service.processes.tail("bot", 45)
+                event = EventEnvelope(
+                    event_type="system.snapshot", trace_id=trace_id, symbol="GLD",
+                    sequence=sequence, payload=payload,
+                )
+                await websocket.send_text(event.model_dump_json())
+                await asyncio.sleep(2)
+        except WebSocketDisconnect:
+            pass
 
     return app
 

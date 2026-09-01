@@ -1,10 +1,13 @@
 # Browser Classes
 
-- `api.js`: `ApiClient`, the HTTP query and mutation boundary.
+- `api.js`: `ApiClient`, the HTTP query and mutation boundary. It adds a unique idempotency key to each mutation and retains the latest gateway correlation ID for diagnostics.
 - `charts.js`: responsive `MarketChart`, `SignalMatrixChart`, `LineChart`, `BarChart`, and `DonutChart` classes. Charts measure their containers using `ResizeObserver`.
 - `hud-scene.js`: telemetry-reactive Three.js `HudScene` implemented as an Obsidian-style operational knowledge graph. Sixteen selectable nodes and directed flow edges describe the real data, agent, model, risk, execution, broker, memory, and research topology. Live process/database/signal telemetry changes node status and edge activity. Drag orbits the graph, the wheel zooms it, ray-casting selects a node, and reduced-motion support remains available. It has no trading authority.
 - `workspaces.js`: semantic markup factory for Analytics, AI Lab, 3D Core, Backtest Lab, and White Paper workspaces.
 - `volatility-lab.js`: interactive local GLD volatility-clustering workstation. It derives rolling log-return volatility, four empirical regimes, transition persistence, historical VaR/CVaR, a bounded tail-risk size multiplier, synchronized charts, and a Three.js temporal network. Results are advisory and never call execution code.
 - `whitepaper-view.js`: safe local Markdown renderer and section index for the versioned bot white paper.
 
-`app.js` composes these classes. Broker and strategy logic must remain outside the browser layer.
+`app.js` composes these classes, consumes `/api/v1/events`, renders the Control
+Plane and tamper-evident audit ledger, and provides a `Ctrl+K` deterministic
+command palette. Broker and strategy logic must remain outside the browser
+layer.
