@@ -28,6 +28,7 @@ submit broker orders, or implement risk rules.
 | `GatewayClient.java` | REST/WebSocket transport and authenticated commands. |
 | `JarvisApplication.java` | Native window, navigation, tables, charts, forms, and state projection. |
 | `DecisionCore3D.java` | Native 3D telemetry visualization. |
+| `HudBackdrop.java` | Lightweight canvas grid and corner registration marks behind the native command deck. |
 | `JobWorkspace.java` | Scope presets, artifact discovery/browsing, multi-candidate forms, typed starts/stops, and five-second job logs. |
 | `AnalyticsWorkspace.java` | Native line/pie/bar charts separating observed paper outcomes from simulated backtest metrics. |
 | `DesktopSmokeCheck.java` | Explicit opt-in, read-only visual checks; captures each view and exits without firing controls. |
@@ -80,6 +81,21 @@ Advanced browser volatility experiments and the original Three.js service
 graph remain in the fallback client; the native client does not claim feature
 parity for those research-only visuals. Its 3D core supports drag and zoom,
 pauses when detached, and changes color/speed with backend health.
+
+## Visual System
+
+The native command deck uses near-black neutral surfaces with role-specific
+emerald, cyan, blue, violet, amber, and red accents. Color communicates meaning:
+emerald is healthy execution or profit, cyan is data and navigation, blue is
+market state, violet is modeling, amber is caution, and red is loss or danger.
+An active numbered navigation rail, telemetry status band, bounded panel depth,
+and responsive metric cards keep the interface scannable during live operation.
+
+`HudBackdrop` paints a low-cost coordinate grid directly on a JavaFX `Canvas`.
+`DecisionCore3D` uses native spheres, three independent orbital systems, a
+deterministic depth field, two lights, and a breathing wireframe halo. State
+changes alter the core lighting and animation rate. Page changes use a short
+fade-and-lift transition; no animation owns or mutates trading state.
 
 The browser dashboard remains in `src/gld_scalper/dashboard/static` as a
 fallback and API development harness. The installed operator shortcut launches

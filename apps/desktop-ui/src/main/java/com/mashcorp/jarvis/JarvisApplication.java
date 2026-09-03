@@ -1,9 +1,13 @@
 package com.mashcorp.jarvis;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import javafx.animation.FadeTransition;
+import javafx.animation.ParallelTransition;
+import javafx.animation.TranslateTransition;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
+import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.Scene;
@@ -13,7 +17,9 @@ import javafx.scene.chart.XYChart;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
+import javafx.scene.shape.Circle;
 import javafx.stage.Stage;
+import javafx.util.Duration;
 
 import java.time.Instant;
 import java.time.ZoneId;
@@ -44,6 +50,10 @@ public final class JarvisApplication extends Application {
     private final Label botValue = metricValue("OFFLINE");
     private final Label decisionValue = new Label("NO DATA");
     private final Label decisionReason = new Label("Waiting for the first backend decision.");
+    private final Label dataLinkValue = statusValue("CONNECTING");
+    private final Label streamValue = statusValue("WAITING");
+    private final Label modelValue = statusValue("DISCOVERING");
+    private final Label sessionValue = statusValue("PAPER");
     private final TextArea terminal = new TextArea();
     private final DecisionCore3D core3D = new DecisionCore3D();
     private final LineChart<Number, Number> marketChart = lineChart("Minute", "GLD");
@@ -61,6 +71,8 @@ public final class JarvisApplication extends Application {
     });
     private Button paperStart;
     private Button paperStop;
+    private final ToggleGroup navigationGroup = new ToggleGroup();
+    private int navigationIndex;
     private Runnable currentRefresh = () -> {};
     private long eventSequence;
 
@@ -85,7 +97,9 @@ public final class JarvisApplication extends Application {
         shell.setCenter(workspace);
         showOverview();
 
-        Scene scene = new Scene(shell, 1500, 920, Color.web("#020608"));
+        StackPane root = new StackPane(new HudBackdrop(), shell);
+        root.getStyleClass().add("root-deck");
+        Scene scene = new Scene(root, 1500, 920, Color.web("#010507"));
         scene.getStylesheets().add(getClass().getResource("/com/mashcorp/jarvis/jarvis.css").toExternalForm());
         stage.setTitle("Mashcorp GLD Command Center");
         stage.setMinWidth(850);
@@ -120,8 +134,18 @@ public final class JarvisApplication extends Application {
     private Node buildTopBar() {
         Label title = new Label("MASHCORP // GLD COMMAND CENTER");
         title.getStyleClass().add("brand-title");
+        Label kicker = new Label("AUTONOMOUS RESEARCH & EXECUTION SYSTEM");
+        kicker.getStyleClass().add("brand-kicker");
+        VBox brand = new VBox(2, title, kicker);
         systemState.getStyleClass().add("state-pill");
+        systemState.getStyleClass().add("state-starting");
         clock.getStyleClass().add("clock");
+        Circle pulse = new Circle(4, Color.web("#5cf2b5"));
+        pulse.getStyleClass().add("link-pulse");
+        Label environment = new Label("PAPER NETWORK // GLD");
+        environment.getStyleClass().add("environment-badge");
+        HBox network = new HBox(7, pulse, environment);
+        network.setAlignment(Pos.CENTER);
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
         paperStop = actionButton("STOP BOT", "danger", () -> execute("Requesting safety shutdown", gateway::stopPaper));
@@ -129,9 +153,10 @@ public final class JarvisApplication extends Application {
         paperStart.setDisable(true); paperStop.setDisable(true);
         paperStart.setMinWidth(Region.USE_PREF_SIZE); paperStop.setMinWidth(Region.USE_PREF_SIZE);
         systemState.setMinWidth(Region.USE_PREF_SIZE);
-        title.setMinWidth(120); title.setMaxWidth(360); title.setWrapText(true);
+        brand.setMinWidth(240); brand.setMaxWidth(410);
+        title.setMinWidth(120); title.setMaxWidth(410); title.setWrapText(true);
         clock.setMinWidth(0); clock.setMaxWidth(210); clock.setWrapText(true);
-        HBox bar = new HBox(10, title, systemState, spacer, clock, paperStop, paperStart);
+        HBox bar = new HBox(12, brand, systemState, spacer, network, clock, paperStop, paperStart);
         bar.setAlignment(Pos.CENTER_LEFT);
         bar.getStyleClass().add("top-bar");
         return bar;
@@ -144,7 +169,9 @@ public final class JarvisApplication extends Application {
         monogram.getStyleClass().add("monogram");
         Label caption = new Label("PAPER OPERATIONS");
         caption.getStyleClass().add("eyebrow");
-        nav.getChildren().addAll(monogram, caption, new Separator());
+        Label deck = new Label("COMMAND DECK / 01");
+        deck.getStyleClass().add("nav-deck-label");
+        nav.getChildren().addAll(monogram, caption, deck, new Separator());
         addNav(nav, "OVERVIEW", this::showOverview);
         addNav(nav, "MARKET", this::showMarket);
         addNav(nav, "PERFORMANCE", this::showPerformance);
@@ -170,6 +197,12 @@ public final class JarvisApplication extends Application {
                 metric("GLD MID", quoteValue), metric("EQUITY", equityValue), metric("NET P/L TODAY", pnlValue),
                 metric("WIN RATE", winValue), metric("BOT STATE", botValue));
         metrics.getStyleClass().add("metrics");
+        HBox telemetryBand = new HBox(1,
+                statusItem("DATA LINK", dataLinkValue), statusItem("LIVE STREAM", streamValue),
+                statusItem("DECISION MODEL", modelValue), statusItem("ENVIRONMENT", sessionValue));
+        telemetryBand.getStyleClass().add("telemetry-band");
+        telemetryBand.setMaxWidth(Double.MAX_VALUE);
+        telemetryBand.getChildren().forEach(child -> HBox.setHgrow(child, Priority.ALWAYS));
         VBox corePanel = panel("DECISION CORE // NATIVE 3D", core3D.node());
         corePanel.setMinHeight(360);
         corePanel.setPrefHeight(360); corePanel.setMaxHeight(360); corePanel.setMinWidth(180);
@@ -183,7 +216,7 @@ public final class JarvisApplication extends Application {
         decision.setPrefWidth(380);
         decision.setMinWidth(180);
         terminal.setEditable(false); terminal.setWrapText(false); terminal.setPrefRowCount(10);
-        setWorkspace(page("SYSTEM OVERVIEW", metrics, center, panel("LIVE OPERATIONS LOG", terminal)));
+        setWorkspace(page("SYSTEM OVERVIEW", telemetryBand, metrics, center, panel("LIVE OPERATIONS LOG", terminal)));
     }
 
     private void showMarket() {
@@ -392,11 +425,16 @@ public final class JarvisApplication extends Application {
         paperStart.setDisable(bot.matches("RUNNING|STOPPING|UNKNOWN"));
         paperStop.setDisable(!bot.matches("RUNNING"));
         String state = snapshot.path("control_plane").path("state").asText("UNKNOWN");
-        systemState.setText(state);
+        updateSystemState(state);
         core3D.setState(state);
         JsonNode signal = snapshot.path("signal");
         decisionValue.setText(signal.path("decision").asText("NO DATA"));
         decisionReason.setText(signal.path("reason").asText("Waiting for the first backend decision."));
+        dataLinkValue.setText(snapshot.path("database_available").asBoolean() ? "SYNCHRONIZED" : "UNAVAILABLE");
+        streamValue.setText(signal.path("stream_connected").asBoolean() ? "CONNECTED" : "OFFLINE");
+        String model = signal.path("model_version").asText("");
+        modelValue.setText(model.isBlank() ? "RULES + SHADOW" : compact(model, 22));
+        sessionValue.setText(snapshot.path("control_plane").path("environment").asText("paper").toUpperCase());
         if (snapshot.has("log_tail")) {
             List<String> lines = new ArrayList<>(); snapshot.path("log_tail").forEach(line -> lines.add(line.asText()));
             terminal.setText(String.join("\n", lines)); terminal.positionCaret(terminal.getLength());
@@ -435,17 +473,32 @@ public final class JarvisApplication extends Application {
     private void showTelemetryError(Throwable error) {
         Platform.runLater(() -> {
             notification.setText("TELEMETRY DEGRADED\n" + error.getMessage());
-            systemState.setText("DEGRADED");
+            updateSystemState("DEGRADED");
             core3D.setState("DEGRADED");
             paperStart.setDisable(true);
         });
     }
 
-    private void setWorkspace(Node node) { currentRefresh = () -> {}; workspace.getChildren().setAll(node); }
+    private void setWorkspace(Node node) {
+        currentRefresh = () -> {};
+        node.setOpacity(0);
+        node.setTranslateY(8);
+        workspace.getChildren().setAll(node);
+        FadeTransition fade = new FadeTransition(Duration.millis(220), node);
+        fade.setFromValue(0); fade.setToValue(1);
+        TranslateTransition lift = new TranslateTransition(Duration.millis(220), node);
+        lift.setFromY(8); lift.setToY(0);
+        new ParallelTransition(fade, lift).play();
+    }
 
     private static VBox page(String title, Node... nodes) {
         Label heading = new Label(title); heading.getStyleClass().add("page-title");
-        VBox content = new VBox(12, heading); content.getChildren().addAll(nodes);
+        Label context = new Label("MASHCORP / OPERATIONS WORKSPACE / LOCAL CONTROL");
+        context.getStyleClass().add("page-context");
+        Region rule = new Region(); rule.getStyleClass().add("page-rule"); HBox.setHgrow(rule, Priority.ALWAYS);
+        VBox titles = new VBox(2, context, heading);
+        HBox header = new HBox(16, titles, rule); header.setAlignment(Pos.CENTER_LEFT);
+        VBox content = new VBox(14, header); content.getChildren().addAll(nodes);
         content.getStyleClass().add("page");
         ScrollPane scroll = new ScrollPane(content); scroll.setFitToWidth(true); scroll.getStyleClass().add("page-scroll");
         VBox wrapper = new VBox(scroll); VBox.setVgrow(scroll, Priority.ALWAYS); return wrapper;
@@ -453,13 +506,15 @@ public final class JarvisApplication extends Application {
 
     private static VBox panel(String title, Node... nodes) {
         Label heading = new Label(title); heading.getStyleClass().add("panel-title");
-        VBox box = new VBox(10, heading); box.getChildren().addAll(nodes); box.getStyleClass().add("panel");
+        Region rule = new Region(); rule.getStyleClass().add("panel-rule"); HBox.setHgrow(rule, Priority.ALWAYS);
+        HBox header = new HBox(10, heading, rule); header.setAlignment(Pos.CENTER_LEFT);
+        VBox box = new VBox(10, header); box.getChildren().addAll(nodes); box.getStyleClass().add("panel");
         return box;
     }
 
     private static VBox metric(String label, Label value) {
         Label caption = new Label(label); caption.getStyleClass().add("metric-caption");
-        VBox box = new VBox(7, caption, value); box.getStyleClass().add("metric-card"); box.setPrefWidth(180); return box;
+        VBox box = new VBox(7, caption, value); box.getStyleClass().addAll("metric-card", metricAccent(label)); box.setPrefWidth(180); return box;
     }
 
     private static Label metricValue(String text) { Label label = new Label(text); label.getStyleClass().add("metric-value"); return label; }
@@ -473,9 +528,45 @@ public final class JarvisApplication extends Application {
         Button button = new Button(text); button.getStyleClass().add(style); button.setOnAction(event -> action.run()); return button;
     }
 
-    private static void addNav(VBox nav, String text, Runnable action) {
-        Button button = new Button(text); button.setMaxWidth(Double.MAX_VALUE); button.getStyleClass().add("nav-button");
-        button.setOnAction(event -> action.run()); nav.getChildren().add(button);
+    private void addNav(VBox nav, String text, Runnable action) {
+        ToggleButton button = new ToggleButton(String.format("%02d  %s", ++navigationIndex, text));
+        button.setToggleGroup(navigationGroup); button.setMaxWidth(Double.MAX_VALUE); button.getStyleClass().add("nav-button");
+        button.setOnAction(event -> { button.setSelected(true); action.run(); });
+        if (navigationGroup.getSelectedToggle() == null) button.setSelected(true);
+        nav.getChildren().add(button);
+    }
+
+    private void updateSystemState(String state) {
+        String normalized = state == null || state.isBlank() ? "UNKNOWN" : state.toUpperCase();
+        systemState.setText(normalized);
+        systemState.getStyleClass().removeIf(style -> style.startsWith("state-") && !style.equals("state-pill"));
+        systemState.getStyleClass().add("state-" + normalized.toLowerCase());
+    }
+
+    private static VBox statusItem(String label, Label value) {
+        Label caption = new Label(label); caption.getStyleClass().add("status-caption");
+        VBox box = new VBox(3, caption, value); box.getStyleClass().add("status-cell");
+        box.setPadding(new Insets(9, 14, 9, 14)); box.setMaxWidth(Double.MAX_VALUE);
+        return box;
+    }
+
+    private static Label statusValue(String text) {
+        Label value = new Label(text); value.getStyleClass().add("status-value"); return value;
+    }
+
+    private static String metricAccent(String label) {
+        return switch (label) {
+            case "EQUITY" -> "accent-cyan";
+            case "NET P/L TODAY" -> "accent-emerald";
+            case "WIN RATE" -> "accent-violet";
+            case "BOT STATE" -> "accent-amber";
+            default -> "accent-blue";
+        };
+    }
+
+    private static String compact(String value, int limit) {
+        if (value == null || value.length() <= limit) return value;
+        return value.substring(0, Math.max(1, limit - 3)) + "...";
     }
 
     private static LineChart<Number, Number> lineChart(String xLabel, String yLabel) {
