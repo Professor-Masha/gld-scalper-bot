@@ -64,6 +64,8 @@ JavaFX controls are read on the application thread before requests are queued;
 UI changes are applied with `Platform.runLater`. WebSocket events carry sequence
 numbers, with read-only HTTP polling as fallback. Live job logs refresh every
 five seconds and selected market/trading/intelligence pages every ten seconds.
+The gateway reads process logs backward in bounded blocks, so years of retained
+bot logs cannot turn the two-second telemetry feed into a full-file scan.
 
 For read-only rendering QA, set `JARVIS_SMOKE_DIR` to an ignored output folder
 before launching. It visits every view, captures desktop/compact screenshots,

@@ -14,6 +14,7 @@ from gld_scalper.dashboard.analytics import PerformanceAnalytics
 from gld_scalper.dashboard.catalog import TransformerCatalog
 from gld_scalper.dashboard.job_results import JobResultRepository
 from gld_scalper.dashboard.llm_providers import LLMProviderService
+from gld_scalper.dashboard.process_manager import ProcessManager
 from gld_scalper.dashboard.settings_store import EnvFileStore
 from gld_scalper.dashboard.telemetry import TelemetryRepository
 from gld_scalper.database import Database
@@ -168,6 +169,25 @@ def test_partial_alpaca_settings_preserve_provider_and_authenticate(tmp_path: Pa
 def test_job_result_preserves_nested_completed_result(tmp_path: Path) -> None:
     (tmp_path / "backtest.log").write_text('log line\n{"net_pnl": 10, "nested": {"wins": 2}}\n', encoding="utf-8")
     assert JobResultRepository(tmp_path).latest("backtest") == {"net_pnl": 10, "nested": {"wins": 2}}
+
+
+def test_process_log_tail_reads_only_latest_lines(tmp_path: Path) -> None:
+    log_path = tmp_path / "logs" / "bot.log"
+    log_path.parent.mkdir(parents=True)
+    log_path.write_text("\n".join(f"event-{index}" for index in range(5000)), encoding="utf-8")
+    manager = ProcessManager(tmp_path, lambda: {})
+
+    assert manager.tail("bot", 45) == [f"event-{index}" for index in range(4955, 5000)]
+
+
+def test_process_log_tail_caps_pathological_log_reads(tmp_path: Path) -> None:
+    log_path = tmp_path / "oversized.log"
+    log_path.write_bytes(b"x" * 4096 + b"\nlatest-one\nlatest-two")
+
+    result = ProcessManager._tail_file(log_path, 10, max_bytes=64, chunk_size=16)
+
+    assert result[0].startswith("[dashboard log tail truncated")
+    assert result[-2:] == ["latest-one", "latest-two"]
 
 
 def test_control_plane_audit_is_redacted_hash_chained_and_idempotent(tmp_path: Path) -> None:

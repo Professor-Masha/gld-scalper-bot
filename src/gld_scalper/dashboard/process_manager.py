@@ -6,7 +6,6 @@ import signal
 import subprocess
 import sys
 import threading
-from collections import deque
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -105,8 +104,51 @@ class ProcessManager:
         )
         if not path.exists():
             return []
-        with path.open("r", encoding="utf-8", errors="replace") as handle:
-            return [line.rstrip("\r\n") for line in deque(handle, maxlen=max(10, min(lines, 1000)))]
+        try:
+            return self._tail_file(path, max(10, min(lines, 1000)))
+        except OSError:
+            # Log rotation and antivirus scanners can briefly invalidate an open.
+            return []
+
+    @staticmethod
+    def _tail_file(
+        path: Path,
+        line_count: int,
+        *,
+        max_bytes: int = 8 * 1024 * 1024,
+        chunk_size: int = 64 * 1024,
+    ) -> list[str]:
+        """Read a bounded tail without scanning an ever-growing process log."""
+        if line_count <= 0 or max_bytes <= 0 or chunk_size <= 0:
+            return []
+
+        chunks: list[bytes] = []
+        bytes_read = 0
+        newline_count = 0
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            position = handle.tell()
+            while position > 0 and bytes_read < max_bytes and newline_count <= line_count:
+                size = min(chunk_size, position, max_bytes - bytes_read)
+                position -= size
+                handle.seek(position)
+                chunk = handle.read(size)
+                chunks.append(chunk)
+                bytes_read += len(chunk)
+                newline_count += chunk.count(b"\n")
+
+        payload = b"".join(reversed(chunks))
+        truncated = position > 0
+        if truncated:
+            # The first bytes normally begin inside a line; never expose that fragment.
+            first_newline = payload.find(b"\n")
+            payload = payload[first_newline + 1:] if first_newline >= 0 else b""
+
+        result = payload.decode("utf-8", errors="replace").splitlines()[-line_count:]
+        if truncated:
+            marker = "[dashboard log tail truncated at 8 MiB read limit]"
+            result = [marker, *result[-max(0, line_count - 1):]]
+        return result
 
     def _watch(self, name: str, process: subprocess.Popen[bytes]) -> None:
         return_code = process.wait()

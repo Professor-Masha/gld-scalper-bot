@@ -28,7 +28,7 @@ The locally vendored Three.js HUD is visual only. Its low-power renderer pauses 
 - `contracts.py`: Pydantic command, result, training-job, and event-envelope schemas shared by the versioned gateway.
 - `control_plane.py`: serialized typed command dispatcher, idempotent replay, rate limiting, and audit completion records.
 - `audit.py`: append-only redacted JSONL records, SHA-256 hash chaining, verification, and recent-event lookup.
-- `process_manager.py`: starts one named child process per operation, records PID/state, writes output to `logs/dashboard`, prevents duplicate starts, and sends graceful interrupt signals.
+- `process_manager.py`: starts one named child process per operation, records PID/state, writes output to `logs/dashboard`, prevents duplicate starts, sends graceful interrupt signals, and reads log tails backward with a fixed memory/I/O ceiling.
 - `settings_store.py`: masks Alpaca and Kimi credentials, updates `.env` atomically, preserves blank secret fields, and enforces paper/offline safety for dashboard-launched children.
 - `llm_providers.py`: defines Ollama/Kimi profiles, activation rules, small generation tests, and FinGPT source discovery without exposing provider secrets. A successful model-list request alone is not reported as a healthy LLM.
 - `whitepaper.py`: reads the versioned white paper for the local interface.
