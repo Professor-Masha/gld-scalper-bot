@@ -287,3 +287,23 @@ def test_analytics_and_job_result_are_chart_ready(tmp_path: Path) -> None:
     assert analytics["summary"]["net_pnl"] == 7
     assert analytics["breakdowns"]["playbook"][0]["label"] == "pullback"
     assert JobResultRepository(log_root).latest("backtest")["net_pnl"] == 42
+
+
+def test_analytics_groups_legacy_episode_ids_out_of_playbook_chart(tmp_path: Path) -> None:
+    settings = Settings(database_url=f"sqlite:///{tmp_path / 'legacy-analytics.db'}")
+    database = Database(settings=settings)
+    database.init_db()
+    for trade_id in ("episode-1", "episode-2"):
+        database.insert_trade_outcome({
+            "trade_id": trade_id, "symbol": "GLD", "direction": "SHORT",
+            "gross_pnl": 0, "net_pnl_after_costs": 0,
+            "playbook": f"paper_bracket:{trade_id}",
+        })
+    database.close()
+
+    breakdown = PerformanceAnalytics(settings.database_path).build()["breakdowns"]["playbook"]
+
+    assert breakdown == [{
+        "label": "legacy_unclassified", "trades": 2, "wins": 0,
+        "net_pnl": 0.0, "average_net": 0.0, "win_rate": 0.0,
+    }]

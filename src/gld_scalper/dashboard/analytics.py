@@ -51,7 +51,10 @@ class PerformanceAnalytics:
     def _group(self, rows: list[dict[str, Any]], field: str) -> list[dict[str, Any]]:
         groups: dict[str, list[float]] = defaultdict(list)
         for row in rows:
-            groups[str(row.get(field) or "unknown")].append(self._number(row.get("net_pnl_after_costs")))
+            label = str(row.get(field) or "unknown")
+            if field == "playbook" and label.startswith("paper_bracket:"):
+                label = "legacy_unclassified"
+            groups[label].append(self._number(row.get("net_pnl_after_costs")))
         result = []
         for label, values in groups.items():
             result.append({

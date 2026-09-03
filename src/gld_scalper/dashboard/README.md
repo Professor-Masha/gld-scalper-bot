@@ -32,7 +32,7 @@ The locally vendored Three.js HUD is visual only. Its low-power renderer pauses 
 - `settings_store.py`: masks Alpaca and Kimi credentials, updates `.env` atomically, preserves blank secret fields, and enforces paper/offline safety for dashboard-launched children.
 - `llm_providers.py`: defines Ollama/Kimi profiles, activation rules, small generation tests, and FinGPT source discovery without exposing provider secrets. A successful model-list request alone is not reported as a healthy LLM.
 - `whitepaper.py`: reads the versioned white paper for the local interface.
-- `telemetry.py`: opens SQLite separately in read-only/query-only mode and produces account, quote, episode, outcome, model, decision, safety, and equity views.
+- `telemetry.py`: opens SQLite separately in read-only/query-only mode and produces account, quote, episode, outcome, model, decision, safety, and equity views. Performance analytics groups malformed legacy bracket identifiers under `legacy_unclassified` instead of presenting them as playbooks.
 - `static/index.html`: operational views for market, performance, trades, intelligence, training, system diagnostics, and local settings.
 - `static/styles.css`: responsive cyan/green command-center visual system.
 - `static/app.js`: live WebSocket updates, native chart telemetry, research providers, forms, process controls, tables, settings, and terminal output.

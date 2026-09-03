@@ -138,14 +138,15 @@ class ProcessManager:
                 newline_count += chunk.count(b"\n")
 
         payload = b"".join(reversed(chunks))
-        truncated = position > 0
-        if truncated:
+        starts_mid_line = position > 0
+        read_limit_reached = position > 0 and bytes_read >= max_bytes
+        if starts_mid_line:
             # The first bytes normally begin inside a line; never expose that fragment.
             first_newline = payload.find(b"\n")
             payload = payload[first_newline + 1:] if first_newline >= 0 else b""
 
         result = payload.decode("utf-8", errors="replace").splitlines()[-line_count:]
-        if truncated:
+        if read_limit_reached:
             marker = "[dashboard log tail truncated at 8 MiB read limit]"
             result = [marker, *result[-max(0, line_count - 1):]]
         return result
