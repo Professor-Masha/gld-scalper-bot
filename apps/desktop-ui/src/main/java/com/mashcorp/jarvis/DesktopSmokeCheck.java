@@ -9,22 +9,35 @@ import java.awt.image.BufferedImage;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.function.BooleanSupplier;
 import javax.imageio.ImageIO;
 
 /** Explicit opt-in read-only desktop QA; it never fires operational controls. */
 final class DesktopSmokeCheck {
     private final Stage stage;
     private final Path directory;
+    private final BooleanSupplier telemetryReady;
     private final List<Runnable> views;
     private int index;
+    private int readinessChecks;
 
-    private DesktopSmokeCheck(Stage stage, Path directory, List<Runnable> views) {
-        this.stage = stage; this.directory = directory; this.views = views;
+    private DesktopSmokeCheck(Stage stage, Path directory, BooleanSupplier telemetryReady, List<Runnable> views) {
+        this.stage = stage; this.directory = directory; this.telemetryReady = telemetryReady; this.views = views;
     }
 
-    static void run(Stage stage, Path directory, List<Runnable> views) {
+    static void run(Stage stage, Path directory, BooleanSupplier telemetryReady, List<Runnable> views) {
         stage.setMaximized(false); stage.setWidth(1366); stage.setHeight(900);
-        new DesktopSmokeCheck(stage, directory, views).next();
+        new DesktopSmokeCheck(stage, directory, telemetryReady, views).awaitTelemetry();
+    }
+
+    private void awaitTelemetry() {
+        if (telemetryReady.getAsBoolean() || readinessChecks++ >= 60) {
+            next();
+            return;
+        }
+        PauseTransition wait = new PauseTransition(Duration.seconds(1));
+        wait.setOnFinished(event -> awaitTelemetry());
+        wait.play();
     }
 
     private void next() {

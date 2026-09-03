@@ -52,6 +52,7 @@ public final class JarvisApplication extends Application {
     private JsonNode latestSnapshot;
     private java.net.http.WebSocket socket;
     private volatile long lastEventNanos;
+    private volatile long socketOpenedNanos;
     private final java.util.concurrent.ExecutorService commands = Executors.newFixedThreadPool(2, r -> {
         Thread thread = new Thread(r, "jarvis-operator-command"); thread.setDaemon(true); return thread;
     });
@@ -102,15 +103,14 @@ public final class JarvisApplication extends Application {
             }
         });
         stage.show();
+        startTelemetry();
         String smokeDirectory = System.getenv("JARVIS_SMOKE_DIR");
         if (smokeDirectory != null && !smokeDirectory.isBlank()) {
-            DesktopSmokeCheck.run(stage, java.nio.file.Path.of(smokeDirectory), List.of(
+            DesktopSmokeCheck.run(stage, java.nio.file.Path.of(smokeDirectory), () -> latestSnapshot != null, List.of(
                     this::showOverview, this::showOverview, this::showMarket, this::showPerformance,
                     this::showTrading, this::showIntelligence, this::showTraining, this::showAiLab,
                     this::showWhitePaper, this::showControlPlane, this::showSettings, this::showOverview));
         }
-
-        startTelemetry();
         worker.scheduleWithFixedDelay(() -> Platform.runLater(() -> currentRefresh.run()), 10, 10, TimeUnit.SECONDS);
         worker.scheduleAtFixedRate(() -> Platform.runLater(() ->
                 clock.setText(DateTimeFormatter.ofPattern("EEE, dd MMM yyyy  HH:mm:ss")
@@ -350,16 +350,24 @@ public final class JarvisApplication extends Application {
                         }
                         lastEventNanos = System.nanoTime();
                         Platform.runLater(() -> applySnapshot(event.path("payload")));
-                    }, error -> { lastEventNanos = 0; showError(error); });
+                    }, error -> { lastEventNanos = 0; showTelemetryError(error); });
+                    socketOpenedNanos = System.nanoTime();
+                    return;
                 }
-                if (lastEventNanos == 0 || System.nanoTime() - lastEventNanos > TimeUnit.SECONDS.toNanos(8)) {
+                long now = System.nanoTime();
+                boolean initialGraceExpired = lastEventNanos == 0
+                        && socketOpenedNanos > 0
+                        && now - socketOpenedNanos > TimeUnit.SECONDS.toNanos(8);
+                boolean establishedStreamStale = lastEventNanos > 0
+                        && now - lastEventNanos > TimeUnit.SECONDS.toNanos(8);
+                if (initialGraceExpired || establishedStreamStale) {
                     JsonNode snapshot = gateway.get("/api/snapshot");
                     JsonNode logs = gateway.get("/api/logs/bot?lines=80");
                     ((com.fasterxml.jackson.databind.node.ObjectNode) snapshot).set("log_tail", logs.path("lines"));
                     Platform.runLater(() -> applySnapshot(snapshot));
                 }
             }
-            catch (Exception exc) { showError(exc); }
+            catch (Exception exc) { showTelemetryError(exc); }
         }, 2, 5, TimeUnit.SECONDS);
     }
 
@@ -380,7 +388,7 @@ public final class JarvisApplication extends Application {
         winValue.setText(number(performance, "trades") > 0 ? String.format("%.1f%%", number(performance, "win_rate") * 100) : "--");
         JsonNode paper = snapshot.path("control_plane").path("paper_process");
         String bot = paper.path("state").asText("offline").toUpperCase();
-        botValue.setText(bot);
+        botValue.setText(bot.matches("RUNNING|STOPPING") ? bot : "OFFLINE");
         paperStart.setDisable(bot.matches("RUNNING|STOPPING|UNKNOWN"));
         paperStop.setDisable(!bot.matches("RUNNING"));
         String state = snapshot.path("control_plane").path("state").asText("UNKNOWN");
@@ -420,8 +428,15 @@ public final class JarvisApplication extends Application {
 
     private void showError(Throwable error) {
         Platform.runLater(() -> {
-            notification.setText("DEGRADED\n" + error.getMessage());
-            systemState.setText("DEGRADED"); core3D.setState("DEGRADED");
+            notification.setText("REQUEST FAILED\n" + error.getMessage());
+        });
+    }
+
+    private void showTelemetryError(Throwable error) {
+        Platform.runLater(() -> {
+            notification.setText("TELEMETRY DEGRADED\n" + error.getMessage());
+            systemState.setText("DEGRADED");
+            core3D.setState("DEGRADED");
             paperStart.setDisable(true);
         });
     }

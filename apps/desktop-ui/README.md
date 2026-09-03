@@ -66,9 +66,13 @@ numbers, with read-only HTTP polling as fallback. Live job logs refresh every
 five seconds and selected market/trading/intelligence pages every ten seconds.
 The gateway reads process logs backward in bounded blocks, so years of retained
 bot logs cannot turn the two-second telemetry feed into a full-file scan.
+The client gives a newly opened event stream an eight-second first-message grace
+before REST fallback, avoiding duplicate cold snapshots against large retained
+paper databases. Workspace request failures remain local notifications; only a
+telemetry transport failure can mark the command center degraded.
 
 For read-only rendering QA, set `JARVIS_SMOKE_DIR` to an ignored output folder
-before launching. It visits every view, captures desktop/compact screenshots,
+before launching. It waits for the first real telemetry snapshot, visits every view, captures desktop/compact screenshots,
 writes `completed.txt`, and closes itself. It never fires start, stop, settings,
 provider-test, or training buttons. Clear that variable before daily use.
 
