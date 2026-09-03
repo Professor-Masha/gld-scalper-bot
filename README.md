@@ -10,7 +10,7 @@ Normal paper mode is intentionally conservative. The optional controlled paper-l
 
 This bot is paper trading only. It is not financial advice, and paper trading results do not guarantee live trading results. Alpaca paper trading is a simulation, not a perfect copy of live market execution.
 
-The local command center uses the bot's SQLite/Alpaca bars rather than an embedded chart service. It includes responsive candlesticks and volume, cost-aware analytics, visible backtest results, automatic Transformer scope presets, discovered single- and multi-candidate training, an offline AI research console, and a locally vendored Three.js HUD. The interface source map and security boundary are in `src/gld_scalper/dashboard/README.md`.
+The primary Windows command center is now a native JavaFX desktop application in `apps/desktop-ui`. It uses the existing local Python gateway for market telemetry, after-cost analytics, backtest results, scope-aware Transformer forms, discovered candidate archives, research jobs, provider connections, and live logs. Its interactive 3D core uses JavaFX, not a browser or WebView. Python remains the only trading authority. The older browser dashboard, including its advanced volatility research and Three.js graph, remains available as a fallback; those browser-specific workspaces are not silently represented as native JavaFX features.
 
 ## What The Bot Does Every Minute
 
@@ -381,10 +381,10 @@ never repair the symptom by deleting episode history.
 This is the consolidated operator guide for the current bot. The detailed
 sections later in this README explain every subsystem and equation; this section
 explains the order in which those subsystems are used. The application now has
-a local browser command center in addition to its PowerShell interface. Its five
+a native JavaFX command center in addition to its PowerShell interface. Its five
 operator interfaces are:
 
-1. **Local dashboard**: start and stop paper trading, inspect native GLD charts,
+1. **JavaFX desktop dashboard**: start and stop paper trading, inspect native GLD charts,
    monitor account and execution telemetry, review decisions and root episodes,
    launch training jobs, tail logs, and update masked local connections.
 2. **PowerShell CLI**: initialize databases, collect data, label outcomes, train,
@@ -395,21 +395,30 @@ operator interfaces are:
 5. **Logs and status commands**: operational health, loaded model roles,
    Transformer prediction counts, reconciliation state, and training progress.
 
-### Local Dashboard
+### JavaFX Desktop Dashboard
 
-Install the project dependencies once, then launch the command center:
+The installed operator surface is a native JavaFX 21 application. Python still
+owns trading, risk, reconciliation, persistence, model promotion, and broker
+access. JavaFX communicates only with the local versioned FastAPI gateway.
+
+Bootstrap the private project-local Java 21 and Maven toolchain once:
 
 ```powershell
 cd "D:\ALPACA TEST\gld_scalper_bot"
-.\.venv\Scripts\python.exe -m pip install -e .
-.\.venv\Scripts\python.exe -m gld_scalper.main dashboard
+powershell.exe -ExecutionPolicy Bypass -File .\scripts\bootstrap_javafx.ps1
 ```
 
-The browser opens `http://127.0.0.1:8765`. Keep the dashboard terminal window
-open while using it. Use `--no-browser` when running on a server with an SSH
-tunnel, and never expose the port publicly. The server rejects non-local binds,
-does not enable CORS, and requires a random same-origin token for state-changing
-requests.
+This downloads portable tools into ignored `.tools/`; it does not install a
+system-wide Java runtime. Launch the native client with:
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\scripts\launch_javafx_dashboard.ps1
+```
+
+At launch, JavaFX chooses an unused loopback port, creates a 256-bit session
+token in memory, and starts the Python gateway as its child. The token travels
+only through the child-process environment and authenticated headers or the
+first WebSocket frame. It is never placed in a URL or committed file.
 
 For normal daily use, install the Desktop launcher once:
 
@@ -418,12 +427,11 @@ cd "D:\ALPACA TEST\gld_scalper_bot"
 powershell.exe -ExecutionPolicy Bypass -File .\scripts\install_dashboard_shortcut.ps1
 ```
 
-Double-click **Mashcorp GLD Command Center** on the Desktop. The launcher starts
-the Python dashboard server in the background, waits for its health endpoint,
-and opens Microsoft Edge in standalone application mode. It reuses an existing
-dashboard instead of starting a duplicate. ChatGPT and Codex are not required.
+Double-click **Mashcorp GLD Command Center** on the Desktop. The shortcut starts
+the JavaFX application, which owns its private local gateway lifecycle. ChatGPT,
+Codex, Edge, and a browser window are not required.
 
-To stop only the dashboard server later:
+To stop only the desktop client and its gateway later:
 
 ```powershell
 powershell.exe -ExecutionPolicy Bypass -File .\scripts\stop_dashboard.ps1
@@ -433,26 +441,25 @@ Stopping the dashboard server is not a substitute for stopping an active paper
 bot. Stop paper trading from the dashboard first so broker reconciliation and
 the normal shutdown sequence can complete.
 
-The dashboard is an operator shell, not a replacement execution engine. Start
+The JavaFX dashboard is an operator shell, not a replacement execution engine. Start
 controls launch the existing allowlisted CLI command in a child process. Paper
 orders still pass through the synchronized order coordinator, execution safety,
-reconciliation, and broker clients. The native chart and Three.js decision
-field are visual analysis only and cannot submit an Alpaca order.
+reconciliation, and broker clients. Native charts and the JavaFX 3D decision
+core are visual analysis only and cannot submit an Alpaca order.
 
 | View | Operational responsibility |
 |---|---|
 | Overview | GLD quote, account equity, daily P/L, latest decision, open episodes, quick commands, and live bot log. |
-| Market | Native SQLite/Alpaca GLD candles plus quote, macro, Transformer, and safety context. |
+| Market | Native GLD close-price line chart from the gateway's latest one-minute bars, refreshed every ten seconds. |
 | Performance | Equity curve, after-cost P/L, win rate, holding time, and closed root outcomes. |
 | Trades | Auditable root trading episodes rather than duplicated partial-exit tranches. |
-| Intelligence | Agent votes, conventional ML, Transformer state, macro context, and decision history. |
+| Intelligence | Conventional/Transformer model registry and recent decision history, refreshed every ten seconds. |
 | Training | Classical candidate, continual loop, Transformer dataset/candidate, and backtest controls. |
-| AI Lab | Select and generation-test Ollama or Kimi; run FinGPT-assisted macro, RAG, council, labeling, advice, and guarded candidate workflows. Oversized local prompts are compacted, slow Ollama calls receive one reduced retry, and recoverable Kimi failures can fall back to local Ollama for advisory research. |
-| Volatility Lab | Use up to 2,000 local GLD one-minute bars to explore rolling volatility clusters, empirical regime transitions, persistence, historical VaR/CVaR, forecast volatility, and a bounded tail-risk size multiplier. The animated temporal network and diagnostics are research-only. |
-| 3D Core | Full-bleed Obsidian-style Three.js graph of the actual stream, feature, agent, model, risk, execution, broker, journal, outcome, database, and LLM services. Live telemetry animates node and edge state; drag, zoom, and node selection expose the topology. |
+| AI Lab | Select and generation-test Ollama or Kimi, preserve the saved model name, start offline reviews, and retrieve completed results. Additional FinGPT-assisted workflows are selectable in Training & Research Jobs. |
+| 3D Core | Hardware-accelerated JavaFX `SubScene` whose nucleus, orbital particles, color, and speed follow backend health. It visualizes state and has no decision authority. |
 | Backtest Lab | Run chronological simulations and inspect return, drawdown, win rate, profit factor, direction, and trade economics in charts. |
 | White Paper | Read the versioned technical, mathematical, risk, training, security, and governance specification in the application. |
-| Control Plane | Backend-derived gateway state, health/readiness checks, managed jobs, execution safety, tamper-evident operator audit, correlation IDs, and per-job terminal output. |
+| Control Plane | Backend-derived state, health/readiness checks, managed-job information, and tamper-evident operator audit. Job-specific live logs and cancellation are in Training & Research Jobs. |
 | Settings | Masked Alpaca and LLM settings stored only in the ignored local `.env`. |
 
 Blank credential fields preserve the existing values. The endpoint and child
@@ -461,8 +468,46 @@ environment remain locked to Alpaca paper trading. Job output is written under
 [`docs/BOT_WHITE_PAPER.md`](docs/BOT_WHITE_PAPER.md) for the concise technical
 white paper and the later sections of this README for the full operator and
 developer reference.
-See [`src/gld_scalper/dashboard/README.md`](src/gld_scalper/dashboard/README.md)
-for the backend security and process-lifecycle contract.
+See [`apps/desktop-ui/README.md`](apps/desktop-ui/README.md) for JavaFX class
+ownership and [`src/gld_scalper/dashboard/README.md`](src/gld_scalper/dashboard/README.md)
+for the backend security and process-lifecycle contract. The old static browser
+client remains tracked as a fallback and API-development harness; the Windows
+Desktop shortcut no longer launches it.
+
+#### Daily Native Desktop Workflow
+
+1. Double-click the Desktop shortcut. A second native instance for the same
+   project is rejected. Missing telemetry is shown as unavailable, not as a
+   zero balance or a zero win rate.
+2. Open **Control Plane** and inspect readiness and audit integrity. The UI
+   does not override a failed Python safety or execution check.
+3. Press **Start Paper** only when you intend to run a paper session. It starts
+   the existing `run-paper --no-retraining` path. The interface never enables
+   real-money trading. Status comes from the backend, not from the button click.
+4. Use **Trading** for open episodes and orders, **Intelligence** for decisions
+   and saved models, and **Performance** for observed root-outcome charts.
+   Select **Latest backtest** to view simulated metrics separately.
+5. Use **Training & Research Jobs** after stopping trading for offline fitting.
+   Select `labels`, then the required classical or Transformer task. Dataset
+   scope changes populate database/output paths and sample presets from the
+   gateway. Single-candidate training uses discovered `.seq` directories;
+   batch/loop training supports multiple selections. Classical archives and
+   databases have a Browse button restricted to the project folder.
+6. **Request Stop** requests cancellation of the selected job; inspect its
+   actual process state and terminal output rather than assuming it stopped.
+7. In **AI Lab**, activate the intended saved/local model and test generation.
+   FinGPT is the research workflow, not a third inference endpoint. Full advice,
+   labeling, council, macro and guarded candidate jobs are available in the job
+   selector. Long LLM tests use a separate worker from paper stop commands.
+8. Press **Stop Bot** and wait for the backend shutdown before ending a paper
+   session. Closing the JavaFX window alone does not flatten positions or stop
+   a running bot. It only closes its own local gateway.
+
+The native launcher uses a precompiled classpath and a 384 MB Java heap cap;
+total JVM/native-memory use can exceed that heap value. It does not invoke Maven
+on ordinary launches. After source changes, rebuild using
+`scripts\launch_javafx_dashboard.ps1 -Rebuild`. JavaFX package tests live under
+`apps/desktop-ui/src/test`; Python gateway tests live in `tests/test_dashboard.py`.
 See [`docs/architecture/JARVIS_CONTROL_PLANE.md`](docs/architecture/JARVIS_CONTROL_PLANE.md)
 for the Parts I-VII infrastructure mapping, implemented `/api/v1` contract,
 security boundary, architecture decision, and deliberately deferred production

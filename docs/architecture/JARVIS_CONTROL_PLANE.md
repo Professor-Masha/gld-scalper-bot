@@ -5,19 +5,19 @@ Copyright (c) @Mashcorp. All rights reserved.
 ## Decision
 
 The Parts I-VII technical design document is the target architecture. The
-current implementation adopts its control-plane contracts inside the existing
-Python/FastAPI dashboard instead of adding a JavaFX client in parallel.
+current implementation preserves its control-plane contracts in Python/FastAPI
+and replaces the primary Windows presentation layer with a JavaFX client.
 
 This is an intentional architecture decision:
 
 - The Python engine remains the only trading authority.
-- The browser interface remains a local operator shell.
+- The JavaFX interface is a local operator shell; browser assets are fallback.
 - FastAPI is the versioned gateway between presentation and engine commands.
 - Every material command still invokes an allowlisted `gld_scalper.main`
   command and therefore retains the existing risk, reconciliation, journal,
   idempotency, and shutdown behavior.
-- JavaFX can be introduced later as a second client of `/api/v1` and
-  `/api/v1/events` without changing the engine or creating another broker path.
+- JavaFX consumes `/api/v1` and `/api/v1/events` without changing the engine or
+  creating another broker path.
 
 ## Implemented From The Design
 
@@ -39,7 +39,7 @@ The control plane accepts only four command families:
 
 Job actions remain constrained by the existing dashboard allowlist. No raw
 shell command, broker method, arbitrary module, or filesystem path can be sent
-from the browser.
+from a presentation client.
 
 Every command has a command ID, actor, request time, idempotency key,
 correlation ID, typed parameters, status, and structured result. Repeating the
@@ -64,7 +64,7 @@ process.
 }
 ```
 
-The browser uses the sequence number to distinguish event transport from the
+JavaFX uses the sequence number to distinguish event transport from the
 state payload. The older `/ws/live` stream is retained temporarily for backward
 compatibility.
 
@@ -100,7 +100,7 @@ The interface now includes:
 - readiness checks and versioned gateway contract details;
 - managed asynchronous job state;
 - the tamper-evident operator command ledger;
-- a `Ctrl+K` deterministic command palette;
+- native allowlisted job selection (the legacy browser retains its `Ctrl+K` palette);
 - correlation IDs on HTTP responses;
 - responsive behavior and textual status in addition to color.
 
@@ -109,15 +109,28 @@ The interface now includes:
 The server remains localhost-only. Mutations require the random dashboard
 token. WebSocket authentication is sent in the first frame, not the URL.
 Commands are rate limited, serialized, idempotent, and audited. Credentials are
-never returned to the browser or written into audit details. LLMs, 3D scenes,
+never returned to presentation clients or written into audit details. LLMs, 3D scenes,
 charts, command-palette labels, and natural-language output have no broker
 authority.
+
+## JavaFX Desktop Boundary
+
+`apps/desktop-ui` is a Java 21/JavaFX 21 client. `GatewayRuntime` chooses an
+unused loopback port, creates a 256-bit token, starts the Python gateway with
+that token in the child environment, and waits for health. `GatewayClient`
+authenticates typed mutations and consumes versioned event envelopes. The
+native 3D decision core, charts, forms, and tables project backend truth; they
+do not read SQLite or load Alpaca libraries.
+
+The Desktop shortcut launches JavaFX. The project-local JDK and Maven runtime
+are downloaded to ignored `.tools/`, so no system-wide Java installation is
+required and tool binaries are not committed.
 
 ## Deliberately Deferred
 
 The following design-document items are not falsely represented as complete:
 
-- JavaFX desktop packaging;
+- signed MSI packaging and automatic JavaFX updates;
 - PostgreSQL, Redis, object storage, and multi-service deployment;
 - multi-user authentication and RBAC;
 - voice control;
@@ -132,7 +145,7 @@ separate production deployment environment.
 
 ## Extension Path
 
-A future JavaFX, mobile, or remote operations client should consume the same
-versioned contracts. It must not call Alpaca directly. High-risk capabilities
+A future mobile or remote operations client should consume the same versioned
+contracts. It must not call Alpaca directly. High-risk capabilities
 must be added as new typed commands with approval records and deterministic
 policy checks rather than widening the existing generic process endpoints.

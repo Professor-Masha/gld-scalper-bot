@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import secrets
 import subprocess
 import webbrowser
@@ -270,7 +271,10 @@ class DashboardService:
 def create_dashboard_app(project_root: Path = PROJECT_ROOT) -> FastAPI:
     app = FastAPI(title="Mashcorp GLD Command Center", docs_url=None, redoc_url=None)
     service = DashboardService(project_root)
-    token = secrets.token_urlsafe(32)
+    supplied_token = os.getenv("DASHBOARD_SESSION_TOKEN", "").strip()
+    if supplied_token and len(supplied_token) < 32:
+        raise RuntimeError("DASHBOARD_SESSION_TOKEN must contain at least 32 characters")
+    token = supplied_token or secrets.token_urlsafe(32)
     app.state.service = service
     app.state.dashboard_token = token
     app.mount("/static", StaticFiles(directory=STATIC_ROOT), name="static")
@@ -437,6 +441,12 @@ def create_dashboard_app(project_root: Path = PROJECT_ROOT) -> FastAPI:
             "ALPACA_ENDPOINT":"https://paper-api.alpaca.markets/v2", "ALPACA_DATA_FEED":request.alpaca_data_feed,
             "LLM_PROVIDER":request.llm_provider, "LLM_BASE_URL":request.llm_base_url, "LLM_MODEL":request.llm_model,
             "MOONSHOT_API_KEY": request.moonshot_api_key}
+        # Partial native-client forms must not reset unrelated provider settings.
+        field_keys = {"alpaca_api_key": "ALPACA_API_KEY", "alpaca_secret_key": "ALPACA_SECRET_KEY",
+            "alpaca_data_feed": "ALPACA_DATA_FEED", "llm_provider": "LLM_PROVIDER",
+            "llm_base_url": "LLM_BASE_URL", "llm_model": "LLM_MODEL", "moonshot_api_key": "MOONSHOT_API_KEY"}
+        included = {field_keys[field] for field in request.model_fields_set if field in field_keys}
+        changes = {key: value for key, value in changes.items() if key in included or key == "ALPACA_ENDPOINT"}
         await asyncio.to_thread(service.env_store.update, changes)
         await asyncio.to_thread(
             service.audit.append,

@@ -34,7 +34,7 @@ onnx = [
   "onnxruntime>=1.22.0",
   "onnxscript>=0.2.0",
 ]
-dev = ["pytest>=8.0.0", "ruff>=0.6.0"]
+dev = ["pytest>=8.0.0", "ruff>=0.6.0", "httpx>=0.28,<1"]
 
 [project.scripts]
 gld-scalper = "gld_scalper.main:main"

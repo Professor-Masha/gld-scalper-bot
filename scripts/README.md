@@ -15,8 +15,10 @@ Return to the [project manual](../README.md).
 
 | File | Responsibility |
 |---|---|
-| [`launch_dashboard.ps1`](../scripts/launch_dashboard.ps1) | Starts or reuses the local dashboard server and opens Edge in standalone app mode. |
-| [`stop_dashboard.ps1`](../scripts/stop_dashboard.ps1) | Validates and stops only the recorded dashboard server process. |
+| [`bootstrap_javafx.ps1`](../scripts/bootstrap_javafx.ps1) | Downloads the ignored project-local OpenJDK 21/Maven toolchain and compiles JavaFX. |
+| [`launch_javafx_dashboard.ps1`](../scripts/launch_javafx_dashboard.ps1) | Launches the native JavaFX client and its private local Python gateway. |
+| [`launch_dashboard.ps1`](../scripts/launch_dashboard.ps1) | Compatibility alias for the JavaFX launcher. |
+| [`stop_dashboard.ps1`](../scripts/stop_dashboard.ps1) | Validates and stops only the recorded JavaFX client and gateway processes. |
 | [`install_dashboard_shortcut.ps1`](../scripts/install_dashboard_shortcut.ps1) | Creates the current user's Desktop application shortcut. |
 | [`install_git_hooks.ps1`](../scripts/install_git_hooks.ps1) | Windows PowerShell operations entry point. |
 | [`install_ubuntu.sh`](../scripts/install_ubuntu.sh) | POSIX shell operations entry point. |
@@ -32,9 +34,11 @@ same implementation.
 
 | Script | Connection to Python |
 |---|---|
-| `launch_dashboard.ps1` | Health-checks localhost, starts `gld_scalper.main dashboard` in a hidden process when needed, then opens the local app. |
-| `stop_dashboard.ps1` | Checks the PID and command line before stopping the dashboard; it does not stop or replace the bot's safety shutdown. |
-| `install_dashboard_shortcut.ps1` | Uses Windows Script Host to create a Desktop `.lnk` that invokes the launcher without exposing a console window. |
+| `bootstrap_javafx.ps1` | Keeps Java and Maven under ignored `.tools`, then resolves pinned JavaFX modules with Maven. |
+| `launch_javafx_dashboard.ps1` | Sets the private toolchain environment and runs the precompiled native client directly with a 384 MB Java heap cap; `-Rebuild` invokes Maven. |
+| `launch_dashboard.ps1` | Preserves old calls while delegating directly to JavaFX. |
+| `stop_dashboard.ps1` | Checks recorded PID/start-time/process-name tuples before stopping JavaFX and its gateway; it does not replace bot safety shutdown. |
+| `install_dashboard_shortcut.ps1` | Uses Windows Script Host to create a Desktop `.lnk` for the native JavaFX launcher without exposing a console window. |
 | `run_paper.sh` | Changes to the project context and invokes `python -m gld_scalper.main run-paper`. |
 | `run_backfill.sh` | Invokes the CLI backfill command using environment configuration. |
 | `train_model.sh` | Invokes the classical training command; promotion remains controlled by Python. |

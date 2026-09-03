@@ -18,13 +18,17 @@ class JobResultRepository:
         text = path.read_text(encoding="utf-8", errors="replace")
         decoder = json.JSONDecoder()
         result: dict[str, Any] | None = None
-        for index, character in enumerate(text):
-            if character != "{":
-                continue
+        index = 0
+        while index < len(text):
+            index = text.find("{", index)
+            if index < 0:
+                break
             try:
-                value, _ = decoder.raw_decode(text[index:])
+                value, end = decoder.raw_decode(text, index)
             except json.JSONDecodeError:
+                index += 1
                 continue
             if isinstance(value, dict):
                 result = value
+            index = end
         return result

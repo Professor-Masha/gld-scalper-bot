@@ -1,6 +1,6 @@
 # Local Operations Dashboard
 
-This package provides the browser-based paper-trading command center. It does not implement a second trading engine and it cannot submit an order directly. Every long-running operation is launched through an allowlisted `gld_scalper.main` command, so the existing reconciliation, risk, idempotency, journaling, and shutdown logic remains authoritative.
+This package provides the local Python control gateway used by the native JavaFX command center. It does not implement a second trading engine and it cannot submit an order directly. Every long-running operation is launched through an allowlisted `gld_scalper.main` command, so the existing reconciliation, risk, idempotency, journaling, and shutdown logic remains authoritative. The tracked browser assets are a fallback and API-development harness.
 
 ## Current Workstations
 
@@ -18,7 +18,7 @@ This package provides the browser-based paper-trading command center. It does no
 
 ## Class Boundaries
 
-`DashboardService` validates actions. `ControlPlane` serializes typed commands and enforces idempotency and a local command-rate bound. `AuditLedger` writes redacted SHA-256-linked evidence. `contracts.py` owns API/event schemas and version identifiers. `ProcessManager` owns child jobs. `TelemetryRepository` performs read-only SQLite queries. `TransformerCatalog` supplies presets and complete archives. `PerformanceAnalytics` builds chart-ready summaries. `JobResultRepository` parses structured job output. `LLMProviderService` manages secret-safe provider selection and verifies actual text generation rather than treating a model-list response as proof of inference. `WhitePaperRepository` exposes the versioned local document. Browser classes are documented in `static/js/README.md`.
+`DashboardService` validates actions. `ControlPlane` serializes typed commands and enforces idempotency and a local command-rate bound. `AuditLedger` writes redacted SHA-256-linked evidence. `contracts.py` owns API/event schemas and version identifiers. `ProcessManager` owns child jobs. `TelemetryRepository` performs read-only SQLite queries. `TransformerCatalog` supplies presets and complete archives. `PerformanceAnalytics` builds chart-ready summaries. `JobResultRepository` parses structured job output. `LLMProviderService` manages secret-safe provider selection and verifies actual text generation rather than treating a model-list response as proof of inference. `WhitePaperRepository` exposes the versioned local document. The native client is documented in `apps/desktop-ui/README.md`; fallback browser classes are documented in `static/js/README.md`.
 
 The locally vendored Three.js HUD is visual only. Its low-power renderer pauses with a hidden tab and cannot affect signals, risk, or execution.
 
@@ -40,12 +40,12 @@ The locally vendored Three.js HUD is visual only. Its low-power renderer pauses 
 
 ## Security Boundary
 
-The server binds only to `127.0.0.1`, `localhost`, or `::1`. State-changing requests require a random token embedded in the same-origin page. The WebSocket sends that token in its first frame rather than its URL, keeping it out of access logs. CORS is not enabled. Secrets are written only to the ignored local `.env`; the API returns configured flags and a short key hint, never the secret. Dashboard paths must resolve inside the project folder. Paper mode and the paper Alpaca endpoint are enforced during settings updates and child-process creation.
+The server binds only to `127.0.0.1`, `localhost`, or `::1`. State-changing requests require a random token. JavaFX creates a 256-bit token and supplies it only in the gateway child-process environment; a directly launched fallback browser receives a gateway-generated token in its same-origin page. WebSockets send the token in their first frame rather than their URL, keeping it out of access logs. CORS is not enabled. Secrets are written only to the ignored local `.env`; the API returns configured flags and a short key hint, never the secret. Dashboard paths must resolve inside the project folder. Paper mode and the paper Alpaca endpoint are enforced during settings updates and child-process creation.
 
 ## Runtime Flow
 
-1. `gld-scalper dashboard` creates `DashboardService`.
-2. The browser loads the static interface and receives a one-session control token.
+1. `GatewayRuntime` starts `gld-scalper dashboard` on an unused loopback port with an in-memory one-session token.
+2. JavaFX waits for `/api/v1/system/health`, then consumes versioned REST and WebSocket contracts.
 3. `/api/v1/events` sends a versioned, traced, sequenced SQLite snapshot and log tail every two seconds.
 4. A start control creates a typed command with an idempotency key.
 5. `ControlPlane` serializes the operation, records the request, and maps it to a fixed CLI argument list.
@@ -54,6 +54,6 @@ The server binds only to `127.0.0.1`, `localhost`, or `::1`. State-changing requ
 8. Paper execution continues through the existing bot; the dashboard only observes its database and process state.
 9. Stop sends `CTRL_BREAK_EVENT` on Windows so the bot can run its normal safety shutdown.
 
-The browser/PWA remains the current presentation client. The Parts I-VII JavaFX proposal is treated as a possible future client of the same stable gateway, not as justification for introducing a duplicate interface or rewriting the Python engine. See `docs/architecture/JARVIS_CONTROL_PLANE.md`.
+JavaFX is the primary Windows presentation client. The browser/PWA is retained as a fallback and API-development harness. Both use the same stable gateway; neither duplicates or rewrites the Python execution engine. See `docs/architecture/JARVIS_CONTROL_PLANE.md`.
 
 FinGPT is a workflow and financial-RAG layer, not a third reasoning endpoint. It uses the active Ollama or Kimi engine. Provider tests never grant broker authority, and every training result remains subject to the normal validation and promotion gates. On the target 8 GB laptop, Ollama receives bounded context, keeps the selected model warm for 15 minutes, and retries one timeout with a smaller response budget. Kimi can still reject generation when the remote account has no balance even if authentication and model discovery succeed; the AI Lab now reports that condition and the analysis service can use Ollama as a local fallback.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -129,6 +130,44 @@ def test_dashboard_app_is_local_and_serves_expected_routes(tmp_path: Path) -> No
     assert "/api/v1/audit/events" in paths
     assert "/api/v1/events" in paths
     assert len(app.state.dashboard_token) >= 32
+
+
+def test_dashboard_accepts_desktop_session_token_from_process_environment(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text("", encoding="utf-8")
+    token = "desktop-session-token-with-more-than-32-characters"
+
+    with patch.dict("os.environ", {"DASHBOARD_SESSION_TOKEN": token}):
+        app = create_dashboard_app(tmp_path)
+
+    assert app.state.dashboard_token == token
+
+
+def test_dashboard_rejects_weak_desktop_session_token(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text("", encoding="utf-8")
+
+    with patch.dict("os.environ", {"DASHBOARD_SESSION_TOKEN": "too-short"}):
+        with pytest.raises(RuntimeError, match="at least 32"):
+            create_dashboard_app(tmp_path)
+
+
+def test_partial_alpaca_settings_preserve_provider_and_authenticate(tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    env = tmp_path / ".env"
+    env.write_text("LLM_PROVIDER=kimi\nLLM_MODEL=kimi-k2.6\nLLM_BASE_URL=https://api.moonshot.ai/v1\nALPACA_SECRET_KEY=keep-secret\n", encoding="utf-8")
+    app = create_dashboard_app(tmp_path)
+    client = TestClient(app)
+    assert client.post("/api/settings", json={"alpaca_data_feed": "sip"}).status_code == 403
+    response = client.post("/api/settings", headers={"X-Dashboard-Token": app.state.dashboard_token}, json={"alpaca_data_feed": "sip", "alpaca_secret_key": ""})
+    assert response.status_code == 200
+    assert response.json()["llm_provider"] == "kimi"
+    assert response.json()["llm_model"] == "kimi-k2.6"
+    assert EnvFileStore(env).read()["ALPACA_SECRET_KEY"] == "keep-secret"
+
+
+def test_job_result_preserves_nested_completed_result(tmp_path: Path) -> None:
+    (tmp_path / "backtest.log").write_text('log line\n{"net_pnl": 10, "nested": {"wins": 2}}\n', encoding="utf-8")
+    assert JobResultRepository(tmp_path).latest("backtest") == {"net_pnl": 10, "nested": {"wins": 2}}
 
 
 def test_control_plane_audit_is_redacted_hash_chained_and_idempotent(tmp_path: Path) -> None:

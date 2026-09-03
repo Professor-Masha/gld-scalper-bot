@@ -19,6 +19,8 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+apps/desktop-ui/target/
+.tools/
 
 # Raw or derived training/market data
 data/
