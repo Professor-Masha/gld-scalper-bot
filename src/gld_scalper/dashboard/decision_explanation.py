@@ -4,6 +4,7 @@ from typing import Any
 
 
 _RULES: tuple[tuple[str, str, str, str], ...] = (
+    ("quote/trade age", "DATA_STALE", "Data safety", "The latest GLD quote or trade is older than the permitted limit."),
     ("stale", "DATA_STALE", "Data safety", "Live market data is too old to trust."),
     ("disconnect", "STREAM_DISCONNECTED", "Data safety", "The live market stream is disconnected."),
     ("spread too wide", "SPREAD_WIDE", "Liquidity and costs", "The bid/ask spread makes the trade uneconomic."),

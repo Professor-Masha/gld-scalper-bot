@@ -464,10 +464,21 @@ def _preview(kind: str, details: dict[str, Any]) -> str:
 
 
 def _human_detail(node_id: str, kind: str, row: dict[str, Any]) -> dict[str, Any]:
+    identity = node_id.split(":", 1)[-1]
     decoded = {key: _json(value) if key.endswith("_json") else value for key, value in row.items()}
     if kind in {"decision", "market"}:
         decoded["explanation"] = explain_decision(decoded)
-    title = str(decoded.get("model_version") or decoded.get("playbook") or decoded.get("decision") or decoded.get("review_type") or node_id)
+    title = {
+        "decision": f"Latest decision: {str(decoded.get('decision') or 'NO_TRADE').replace('_', ' ')}",
+        "market": "GLD live market state",
+        "model": str(decoded.get("model_version") or node_id),
+        "trade": f"{decoded.get('direction') or 'Trade'} / {decoded.get('playbook') or 'unclassified'}",
+        "training": f"Training / {decoded.get('playbook') or identity}",
+        "dataset": f"Dataset / {decoded.get('data_type') or identity}",
+        "llm": str(decoded.get("review_type") or "LLM research review"),
+        "risk": "Latest execution safety event",
+        "playbook": str(decoded.get("playbook") or identity).replace("_", " ").title(),
+    }.get(kind, node_id)
     sections: list[dict[str, Any]] = []
     groups = {
         "Identity": ("timestamp", "status", "decision", "direction", "playbook", "model_version", "model_type", "model_scope"),
@@ -486,7 +497,8 @@ def _human_detail(node_id: str, kind: str, row: dict[str, Any]) -> dict[str, Any
         fields = [{"label": key.replace("_", " ").title(), "value": _display(decoded[key])} for key in keys if decoded.get(key) not in (None, "", {}, [])]
         if fields:
             sections.append({"title": section, "fields": fields})
-    return _detail_payload(node_id, kind, title, _preview(kind, decoded), {"sections": sections})
+    summary = explanation.get("headline") if isinstance(explanation, dict) else _preview(kind, decoded)
+    return _detail_payload(node_id, kind, title, summary, {"sections": sections})
 
 
 def _detail_payload(node_id: str, kind: str, title: str, summary: str, extra: dict[str, Any]) -> dict[str, Any]:
