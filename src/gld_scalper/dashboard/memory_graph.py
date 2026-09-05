@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import sqlite3
 import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
+
+from .decision_explanation import explain_decision
 
 
 GRAPH_TYPES = frozenset({"decision", "market", "model", "trade", "playbook", "dataset", "training", "llm", "risk"})
@@ -39,6 +42,7 @@ class MemoryGraphRepository:
         self.ttl_seconds = max(float(ttl_seconds), 1.0)
         self.maximum_nodes = max(40, min(int(maximum_nodes), 400))
         self._cache: dict[tuple[Any, ...], tuple[float, dict[str, Any]]] = {}
+        self._detail_cache: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
         self._lock = threading.Lock()
 
     def graph(self, *, types: set[str] | None = None, window: str = "30d") -> dict[str, Any]:
@@ -84,9 +88,11 @@ class MemoryGraphRepository:
                 return identifier
             status = str(details.pop("status", "available") or "available")
             color = _status_color(kind, status, details)
+            clean_details = _clean(details)
             nodes.setdefault(identifier, {
                 "id": identifier, "type": kind, "label": label, "status": status,
-                "color": color, "size": _node_size(kind, details), "details": _clean(details),
+                "color": color, "size": _node_size(kind, details),
+                "subtitle": _subtitle(kind, clean_details), "preview": _preview(kind, clean_details),
             })
             return identifier
 
@@ -142,9 +148,6 @@ class MemoryGraphRepository:
                     feature_count=len(features) if isinstance(features, list) else None,
                     selected_features=features, hyperparameters=parameters, calibration=metrics.get("calibration"),
                     expected_calibration_error=metrics.get("expected_calibration_error"), thresholds=thresholds,
-                    holdout=metrics.get("holdout") or manifest.get("holdout"),
-                    walk_forward=metrics.get("walk_forward") or manifest.get("walk_forward"),
-                    paper=metrics.get("paper") or manifest.get("paper_metrics"),
                     rejection_reason=row.get("rejection_reason"), artifact_path=row.get("path"),
                     artifact_fingerprint=row.get("artifact_fingerprint"))
                 parent = str(row.get("parent_champion_version") or "")
@@ -163,9 +166,7 @@ class MemoryGraphRepository:
                     training_start=manifest.get("training_start"), training_end=manifest.get("training_end"),
                     sample_count=manifest.get("sample_count"), selected_features=manifest.get("feature_columns"),
                     hyperparameters=manifest.get("hyperparameters") or manifest.get("model_parameters"),
-                    calibration=manifest.get("calibration"), thresholds=manifest.get("thresholds"),
-                    holdout=manifest.get("holdout"), walk_forward=manifest.get("walk_forward"),
-                    paper=manifest.get("paper_metrics"), rejection_reason=manifest.get("rejection_reason"),
+                    calibration=manifest.get("calibration"), rejection_reason=manifest.get("rejection_reason"),
                     artifact_path=manifest.get("artifact_path") or manifest.get("path"),
                     artifact_fingerprint=manifest.get("artifact_fingerprint") or manifest.get("fingerprint"))
                 parent = str(manifest.get("parent_champion_version") or "")
@@ -182,7 +183,7 @@ class MemoryGraphRepository:
                     status=row.get("status"), experiment_key=row.get("experiment_key"), playbook=row.get("playbook"),
                     horizon_minutes=row.get("horizon_minutes"), sample_count=row.get("sample_count"),
                     paper_sample_count=row.get("paper_sample_count"), started_at=row.get("started_at"),
-                    completed_at=row.get("completed_at"), metrics=_json(row.get("metrics_json")), error=row.get("error_message"))
+                    completed_at=row.get("completed_at"), error=row.get("error_message"))
                 candidate = str(row.get("candidate_version") or "")
                 if candidate:
                     edge(identifier, f"model:{candidate}", "produced", weight=2.0)
@@ -243,7 +244,6 @@ class MemoryGraphRepository:
                     status="advisory", timestamp=row.get("timestamp"), summary=row.get("summary"),
                     bull_case=row.get("bull_case"), bear_case=row.get("bear_case"), risk_critique=row.get("risk_critique"),
                     execution_critique=row.get("execution_critique"), journal_review=row.get("journal_review"),
-                    recommendations=_json(row.get("recommendations_json")), evidence=_json(row.get("evidence_json")),
                     broker_authority=False)
                 _timeline(timeline, row.get("timestamp"), "llm", str(row.get("review_type")), identifier, "advisory")
 
@@ -261,6 +261,56 @@ class MemoryGraphRepository:
             if model:
                 edge(f"model:{model}", "decision:current", "advises", weight=2.2, active=True)
         return self._payload(list(nodes.values()), list(edges.values()), timeline, generated, path, types, window, None)
+
+    def node_detail(self, node_id: str) -> dict[str, Any]:
+        """Return bounded human-readable evidence for one selected graph node."""
+        if not node_id or len(node_id) > 220 or ":" not in node_id:
+            raise ValueError("invalid memory node id")
+        path = self.database_path().resolve()
+        key = (str(path), node_id)
+        now = time.monotonic()
+        with self._lock:
+            cached = self._detail_cache.get(key)
+            if cached and now - cached[0] < 30.0:
+                return {**cached[1], "cache": {"hit": True}}
+        result = self._build_detail(path, node_id)
+        with self._lock:
+            self._detail_cache[key] = (now, result)
+            self._detail_cache = {k: v for k, v in self._detail_cache.items() if now - v[0] < 60.0}
+        return {**result, "cache": {"hit": False}}
+
+    def _build_detail(self, path: Path, node_id: str) -> dict[str, Any]:
+        kind, identity = node_id.split(":", 1)
+        if kind not in GRAPH_TYPES or not path.exists():
+            raise ValueError("memory node is unavailable")
+        connection = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True, timeout=3)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA query_only=ON")
+        try:
+            row: dict[str, Any] | None = None
+            if node_id == "decision:current":
+                row = _one(connection, "SELECT * FROM signals ORDER BY timestamp DESC,id DESC LIMIT 1")
+            elif node_id == "market:gld":
+                row = _one(connection, "SELECT * FROM signals ORDER BY timestamp DESC,id DESC LIMIT 1")
+            elif kind == "model":
+                row = _one_param(connection, "SELECT * FROM model_versions WHERE model_version=? LIMIT 1", identity)
+            elif kind == "trade":
+                row = _one_param(connection, "SELECT * FROM trade_outcomes WHERE CAST(COALESCE(trade_id,id) AS TEXT)=? LIMIT 1", identity)
+            elif kind == "training":
+                row = _one_param(connection, "SELECT * FROM ml_training_experiments WHERE CAST(id AS TEXT)=? LIMIT 1", identity)
+            elif node_id.startswith("dataset:run:"):
+                row = _one_param(connection, "SELECT * FROM data_source_runs WHERE CAST(id AS TEXT)=? LIMIT 1", node_id.rsplit(":", 1)[-1])
+            elif kind == "llm":
+                row = _one_param(connection, "SELECT * FROM llm_reviews WHERE CAST(id AS TEXT)=? LIMIT 1", identity)
+            elif node_id == "risk:latest":
+                row = _one(connection, "SELECT * FROM execution_safety_events ORDER BY timestamp DESC,id DESC LIMIT 1")
+            elif kind == "playbook":
+                row = _one_param(connection, "SELECT playbook,COUNT(*) samples,SUM(CASE WHEN net_pnl_after_costs>0 THEN 1 ELSE 0 END) wins,SUM(COALESCE(net_pnl_after_costs,0)) net_pnl,AVG(COALESCE(net_pnl_after_costs,0)) average_pnl FROM trade_outcomes WHERE COALESCE(playbook,'unclassified')=? GROUP BY playbook", identity)
+            if row is None:
+                return _detail_payload(node_id, kind, identity, "No persisted detail is available for this node.", {})
+            return _human_detail(node_id, kind, row)
+        finally:
+            connection.close()
 
     def _manifests(self) -> dict[str, dict[str, Any]]:
         result: dict[str, dict[str, Any]] = {}
@@ -280,8 +330,14 @@ class MemoryGraphRepository:
     @staticmethod
     def _payload(nodes, edges, timeline, generated, path, types, window, warning) -> dict[str, Any]:
         timeline.sort(key=lambda item: str(item.get("timestamp") or ""), reverse=True)
+        topology = json.dumps({"nodes": nodes, "edges": edges}, sort_keys=True, separators=(",", ":"), default=str)
+        layout = json.dumps({"nodes": [node.get("id") for node in nodes],
+                             "edges": [(edge.get("source"), edge.get("target")) for edge in edges]},
+                            sort_keys=True, separators=(",", ":"), default=str)
         return {
-            "schema_version": "memory-graph.v1", "generated_at": generated.isoformat(),
+            "schema_version": "memory-graph.v2", "generated_at": generated.isoformat(),
+            "topology_fingerprint": hashlib.sha256(topology.encode("utf-8")).hexdigest(),
+            "layout_fingerprint": hashlib.sha256(layout.encode("utf-8")).hexdigest(),
             "database": str(path), "read_only": True, "raw_market_tables_queried": False,
             "filters": {"types": sorted(types), "window": window},
             "limits": {"nodes": len(nodes), "edges": len(edges), "timeline": min(len(timeline), 100)},
@@ -292,6 +348,14 @@ class MemoryGraphRepository:
 def _one(connection: sqlite3.Connection, sql: str) -> dict[str, Any] | None:
     try:
         row = connection.execute(sql).fetchone()
+        return dict(row) if row else None
+    except sqlite3.OperationalError:
+        return None
+
+
+def _one_param(connection: sqlite3.Connection, sql: str, value: str) -> dict[str, Any] | None:
+    try:
+        row = connection.execute(sql, (value,)).fetchone()
         return dict(row) if row else None
     except sqlite3.OperationalError:
         return None
@@ -376,3 +440,66 @@ def _modified_time(path: Path) -> float:
         return path.stat().st_mtime
     except OSError:
         return 0.0
+
+
+def _subtitle(kind: str, details: dict[str, Any]) -> str:
+    candidates = {
+        "decision": ("regime", "timestamp"), "model": ("model_type", "scope"),
+        "trade": ("close_reason", "exit_time"), "training": ("status", "completed_at"),
+        "dataset": ("data_type", "timestamp"), "llm": ("timestamp",), "risk": ("timestamp",),
+        "playbook": ("status",), "market": ("regime",),
+    }.get(kind, ())
+    return " | ".join(str(details[key]) for key in candidates if details.get(key))[:150]
+
+
+def _preview(kind: str, details: dict[str, Any]) -> str:
+    keys = {
+        "decision": ("reason",), "model": ("sample_count", "expected_calibration_error"),
+        "trade": ("net_pnl_after_costs", "confidence"), "training": ("sample_count", "error"),
+        "dataset": ("rows", "message"), "llm": ("summary",), "risk": ("message", "event_type"),
+        "market": ("spread_pct", "liquidity_score"),
+    }.get(kind, ())
+    values = [f"{key.replace('_', ' ')}: {_display(details[key])}" for key in keys if details.get(key) is not None]
+    return " | ".join(values)[:280]
+
+
+def _human_detail(node_id: str, kind: str, row: dict[str, Any]) -> dict[str, Any]:
+    decoded = {key: _json(value) if key.endswith("_json") else value for key, value in row.items()}
+    if kind in {"decision", "market"}:
+        decoded["explanation"] = explain_decision(decoded)
+    title = str(decoded.get("model_version") or decoded.get("playbook") or decoded.get("decision") or decoded.get("review_type") or node_id)
+    sections: list[dict[str, Any]] = []
+    groups = {
+        "Identity": ("timestamp", "status", "decision", "direction", "playbook", "model_version", "model_type", "model_scope"),
+        "Evidence": ("confidence", "bullish_score", "bearish_score", "no_trade_score", "regime", "reason", "sample_count", "paper_sample_count"),
+        "Performance": ("net_pnl_after_costs", "gross_pnl", "wins", "samples", "average_pnl", "max_favorable_excursion", "max_adverse_excursion", "exit_reason"),
+        "Training lineage": ("parent_champion_version", "training_start", "training_end", "training_data_start", "training_data_end", "artifact_fingerprint", "path"),
+        "Review": ("summary", "bull_case", "bear_case", "risk_critique", "execution_critique", "journal_review"),
+    }
+    explanation = decoded.get("explanation")
+    if isinstance(explanation, dict):
+        fields = [{"label": "Plain-language result", "value": explanation.get("headline")}, {"label": "Primary reason", "value": explanation.get("summary")}]
+        for group in explanation.get("groups", []):
+            fields.append({"label": group.get("title"), "value": "\n".join(item.get("message", "") for item in group.get("items", []))})
+        sections.append({"title": "Decision explanation", "fields": fields})
+    for section, keys in groups.items():
+        fields = [{"label": key.replace("_", " ").title(), "value": _display(decoded[key])} for key in keys if decoded.get(key) not in (None, "", {}, [])]
+        if fields:
+            sections.append({"title": section, "fields": fields})
+    return _detail_payload(node_id, kind, title, _preview(kind, decoded), {"sections": sections})
+
+
+def _detail_payload(node_id: str, kind: str, title: str, summary: str, extra: dict[str, Any]) -> dict[str, Any]:
+    return {"schema_version": "memory-node.v1", "id": node_id, "type": kind, "title": title,
+            "summary": summary or "Persisted bot memory and audit evidence.", "read_only": True, **extra}
+
+
+def _display(value: Any) -> str:
+    if isinstance(value, float):
+        return f"{value:,.6g}"
+    if isinstance(value, dict):
+        scalar = [f"{str(k).replace('_', ' ')}: {_display(v)}" for k, v in list(value.items())[:12] if not isinstance(v, (dict, list))]
+        return " | ".join(scalar) if scalar else f"{len(value)} structured values"
+    if isinstance(value, list):
+        return ", ".join(_display(item) for item in value[:12]) + (" ..." if len(value) > 12 else "")
+    return str(value)[:1200]

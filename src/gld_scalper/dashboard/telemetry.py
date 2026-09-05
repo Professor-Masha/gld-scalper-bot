@@ -142,6 +142,25 @@ class TelemetryRepository:
             "audits": self._query("SELECT * FROM performance_consistency_audits ORDER BY timestamp DESC,id DESC LIMIT ?", (limit,)),
         }
 
+    def latency_summary(self, limit: int = 5000) -> dict[str, Any]:
+        rows = self._query(
+            "SELECT timestamp,trace_id,stage,elapsed_ms,stage_latency_ms,event_age_ms,strategy_path,playbook,client_order_id,order_id,status "
+            "FROM execution_latency_events ORDER BY timestamp DESC,id DESC LIMIT ?",
+            (max(10, min(limit, 20_000)),),
+        )
+        stages: dict[str, list[float]] = {}
+        for row in rows:
+            value = row.get("stage_latency_ms")
+            if value is not None:
+                stages.setdefault(str(row.get("stage")), []).append(float(value))
+        return {
+            "sample_count": len(rows),
+            "trace_count": len({str(row.get("trace_id")) for row in rows}),
+            "stages": {stage: _percentiles(values) for stage, values in stages.items()},
+            "recent": rows[:100],
+            "model_target_ms": 5.0,
+        }
+
     def llm_activity(self, limit: int = 30) -> dict[str, list[dict[str, Any]]]:
         bounded = max(1, min(limit, 100))
         return {
@@ -188,6 +207,14 @@ def _row(row: sqlite3.Row) -> dict[str,Any]:
             try: result[key]=json.loads(value)
             except json.JSONDecodeError: pass
     return result
+
+
+def _percentiles(values: list[float]) -> dict[str, float]:
+    ordered = sorted(values)
+    def percentile(fraction: float) -> float:
+        return ordered[min(len(ordered) - 1, max(0, round((len(ordered) - 1) * fraction)))]
+    return {"count": len(ordered), "p50_ms": round(percentile(0.50), 4), "p95_ms": round(percentile(0.95), 4),
+            "p99_ms": round(percentile(0.99), 4), "max_ms": round(ordered[-1], 4)}
 
 
 def _metric(values: dict[str, Any], key: str) -> float | None:

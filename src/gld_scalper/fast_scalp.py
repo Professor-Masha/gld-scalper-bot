@@ -39,6 +39,7 @@ class FastScalpEvent:
     event_type: str
     payload: dict[str, Any]
     received_at: datetime
+    enqueued_ns: int = field(default_factory=time.perf_counter_ns)
 
 
 @dataclass(slots=True)
@@ -441,12 +442,14 @@ class FastScalpRuntime:
         trading_client: Any | None = None,
         coordinator: "OrderIntentCoordinator | None" = None,
         transformer_runtime: "AsyncTransformerShadowRuntime | None" = None,
+        latency_tracker: Any | None = None,
     ) -> None:
         self.settings = settings or load_settings()
         self.engine = FastScalpEngine(self.settings)
         self.trading_client = trading_client
         self.coordinator = coordinator
         self.transformer_runtime = transformer_runtime
+        self.latency_tracker = latency_tracker
         self._queue: queue.Queue[FastScalpEvent] = queue.Queue(maxsize=self.settings.fast_scalp_event_queue_size)
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -525,6 +528,11 @@ class FastScalpRuntime:
                 decision = self.engine.on_event(event.event_type, event.payload, event.received_at)
                 if decision is None:
                     continue
+                trace_id = None
+                if self.latency_tracker is not None:
+                    trace_id = self.latency_tracker.begin(strategy_path="fast", event_time=event.received_at, started_ns=event.enqueued_ns)
+                    self.latency_tracker.record(trace_id, "decision_complete", details={"engine_latency_ms": decision.latency_ms, "trigger": decision.trigger_type})
+                    decision.features["latency_trace_id"] = trace_id
                 if self._last_model_refresh_at is None or decision.timestamp >= self._last_model_refresh_at + timedelta(seconds=60):
                     predictor.reload_champion()
                     self._model_version = predictor.model_version
@@ -562,6 +570,9 @@ class FastScalpRuntime:
         paper_exploration: PaperExplorationPolicy | None = None,
     ) -> None:
         ml_result = predictor.predict(decision.features)
+        trace_id = decision.features.get("latency_trace_id")
+        if self.latency_tracker is not None:
+            self.latency_tracker.record(trace_id, "classical_model_complete", strategy_path="fast")
         decision.features.update(predictor.prediction_features(ml_result))
         transformer_prediction = None
         if self.transformer_runtime is not None:
@@ -577,6 +588,8 @@ class FastScalpRuntime:
             apply_transformer_to_fast_decision(decision, transformer_prediction, self.settings)
         _apply_paper_ml_advice(decision, ml_result, predictor, self.settings)
         council = run_decision_council(decision.features, self.settings, now=decision.timestamp)
+        if self.latency_tracker is not None:
+            self.latency_tracker.record(trace_id, "decision_council_complete", strategy_path="fast")
         decision.features.update(council.as_features())
         if council.hard_block and decision.decision != "NO_TRADE":
             decision.decision = "NO_TRADE"
@@ -656,6 +669,10 @@ class FastScalpRuntime:
             return
         try:
             plan.client_order_id = plan.client_order_id or make_client_order_id(plan.symbol, f"FAST-{plan.direction}", decision.timestamp)
+            plan.latency_trace_id = trace_id
+            if self.latency_tracker is not None:
+                self.latency_tracker.bind(trace_id, client_order_id=plan.client_order_id)
+                self.latency_tracker.record(trace_id, "order_plan_complete", strategy_path="fast", playbook=plan.playbook, client_order_id=plan.client_order_id)
             submission = execution.submit_entry_with_protection(plan)
             primary = submission.primary
             order = primary.order

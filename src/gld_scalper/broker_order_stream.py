@@ -26,10 +26,12 @@ class BrokerOrderUpdateRuntime:
         safety_state: ExecutionSafetyState,
         *,
         stream_factory: Callable[[Settings], Any] = get_trading_stream,
+        latency_tracker: Any | None = None,
     ) -> None:
         self.settings = settings
         self.safety_state = safety_state
         self.stream_factory = stream_factory
+        self.latency_tracker = latency_tracker
         self.last_event_at: datetime | None = None
         self.last_error: str | None = None
         self.event_count = 0
@@ -70,6 +72,16 @@ class BrokerOrderUpdateRuntime:
 
         async def on_trade_update(update: Any) -> None:
             try:
+                order = _field(update, "order", {})
+                client_order_id = _text(_field(order, "client_order_id")) or None
+                order_id = _text(_field(order, "id")) or None
+                event_name = _text(_field(update, "event")).lower()
+                if self.latency_tracker is not None:
+                    trace_id = self.latency_tracker.trace_for(client_order_id=client_order_id, order_id=order_id)
+                    if trace_id:
+                        self.latency_tracker.bind(trace_id, client_order_id=client_order_id, order_id=order_id)
+                        stage = "fill_received" if event_name in {"fill", "partial_fill"} else "broker_trade_update"
+                        self.latency_tracker.record(trace_id, stage, client_order_id=client_order_id, order_id=order_id, status=event_name)
                 result = reconciler.process_trade_update(update, utc_now())
                 self.last_event_at = utc_now()
                 self.event_count += 1

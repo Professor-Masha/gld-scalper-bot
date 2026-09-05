@@ -124,6 +124,7 @@ class ExecutionEngine:
                             client_order_id=str(tranche.client_order_id),
                             direction=tranche.direction,
                             episode_id=episode_id,
+                            latency_trace_id=plan.latency_trace_id,
                         )
                     else:
                         order = client.submit_order(order_data=request)

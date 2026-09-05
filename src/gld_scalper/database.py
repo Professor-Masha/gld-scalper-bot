@@ -14,7 +14,7 @@ from .utils.time_utils import ensure_utc, utc_iso, utc_now
 
 
 _SQLITE_WRITE_LOCK = threading.RLock()
-CURRENT_SCHEMA_MIGRATION = "20260805_hybrid_agent_council_v1"
+CURRENT_SCHEMA_MIGRATION = "20260905_observability_latency_v1"
 
 
 class SerializedSQLiteConnection(sqlite3.Connection):
@@ -91,6 +91,7 @@ DATA_TABLES = [
     "execution_episode_orders",
     "order_intents",
     "execution_safety_events",
+    "execution_latency_events",
     "performance_consistency_audits",
     "model_versions",
     "model_champion_history",
@@ -2139,6 +2140,23 @@ class Database:
                     record.get("status"),
                     _json(record.get("feature_snapshot_json", record.get("features", {}))),
                     utc_iso(record.get("created_at", utc_now())),
+                ),
+            )
+        return int(cursor.lastrowid)
+
+    def insert_execution_latency_event(self, record: Mapping[str, Any]) -> int:
+        with self.conn:
+            cursor = self.conn.execute(
+                """
+                INSERT INTO execution_latency_events(timestamp, trace_id, stage, elapsed_ms, stage_latency_ms,
+                    event_age_ms, strategy_path, playbook, client_order_id, order_id, status, details_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    utc_iso(record.get("timestamp", utc_now())), record["trace_id"], record["stage"],
+                    record.get("elapsed_ms"), record.get("stage_latency_ms"), record.get("event_age_ms"),
+                    record.get("strategy_path"), record.get("playbook"), record.get("client_order_id"),
+                    record.get("order_id"), record.get("status"), _json(record.get("details", {})),
                 ),
             )
         return int(cursor.lastrowid)

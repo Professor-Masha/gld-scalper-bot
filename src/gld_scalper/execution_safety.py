@@ -120,12 +120,14 @@ class _OrderIntent:
     future: Future[Any]
     episode_id: str | None = None
     details: dict[str, Any] = field(default_factory=dict)
+    queued_ns: int = field(default_factory=time.perf_counter_ns)
+    latency_trace_id: str | None = None
 
 
 class OrderIntentCoordinator:
     """Serializes every broker write and deduplicates repeated requests."""
 
-    def __init__(self, settings: Settings, trading_client: Any, state: ExecutionSafetyState | None = None) -> None:
+    def __init__(self, settings: Settings, trading_client: Any, state: ExecutionSafetyState | None = None, latency_tracker: Any | None = None) -> None:
         self.settings = settings
         self.trading_client = trading_client
         self.state = state or ExecutionSafetyState(settings)
@@ -135,6 +137,7 @@ class OrderIntentCoordinator:
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._entry_guard: Callable[[str], None] | None = None
+        self.latency_tracker = latency_tracker
 
     def set_entry_guard(self, guard: Callable[[str], None]) -> None:
         self._entry_guard = guard
@@ -169,7 +172,7 @@ class OrderIntentCoordinator:
             self._entry_guard(str(direction).upper())
         self.state.assert_entry_allowed()
 
-    def submit_entry(self, order_data: Any, *, client_order_id: str, direction: str, episode_id: str) -> Any:
+    def submit_entry(self, order_data: Any, *, client_order_id: str, direction: str, episode_id: str, latency_trace_id: str | None = None) -> Any:
         self.prepare_entry(direction)
 
         def operation() -> Any:
@@ -189,6 +192,7 @@ class OrderIntentCoordinator:
             episode_id=episode_id,
             details={"direction": direction, "client_order_id": client_order_id},
             operation=operation,
+            latency_trace_id=latency_trace_id,
         )
 
     def replace_order(self, order_id: str, order_data: Any, *, idempotency_key: str, episode_id: str | None = None) -> Any:
@@ -232,6 +236,7 @@ class OrderIntentCoordinator:
         episode_id: str | None = None,
         details: dict[str, Any] | None = None,
         retry_failed: bool = False,
+        latency_trace_id: str | None = None,
     ) -> Any:
         self.start()
         with self._futures_lock:
@@ -254,6 +259,7 @@ class OrderIntentCoordinator:
                         future=future,
                         episode_id=episode_id,
                         details=details or {},
+                        latency_trace_id=latency_trace_id,
                     )
                 )
         try:
@@ -282,11 +288,21 @@ class OrderIntentCoordinator:
                         "details": intent.details,
                     }
                 )
+                if self.latency_tracker is not None:
+                    self.latency_tracker.record(
+                        intent.latency_trace_id, "order_intent_dequeued",
+                        stage_latency_ms=(time.perf_counter_ns() - intent.queued_ns) / 1_000_000.0,
+                        client_order_id=intent.details.get("client_order_id"), status="running",
+                    )
                 database.update_order_intent(intent.intent_id, status="running")
                 try:
                     result = intent.operation()
                     order_id = _text(_field(result, "id")) or None
                     database.update_order_intent(intent.intent_id, status="completed", order_id=order_id)
+                    if self.latency_tracker is not None:
+                        client_id = intent.details.get("client_order_id")
+                        self.latency_tracker.bind(intent.latency_trace_id, client_order_id=client_id, order_id=order_id)
+                        self.latency_tracker.record(intent.latency_trace_id, "broker_submission_acknowledged", client_order_id=client_id, order_id=order_id, status="accepted")
                     self.state.record_success("broker_rejection")
                     intent.future.set_result(result)
                 except Exception as exc:
@@ -295,6 +311,8 @@ class OrderIntentCoordinator:
                     if tripped:
                         logger.critical("execution circuit opened after broker failures: %s", exc)
                     intent.future.set_exception(exc)
+                    if self.latency_tracker is not None:
+                        self.latency_tracker.record(intent.latency_trace_id, "broker_submission_failed", status="failed", details={"error": str(exc)})
                 finally:
                     self._queue.task_done()
         finally:

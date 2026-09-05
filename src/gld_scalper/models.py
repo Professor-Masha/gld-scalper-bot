@@ -124,6 +124,7 @@ class OrderPlan:
     strategy_path: str = "minute"
     risk_multiplier: float = 1.0
     risk_details: dict[str, Any] = field(default_factory=dict)
+    latency_trace_id: str | None = None
 
     @property
     def valid(self) -> bool:

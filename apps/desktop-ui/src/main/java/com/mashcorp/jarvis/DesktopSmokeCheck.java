@@ -20,6 +20,7 @@ final class DesktopSmokeCheck {
     private final List<Runnable> views;
     private int index;
     private int readinessChecks;
+    private final FrameTimeMonitor frameTimes = new FrameTimeMonitor();
 
     private DesktopSmokeCheck(Stage stage, Path directory, BooleanSupplier telemetryReady, List<Runnable> views) {
         this.stage = stage; this.directory = directory; this.telemetryReady = telemetryReady; this.views = views;
@@ -27,7 +28,8 @@ final class DesktopSmokeCheck {
 
     static void run(Stage stage, Path directory, BooleanSupplier telemetryReady, List<Runnable> views) {
         stage.setMaximized(false); stage.setWidth(1366); stage.setHeight(900);
-        new DesktopSmokeCheck(stage, directory, telemetryReady, views).awaitTelemetry();
+        DesktopSmokeCheck check = new DesktopSmokeCheck(stage, directory, telemetryReady, views);
+        check.frameTimes.start(); check.awaitTelemetry();
     }
 
     private void awaitTelemetry() {
@@ -42,7 +44,11 @@ final class DesktopSmokeCheck {
 
     private void next() {
         if (index == views.size()) {
-            try { Files.writeString(directory.resolve("completed.txt"), "All read-only view snapshots completed"); }
+            frameTimes.stop();
+            try {
+                Files.writeString(directory.resolve("completed.txt"), "All read-only view snapshots completed");
+                Files.writeString(directory.resolve("frame-times.json"), frameTimes.json());
+            }
             catch (Exception exc) { exc.printStackTrace(); }
             Platform.exit(); return;
         }

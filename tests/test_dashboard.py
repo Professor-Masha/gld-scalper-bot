@@ -15,6 +15,7 @@ from gld_scalper.dashboard.catalog import TransformerCatalog
 from gld_scalper.dashboard.job_results import JobResultRepository
 from gld_scalper.dashboard.llm_providers import LLMProviderService
 from gld_scalper.dashboard.memory_graph import MemoryGraphRepository
+from gld_scalper.dashboard.decision_explanation import explain_decision
 from gld_scalper.dashboard.process_manager import ProcessManager
 from gld_scalper.dashboard.settings_store import EnvFileStore
 from gld_scalper.dashboard.telemetry import TelemetryRepository
@@ -185,6 +186,23 @@ def test_memory_graph_is_bounded_cached_and_read_only(tmp_path: Path) -> None:
     assert first["limits"]["nodes"] <= 80
     assert first["cache"]["hit"] is False
     assert second["cache"]["hit"] is True
+    assert first["schema_version"] == "memory-graph.v2"
+    assert all("details" not in node for node in first["nodes"])
+    assert len(str(first)) < 50_000
+    detail = repository.node_detail("decision:current")
+    assert detail["schema_version"] == "memory-node.v1"
+    assert detail["sections"][0]["title"] == "Decision explanation"
+
+
+def test_decision_explanation_groups_and_deduplicates_machine_reasons() -> None:
+    result = explain_decision({
+        "decision": "NO_TRADE",
+        "reason": "spread too wide; spread regime wide; quote stale at 305s; market data stale; price chopping around VWAP",
+    })
+    codes = [item["code"] for group in result["groups"] for item in group["items"]]
+    assert codes.count("SPREAD_WIDE") == 1
+    assert codes.count("DATA_STALE") == 1
+    assert "mandatory checks failed" in result["headline"]
 
 
 def test_dashboard_app_is_local_and_serves_expected_routes(tmp_path: Path) -> None:
@@ -211,6 +229,9 @@ def test_dashboard_app_is_local_and_serves_expected_routes(tmp_path: Path) -> No
     assert "/api/v1/training/jobs" in paths
     assert "/api/v1/models/validation" in paths
     assert "/api/v1/memory-graph" in paths
+    assert "/api/v1/memory-graph/summary" in paths
+    assert "/api/v1/memory-graph/nodes/{node_id:path}" in paths
+    assert "/api/v1/performance/latency" in paths
     assert "/api/v1/audit/events" in paths
     assert "/api/v1/events" in paths
     assert len(app.state.dashboard_token) >= 32

@@ -23,6 +23,7 @@ from .ema_cross_strategy import (
     select_ema_cross_events,
 )
 from .execution_engine import ExecutionEngine, make_client_order_id
+from .execution_latency import ExecutionLatencyTracker
 from .entry_quality import EntryCooldownPolicy, EntryQualityGate, time_of_day_profile
 from .execution_safety import (
     EntryBlockedError,
@@ -780,12 +781,15 @@ def run_paper_command(args: argparse.Namespace) -> None:
         )
     trading_client = get_trading_client(settings)
     execution_safety_state = ExecutionSafetyState(settings)
-    order_coordinator = OrderIntentCoordinator(settings, trading_client, execution_safety_state)
+    latency_tracker = ExecutionLatencyTracker(settings)
+    latency_tracker.start()
+    order_coordinator = OrderIntentCoordinator(settings, trading_client, execution_safety_state, latency_tracker)
     execution_safety = ExecutionSafetySupervisor(settings, trading_client, order_coordinator)
     try:
         startup_safety = execution_safety.startup()
     except Exception:
         order_coordinator.stop(drain=False)
+        latency_tracker.stop()
         raise
     logger.info(
         "execution safety startup complete consistent=%s position_qty=%s open_orders=%s protected=%s",
@@ -804,7 +808,7 @@ def run_paper_command(args: argparse.Namespace) -> None:
     order_reconciler = PaperOrderReconciler(settings, db, trading_client=trading_client)
     broker_order_stream = None
     if settings.enable_live_stream and not args.no_stream:
-        broker_order_stream = BrokerOrderUpdateRuntime(settings, execution_safety_state)
+        broker_order_stream = BrokerOrderUpdateRuntime(settings, execution_safety_state, latency_tracker=latency_tracker)
         broker_order_stream.start()
     performance_tracker = AccountPerformanceTracker(settings, db, trading_client)
     entry_quality_gate = EntryQualityGate(settings)
@@ -861,6 +865,7 @@ def run_paper_command(args: argparse.Namespace) -> None:
             trading_client=trading_client,
             coordinator=order_coordinator,
             transformer_runtime=transformer_runtime,
+            latency_tracker=latency_tracker,
         )
         position_runtime.start()
         execution_safety.set_internal_episode_provider(position_runtime.episode_snapshot)
@@ -1609,6 +1614,19 @@ def run_paper_command(args: argparse.Namespace) -> None:
                         extra={"event_type": "order_submit"},
                     )
                     plan.client_order_id = plan.client_order_id or make_client_order_id(plan.symbol, plan.direction)
+                    plan.latency_trace_id = latency_tracker.begin(
+                        strategy_path=str(features.get("strategy_path") or "minute"),
+                        event_time=signal.timestamp,
+                        playbook=plan.playbook,
+                    )
+                    latency_tracker.bind(plan.latency_trace_id, client_order_id=plan.client_order_id)
+                    latency_tracker.record(
+                        plan.latency_trace_id,
+                        "order_plan_complete",
+                        strategy_path=str(features.get("strategy_path") or "minute"),
+                        playbook=plan.playbook,
+                        client_order_id=plan.client_order_id,
+                    )
                     db.insert_trading_journal(
                         {
                             "timestamp": now,
@@ -1821,6 +1839,7 @@ def run_paper_command(args: argparse.Namespace) -> None:
                 extra={"event_type": "performance_shutdown_failed"},
             )
         order_coordinator.stop()
+        latency_tracker.stop()
 
     return
 

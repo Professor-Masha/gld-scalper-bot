@@ -104,6 +104,13 @@ The programmer guides in these READMEs contain hand-written architecture
 explanations. Review generator output before replacing a README so those manual
 sections are not accidentally discarded.
 
+### Interface And Fast-Path Benchmark
+
+`benchmark_dashboard_fast_path.py` replays synthetic GLD quote events through
+the in-memory fast engine, first alone and then while a separate thread requests
+cached read-only memory-graph summaries. It exits nonzero when loaded p95 exceeds
+the requested target. It neither connects to Alpaca nor submits orders.
+
 ### Reading Or Changing A Tool
 
 Start at its `main()`, then follow argument parsing, path construction, settings

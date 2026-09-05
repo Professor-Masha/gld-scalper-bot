@@ -23,7 +23,15 @@ This package provides the local Python control gateway used by the native JavaFX
 
 `TelemetryRepository.model_validation()` powers `/api/model-validation` and `/api/v1/models/validation`. It flattens immutable registry evidence for the JavaFX analytics view while retaining the complete structured payload for audit. The route is read-only and degrades to an empty collection when an older database has no model rows.
 
-`MemoryGraphRepository.graph()` powers `/api/memory-graph` and `/api/v1/memory-graph`. It opens SQLite with URI `mode=ro` plus `PRAGMA query_only=ON`, imposes a node ceiling, and reads only compact decision, registry, training, dataset, outcome, review, and safety tables. It never scans `quotes` or `market_trades`. Summaries are cached by database, filter set, and time window for at least 15 seconds, even while the live database file changes. Model-manifest discovery is separately bounded. A graph request therefore cannot promote a model, mutate a record, submit an order, or turn the 244-million-quote archive into an interactive query workload.
+`MemoryGraphRepository.graph()` powers the compatibility routes and `/api/v1/memory-graph/summary`; it returns compact render metadata only. `node_detail()` powers `/api/v1/memory-graph/nodes/{id}` and uses allowlisted, parameterized lookups to produce bounded human-readable sections for one selected node. Both open SQLite with URI `mode=ro` plus `PRAGMA query_only=ON`, impose a node ceiling, and read only decision, registry, training, dataset, outcome, review, and safety tables. They never scan `quotes` or `market_trades`. Summaries and details have separate TTL caches. A graph request therefore cannot promote a model, mutate a record, submit an order, or turn the 244-million-quote archive into an interactive query workload.
+
+`decision_explanation.py` maps machine audit phrases to stable reason codes,
+deduplicates repeated evidence, and groups it for people while retaining the
+original reason. It cannot alter a signal or risk veto.
+
+`TelemetryRepository.latency_summary()` powers `/api/v1/performance/latency`
+and reports stage percentiles from `execution_latency_events` without joining
+raw market archives.
 
 The locally vendored Three.js HUD is visual only. Its low-power renderer pauses with a hidden tab and cannot affect signals, risk, or execution.
 
@@ -39,6 +47,7 @@ The locally vendored Three.js HUD is visual only. Its low-power renderer pauses 
 - `whitepaper.py`: reads the versioned white paper for the local interface.
 - `telemetry.py`: opens SQLite separately in read-only/query-only mode and produces account, quote, episode, outcome, model, decision, safety, and equity views. Performance analytics groups malformed legacy bracket identifiers under `legacy_unclassified` instead of presenting them as playbooks.
 - `memory_graph.py`: builds the bounded learned-state graph, model lineage, node inspector payloads, time-filtered memory timeline, visual status encoding, and TTL cache without touching raw quote/trade archives.
+- `decision_explanation.py`: stable reason-code classification and grouped plain-language decision evidence.
 - `static/index.html`: operational views for market, performance, trades, intelligence, training, system diagnostics, and local settings.
 - `static/styles.css`: responsive cyan/green command-center visual system.
 - `static/app.js`: live WebSocket updates, native chart telemetry, research providers, forms, process controls, tables, settings, and terminal output.

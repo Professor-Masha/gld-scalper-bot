@@ -89,13 +89,19 @@ pauses when detached, and changes color/speed with backend health.
 ## Learned-State Memory Graph
 
 Open **Memory Graph** to inspect what the bot has recorded and which approved
-artifacts it can currently use. The JavaFX client requests
-`/api/v1/memory-graph`; it never reads SQLite itself. Models, trades, playbooks,
+artifacts it can currently use. The JavaFX client requests the compact
+`/api/v1/memory-graph/summary`; it never reads SQLite itself. Models, trades, playbooks,
 datasets, training experiments, and LLM reviews can be filtered independently,
 with one-day through all-history windows. Current decision, market, and risk
 nodes remain present as orientation anchors.
 
-The force layout runs on bounded response data outside the trading process.
+The force layout runs on bounded response data on a Java worker, never on the
+JavaFX application thread or trading process. Selection triggers a separate
+lazy node-detail request, and `NodeInspector` renders titled sections and
+plain-language values instead of raw JSON. Content and layout fingerprints
+suppress unchanged work; `DecisionCore3D` diff-updates scene objects by ID and
+reuses positions when topology is unchanged. One animation timer pulses active
+edges.
 Green marks approved champions and profitable outcomes, cyan marks current
 market/decision flow, blue marks datasets and training artifacts, purple marks
 Transformer models, yellow marks candidates or uncertain evidence, red marks
@@ -108,9 +114,16 @@ the corresponding graph node.
 This graph is an audit and interpretation surface. It visualizes model
 registries, manifests, outcomes, and labels; it is not the model's parameter
 memory itself. It exposes no mutation control, promotion action, risk override,
-or order method. Repeated refreshes stop prior edge animations before rendering
-new ones, and a graph-fetch failure remains a local workspace error rather than
+or order method. Overview and Memory Graph workspaces are retained across
+navigation so selection and camera context survive. Page changes use a brief
+simultaneous crossfade; **Settings > Reduce interface motion** disables page and
+core animation persistently. Loading indicators hold the layout while evidence
+arrives. A graph-fetch failure remains a local workspace error rather than
 declaring the trading system degraded.
+
+Opt-in desktop smoke tests write `frame-times.json` beside screenshots. It
+contains sampled JavaFX pulse p50/p95/p99, maximum interval, and frames over
+33 ms. `GraphRenderPlanTest` separately guards bounded layout preparation.
 
 ## Visual System
 

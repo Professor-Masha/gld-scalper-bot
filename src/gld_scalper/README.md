@@ -29,6 +29,7 @@ Return to the [project manual](../../README.md).
 | [`event_calendar.py`](../../src/gld_scalper/event_calendar.py) | Python module exposing `event_risk_features`. |
 | [`execution_engine.py`](../../src/gld_scalper/execution_engine.py) | Converts approved order plans into serialized, idempotent, protected broker intents. |
 | [`execution_safety.py`](../../src/gld_scalper/execution_safety.py) | Broker/database reconciliation, bracket grace, residual confirmation, circuit breakers, and safety flattening. |
+| [`execution_latency.py`](../../src/gld_scalper/execution_latency.py) | Bounded background event-to-fill trace writer; correlates decisions, order intents, acknowledgements, fills, cancellations, and failures without blocking the fast path. |
 | [`exit_policy.py`](../../src/gld_scalper/exit_policy.py) | Python module exposing `ExitGeometry`, `economic_breakeven_pct`, `build_exit_geometry`. |
 | [`fast_scalp.py`](../../src/gld_scalper/fast_scalp.py) | Python module exposing `FastScalpEvent`, `FastScalpDecision`, `FastScalpEngine`, `FastScalpRuntime`. |
 | [`feature_engine.py`](../../src/gld_scalper/feature_engine.py) | Python module exposing `resample_bars`, `build_feature_snapshot`, `build_archive_compatible_features`. |

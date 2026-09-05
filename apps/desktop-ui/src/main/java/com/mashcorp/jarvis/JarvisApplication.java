@@ -56,6 +56,7 @@ public final class JarvisApplication extends Application {
     private final Label sessionValue = statusValue("PAPER");
     private final TextArea terminal = new TextArea();
     private final DecisionCore3D core3D = new DecisionCore3D();
+    private final NodeInspector overviewInspector = new NodeInspector();
     private final LineChart<Number, Number> marketChart = lineChart("Minute", "GLD");
     private GatewayRuntime runtime;
     private GatewayClient gateway;
@@ -75,6 +76,13 @@ public final class JarvisApplication extends Application {
     private int navigationIndex;
     private Runnable currentRefresh = () -> {};
     private long eventSequence;
+    private Node overviewPage;
+    private MemoryGraphWorkspace memoryWorkspace;
+    private Node memoryPage;
+    private final java.util.prefs.Preferences preferences = java.util.prefs.Preferences.userNodeForPackage(JarvisApplication.class);
+    private boolean reducedMotion = preferences.getBoolean("reducedMotion", false);
+    private volatile String overviewGraphFingerprint = "";
+    private volatile GraphRenderPlan overviewGraphPlan;
 
     public static void launchApplication(String[] args) {
         launch(args);
@@ -194,6 +202,9 @@ public final class JarvisApplication extends Application {
     }
 
     private void showOverview() {
+        if (overviewPage != null) {
+            setWorkspace(overviewPage); currentRefresh = this::refreshOverviewGraph; refreshOverviewGraph(); return;
+        }
         FlowPane metrics = new FlowPane(10, 10,
                 metric("GLD MID", quoteValue), metric("EQUITY", equityValue), metric("NET P/L TODAY", pnlValue),
                 metric("WIN RATE", winValue), metric("BOT STATE", botValue));
@@ -208,7 +219,7 @@ public final class JarvisApplication extends Application {
         corePanel.setMinHeight(360);
         corePanel.setPrefHeight(360); corePanel.setMaxHeight(360); corePanel.setMinWidth(180);
         core3D.bindSize(corePanel.widthProperty().subtract(28), corePanel.heightProperty().subtract(54));
-        VBox decision = panel("LATEST DECISION", decisionValue, decisionReason);
+        VBox decision = panel("LATEST DECISION", decisionValue, decisionReason, overviewInspector);
         decisionValue.getStyleClass().add("decision");
         decisionReason.setWrapText(true);
         HBox center = new HBox(12, corePanel, decision);
@@ -217,7 +228,9 @@ public final class JarvisApplication extends Application {
         decision.setPrefWidth(380);
         decision.setMinWidth(180);
         terminal.setEditable(false); terminal.setWrapText(false); terminal.setPrefRowCount(10);
-        setWorkspace(page("SYSTEM OVERVIEW", telemetryBand, metrics, center, panel("LIVE OPERATIONS LOG", terminal)));
+        overviewPage = page("SYSTEM OVERVIEW", telemetryBand, metrics, center, panel("LIVE OPERATIONS LOG", terminal));
+        core3D.setSelectionListener(this::inspectOverviewNode);
+        setWorkspace(overviewPage);
         currentRefresh = this::refreshOverviewGraph;
         refreshOverviewGraph();
     }
@@ -266,16 +279,35 @@ public final class JarvisApplication extends Application {
     }
 
     private void showMemoryGraph() {
-        MemoryGraphWorkspace memory = new MemoryGraphWorkspace(gateway, worker, this::showError);
-        setWorkspace(page("DECISION CORE MEMORY GRAPH", memory));
-        currentRefresh = memory::refresh;
+        if (memoryWorkspace == null) {
+            memoryWorkspace = new MemoryGraphWorkspace(gateway, worker, this::showError);
+            memoryPage = page("DECISION CORE MEMORY GRAPH", memoryWorkspace);
+        }
+        setWorkspace(memoryPage);
+        currentRefresh = memoryWorkspace::refresh;
     }
 
     private void refreshOverviewGraph() {
         worker.execute(() -> {
             try {
-                JsonNode graph = gateway.get("/api/v1/memory-graph?types=decision,market,model,playbook,risk&window=1d");
-                Platform.runLater(() -> core3D.setGraph(graph));
+                JsonNode graph = gateway.get("/api/v1/memory-graph/summary?types=decision,market,model,playbook,risk&window=1d");
+                String fingerprint = graph.path("topology_fingerprint").asText();
+                GraphRenderPlan plan = fingerprint.equals(overviewGraphFingerprint) ? null : GraphRenderPlan.build(graph, overviewGraphPlan);
+                Platform.runLater(() -> {
+                    if (plan != null) { core3D.applyPlan(plan); overviewGraphFingerprint = plan.fingerprint(); overviewGraphPlan = plan; }
+                    core3D.selectNode("decision:current");
+                });
+            } catch (Exception exc) { showError(exc); }
+        });
+    }
+
+    private void inspectOverviewNode(String nodeId) {
+        overviewInspector.loading(nodeId.replace(':', ' '));
+        worker.execute(() -> {
+            try {
+                String encoded = java.net.URLEncoder.encode(nodeId, StandardCharsets.UTF_8).replace("+", "%20");
+                JsonNode detail = gateway.get("/api/v1/memory-graph/nodes/" + encoded);
+                Platform.runLater(() -> overviewInspector.show(detail));
             } catch (Exception exc) { showError(exc); }
         });
     }
@@ -372,13 +404,17 @@ public final class JarvisApplication extends Application {
         feed.getSelectionModel().select("iex");
         Label warning = new Label("Blank secret fields preserve existing values. The gateway enforces Alpaca paper mode.");
         warning.setWrapText(true);
+        CheckBox reduceMotion = new CheckBox("Reduce interface motion"); reduceMotion.setSelected(reducedMotion);
+        reduceMotion.setOnAction(event -> {
+            reducedMotion = reduceMotion.isSelected(); preferences.putBoolean("reducedMotion", reducedMotion); core3D.setReducedMotion(reducedMotion);
+        });
         Button save = actionButton("SAVE SECURE SETTINGS", "primary", () -> {
             var request = Map.of("alpaca_api_key", alpacaKey.getText(), "alpaca_secret_key", alpacaSecret.getText(), "alpaca_data_feed", feed.getValue());
             execute("Saving local settings", () -> gateway.post("/api/settings", request));
             alpacaKey.clear(); alpacaSecret.clear();
         });
         save.setDisable(true);
-        setWorkspace(page("SECURE SETTINGS", panel("ALPACA PAPER CREDENTIALS", labeled("API key", alpacaKey), labeled("Secret key", alpacaSecret), labeled("Data feed", feed), warning, save)));
+        setWorkspace(page("SECURE SETTINGS", panel("INTERFACE ACCESSIBILITY", reduceMotion), panel("ALPACA PAPER CREDENTIALS", labeled("API key", alpacaKey), labeled("Secret key", alpacaSecret), labeled("Data feed", feed), warning, save)));
         worker.execute(() -> {
             try {
                 JsonNode config = gateway.get("/api/settings");
@@ -447,7 +483,8 @@ public final class JarvisApplication extends Application {
         core3D.setState(state);
         JsonNode signal = snapshot.path("signal");
         decisionValue.setText(signal.path("decision").asText("NO DATA"));
-        decisionReason.setText(signal.path("reason").asText("Waiting for the first backend decision."));
+        JsonNode explanation = signal.path("explanation");
+        decisionReason.setText(explanation.path("summary").asText(signal.path("reason").asText("Waiting for the first backend decision.")));
         dataLinkValue.setText(snapshot.path("database_available").asBoolean() ? "SYNCHRONIZED" : "UNAVAILABLE");
         streamValue.setText(signal.path("stream_connected").asBoolean() ? "CONNECTED" : "OFFLINE");
         String model = signal.path("model_version").asText("");
@@ -499,14 +536,26 @@ public final class JarvisApplication extends Application {
 
     private void setWorkspace(Node node) {
         currentRefresh = () -> {};
+        if (workspace.getChildren().size() == 1 && workspace.getChildren().get(0) == node) return;
+        Node previous = workspace.getChildren().isEmpty() ? null : workspace.getChildren().get(workspace.getChildren().size() - 1);
+        if (node.getParent() == workspace) workspace.getChildren().remove(node);
+        workspace.getChildren().add(node);
+        if (reducedMotion || previous == null) {
+            node.setOpacity(1); node.setTranslateY(0);
+            if (previous != null) workspace.getChildren().remove(previous);
+            return;
+        }
         node.setOpacity(0);
-        node.setTranslateY(8);
-        workspace.getChildren().setAll(node);
-        FadeTransition fade = new FadeTransition(Duration.millis(220), node);
+        node.setTranslateY(5);
+        FadeTransition fade = new FadeTransition(Duration.millis(180), node);
         fade.setFromValue(0); fade.setToValue(1);
-        TranslateTransition lift = new TranslateTransition(Duration.millis(220), node);
-        lift.setFromY(8); lift.setToY(0);
-        new ParallelTransition(fade, lift).play();
+        TranslateTransition lift = new TranslateTransition(Duration.millis(180), node);
+        lift.setFromY(5); lift.setToY(0);
+        FadeTransition fadePrevious = new FadeTransition(Duration.millis(140), previous);
+        fadePrevious.setFromValue(previous.getOpacity()); fadePrevious.setToValue(0);
+        ParallelTransition transition = new ParallelTransition(fade, lift, fadePrevious);
+        transition.setOnFinished(event -> workspace.getChildren().remove(previous));
+        transition.play();
     }
 
     private static VBox page(String title, Node... nodes) {

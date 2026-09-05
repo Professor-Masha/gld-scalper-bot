@@ -1309,6 +1309,26 @@ ON performance_consistency_audits(timestamp, stage);
 CREATE INDEX IF NOT EXISTS idx_execution_safety_events_time
 ON execution_safety_events(timestamp, event_type);
 
+CREATE TABLE IF NOT EXISTS execution_latency_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,
+    trace_id TEXT NOT NULL,
+    stage TEXT NOT NULL,
+    elapsed_ms REAL,
+    stage_latency_ms REAL,
+    event_age_ms REAL,
+    strategy_path TEXT,
+    playbook TEXT,
+    client_order_id TEXT,
+    order_id TEXT,
+    status TEXT,
+    details_json TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_execution_latency_trace ON execution_latency_events(trace_id, timestamp);
+CREATE INDEX IF NOT EXISTS idx_execution_latency_stage ON execution_latency_events(stage, timestamp);
+
 CREATE TABLE IF NOT EXISTS model_versions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     model_version TEXT NOT NULL UNIQUE,

@@ -506,6 +506,40 @@ interface. The native animation receives bounded JSON on a background worker;
 no force-layout or pulse work runs in the trading thread. There are no graph
 buttons for broker orders, risk changes, or model promotion.
 
+The graph contract is deliberately split. `/api/v1/memory-graph/summary`
+returns only node identity, render color, size, subtitle, preview, edges and a
+bounded timeline. `/api/v1/memory-graph/nodes/{id}` retrieves one human-readable
+detail document after selection. Large LLM evidence and walk-forward JSON are
+therefore never shipped during ordinary graph refreshes. Content and layout
+fingerprints let JavaFX skip unchanged frames and reuse positions when only a
+node value changes. Scene reconciliation updates spheres and connections by ID;
+it does not clear and rebuild the 3D world.
+
+Decision explanations preserve the original audit reason, then group and
+deduplicate stable reason codes under Data safety, Liquidity and costs, Price
+action, Market regime, Model evidence, and Risk controls. A high bullish score
+can therefore be shown beside the mandatory veto that produced `NO_TRADE`
+without changing the trading result.
+
+#### Event-To-Fill Latency
+
+`execution_latency_events` records one correlated trace from market-event
+receipt through fast decision, classical model, decision council, order plan,
+order-intent queue, broker acknowledgement and Alpaca `trade_updates` such as
+partial fill, fill, cancellation or rejection. Its writer uses a bounded
+background queue, so SQLite instrumentation is not added to the millisecond
+decision path. `/api/v1/performance/latency` reports stage p50, p95, p99 and
+maximum values. Use this reproducible non-trading check after interface work:
+
+```powershell
+.\.venv\Scripts\python.exe tools\benchmark_dashboard_fast_path.py --iterations 5000 --target-p95-ms 5
+```
+
+The benchmark compares the same in-memory fast engine with and without repeated
+read-only dashboard graph requests. It is a local regression check, not a claim
+about internet, exchange or broker latency. Fill timing can only be validated
+during an open paper session.
+
 #### Daily Native Desktop Workflow
 
 1. Double-click the Desktop shortcut. A second native instance for the same

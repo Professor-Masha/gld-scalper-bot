@@ -27,10 +27,10 @@ final class MemoryGraphWorkspace extends VBox {
     private final CheckBox training = filter("Training", true);
     private final CheckBox llm = filter("LLM reviews", true);
     private final Label summary = new Label("Loading persistent memory...");
-    private final Label nodeTitle = new Label("SELECT A MEMORY NODE");
-    private final Label nodeType = new Label("Click a colored node to inspect its evidence.");
-    private final TextArea inspector = new TextArea();
+    private final NodeInspector inspector = new NodeInspector();
     private final ListView<TimelineItem> timeline = new ListView<>();
+    private volatile String lastFingerprint = "";
+    private volatile GraphRenderPlan lastPlan;
 
     MemoryGraphWorkspace(GatewayClient gateway, Executor worker, Consumer<Throwable> errors) {
         super(12);
@@ -50,13 +50,7 @@ final class MemoryGraphWorkspace extends VBox {
         graphDeck.setMinWidth(0); graphDeck.setMinHeight(420); graphDeck.setPrefHeight(560);
         graph.bindSize(graphDeck.widthProperty(), graphDeck.heightProperty());
         graph.setSelectionListener(this::inspect);
-
-        nodeTitle.getStyleClass().add("memory-node-title");
-        nodeType.getStyleClass().add("memory-node-type"); nodeType.setWrapText(true);
-        inspector.setEditable(false); inspector.setWrapText(true); inspector.setPrefRowCount(22);
-        VBox details = new VBox(8, nodeTitle, nodeType, inspector); details.setPadding(new Insets(12));
-        details.getStyleClass().add("memory-inspector"); details.setMinWidth(250); details.setPrefWidth(350);
-        SplitPane split = new SplitPane(graphDeck, details); split.setMinWidth(0); split.setDividerPositions(0.68); split.setPrefHeight(590);
+        SplitPane split = new SplitPane(graphDeck, inspector); split.setMinWidth(0); split.setDividerPositions(0.68); split.setPrefHeight(590);
 
         timeline.setMinWidth(0); timeline.setPrefHeight(155);
         timeline.setCellFactory(view -> new ListCell<>() {
@@ -82,14 +76,16 @@ final class MemoryGraphWorkspace extends VBox {
         String selectedWindow = window.getValue() == null ? "30d" : window.getValue();
         worker.execute(() -> {
             try {
-                JsonNode payload = gateway.get("/api/v1/memory-graph?types=" + selectedTypes + "&window=" + selectedWindow);
-                Platform.runLater(() -> apply(payload));
+                JsonNode payload = gateway.get("/api/v1/memory-graph/summary?types=" + selectedTypes + "&window=" + selectedWindow);
+                String nextFingerprint = payload.path("topology_fingerprint").asText();
+                GraphRenderPlan plan = nextFingerprint.equals(lastFingerprint) ? null : GraphRenderPlan.build(payload, lastPlan);
+                Platform.runLater(() -> apply(payload, plan));
             } catch (Exception exception) { errors.accept(exception); }
         });
     }
 
-    private void apply(JsonNode payload) {
-        graph.setGraph(payload);
+    private void apply(JsonNode payload, GraphRenderPlan plan) {
+        if (plan != null) { graph.applyPlan(plan); lastFingerprint = plan.fingerprint(); lastPlan = plan; }
         JsonNode limits = payload.path("limits");
         JsonNode cache = payload.path("cache");
         summary.setText(String.format("%d NODES  //  %d CONNECTIONS  //  %d LINEAGE EVENTS  //  CACHE %s  //  RAW QUOTE SCAN: DISABLED",
@@ -100,17 +96,20 @@ final class MemoryGraphWorkspace extends VBox {
                 item.path("timestamp").asText("--"), item.path("type").asText("event"),
                 item.path("label").asText("memory event"), item.path("node_id").asText())));
         timeline.setItems(FXCollections.observableArrayList(items));
-        JsonNode current = null;
-        for (JsonNode node : payload.path("nodes")) if ("decision:current".equals(node.path("id").asText())) { current = node; break; }
-        if (current != null) { graph.selectNode("decision:current"); inspect(current); }
+        boolean hasCurrent = false;
+        for (JsonNode node : payload.path("nodes")) if ("decision:current".equals(node.path("id").asText())) { hasCurrent = true; break; }
+        if (hasCurrent) graph.selectNode("decision:current");
     }
 
-    private void inspect(JsonNode node) {
-        nodeTitle.setText(node.path("label").asText("MEMORY NODE"));
-        nodeType.setText(node.path("type").asText("unknown").toUpperCase() + "  //  " + node.path("status").asText("available").toUpperCase());
-        try { inspector.setText(node.path("details").toPrettyString()); }
-        catch (Exception exception) { inspector.setText(node.toString()); }
-        inspector.positionCaret(0);
+    private void inspect(String nodeId) {
+        inspector.loading(nodeId.replace(':', ' '));
+        worker.execute(() -> {
+            try {
+                String encoded = java.net.URLEncoder.encode(nodeId, java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20");
+                JsonNode detail = gateway.get("/api/v1/memory-graph/nodes/" + encoded);
+                Platform.runLater(() -> inspector.show(detail));
+            } catch (Exception exception) { errors.accept(exception); }
+        });
     }
 
     private String selectedTypes() {

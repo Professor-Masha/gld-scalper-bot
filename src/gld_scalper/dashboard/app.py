@@ -14,6 +14,7 @@ from typing import Any
 from fastapi import FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel, Field
 
 from ..config import PROJECT_ROOT, load_settings
@@ -33,6 +34,7 @@ from .catalog import TransformerCatalog
 from .job_results import JobResultRepository
 from .llm_providers import LLMProviderService
 from .memory_graph import GRAPH_TYPES, MemoryGraphRepository
+from .decision_explanation import explain_decision
 from .settings_store import EnvFileStore
 from .telemetry import TelemetryRepository
 from .whitepaper import WhitePaperRepository
@@ -90,6 +92,8 @@ class DashboardService:
 
     def snapshot(self) -> dict[str, Any]:
         snapshot = self._telemetry_snapshot()
+        if isinstance(snapshot.get("signal"), dict):
+            snapshot["signal"]["explanation"] = explain_decision(snapshot["signal"])
         snapshot["processes"] = self.processes.statuses()
         snapshot["control_plane"] = self.control_status(snapshot=snapshot)
         return snapshot
@@ -275,6 +279,7 @@ class DashboardService:
 
 def create_dashboard_app(project_root: Path = PROJECT_ROOT) -> FastAPI:
     app = FastAPI(title="Mashcorp GLD Command Center", docs_url=None, redoc_url=None)
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
     service = DashboardService(project_root)
     supplied_token = os.getenv("DASHBOARD_SESSION_TOKEN", "").strip()
     if supplied_token and len(supplied_token) < 32:
@@ -348,6 +353,9 @@ def create_dashboard_app(project_root: Path = PROJECT_ROOT) -> FastAPI:
     async def whitepaper(): return await asyncio.to_thread(service.whitepaper.payload)
     @app.get("/api/diagnostics")
     async def diagnostics(): return await asyncio.to_thread(service.telemetry.diagnostics)
+    @app.get("/api/v1/performance/latency")
+    async def v1_performance_latency(limit: int = 5000):
+        return await asyncio.to_thread(service.telemetry.latency_summary, limit)
     @app.get("/api/processes")
     async def processes(): return service.processes.statuses()
     @app.get("/api/logs/{name}")
@@ -388,6 +396,15 @@ def create_dashboard_app(project_root: Path = PROJECT_ROOT) -> FastAPI:
     @app.get("/api/v1/memory-graph")
     async def v1_memory_graph(types: str = "", window: str = "30d"):
         return await memory_graph(types=types, window=window)
+    @app.get("/api/v1/memory-graph/summary")
+    async def v1_memory_graph_summary(types: str = "", window: str = "30d"):
+        return await memory_graph(types=types, window=window)
+    @app.get("/api/v1/memory-graph/nodes/{node_id:path}")
+    async def v1_memory_graph_node(node_id: str):
+        try:
+            return await asyncio.to_thread(service.memory_graph.node_detail, node_id)
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
     @app.get("/api/v1/training/jobs")
     async def v1_training_jobs(): return [item for item in service.processes.statuses() if item.get("name") != "paper"]
     @app.get("/api/v1/audit/events")

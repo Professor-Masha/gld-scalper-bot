@@ -1,7 +1,7 @@
 package com.mashcorp.jarvis;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import javafx.animation.Animation;
+import javafx.animation.AnimationTimer;
 import javafx.animation.FadeTransition;
 import javafx.animation.RotateTransition;
 import javafx.animation.ScaleTransition;
@@ -19,10 +19,7 @@ import javafx.scene.shape.DrawMode;
 import javafx.scene.control.Tooltip;
 import javafx.scene.transform.Rotate;
 import javafx.util.Duration;
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.function.Consumer;
@@ -45,10 +42,20 @@ public final class DecisionCore3D {
     private final FadeTransition haloBreathe;
     private double dragX;
     private double dragY;
-    private Consumer<JsonNode> selectionListener = node -> {};
+    private Consumer<String> selectionListener = node -> {};
     private final Map<String, Sphere> renderedNodes = new HashMap<>();
-    private final Map<String, JsonNode> graphNodes = new HashMap<>();
-    private final List<Animation> graphAnimations = new ArrayList<>();
+    private final Map<String, Cylinder> renderedEdges = new HashMap<>();
+    private final Map<String, Boolean> activeEdges = new HashMap<>();
+    private String fingerprint = "";
+    private String selectedId;
+    private boolean reducedMotion;
+    private final AnimationTimer edgePulse = new AnimationTimer() {
+        @Override public void handle(long now) {
+            if (reducedMotion || scene.getScene() == null) return;
+            double opacity = 0.48 + 0.34 * Math.sin(now / 420_000_000.0);
+            activeEdges.forEach((id, active) -> { if (active && renderedEdges.containsKey(id)) renderedEdges.get(id).setOpacity(opacity); });
+        }
+    };
 
     public DecisionCore3D() {
         PhongMaterial core = new PhongMaterial(Color.web("#052e31"));
@@ -98,9 +105,10 @@ public final class DecisionCore3D {
         haloBreathe.setFromValue(0.08); haloBreathe.setToValue(0.28);
         haloBreathe.setAutoReverse(true); haloBreathe.setCycleCount(Animation.INDEFINITE); haloBreathe.play();
         scene.sceneProperty().addListener((observable, before, after) -> {
-            if (after == null) { spinA.pause(); spinB.pause(); spinC.pause(); }
-            else { spinA.play(); spinB.play(); spinC.play(); }
+            if (after == null) { spinA.pause(); spinB.pause(); spinC.pause(); edgePulse.stop(); }
+            else { if (!reducedMotion) { spinA.play(); spinB.play(); spinC.play(); edgePulse.start(); } }
         });
+        edgePulse.start();
     }
 
     public SubScene node() {
@@ -131,26 +139,20 @@ public final class DecisionCore3D {
         spinA.setRate(rate); spinB.setRate(rate); spinC.setRate(rate);
     }
 
-    public void setSelectionListener(Consumer<JsonNode> listener) {
+    public void setSelectionListener(Consumer<String> listener) {
         selectionListener = listener == null ? node -> {} : listener;
     }
 
-    /** Render a bounded backend memory graph. This method never reads SQLite or calls trading code. */
-    public void setGraph(JsonNode graph) {
-        if (graph == null || !graph.path("nodes").isArray()) return;
-        List<JsonNode> nodes = new ArrayList<>();
-        graph.path("nodes").forEach(item -> { if (nodes.size() < 180) nodes.add(item); });
-        Map<String, Integer> indexes = new LinkedHashMap<>();
-        for (int index = 0; index < nodes.size(); index++) indexes.put(nodes.get(index).path("id").asText(), index);
-        List<JsonNode> edges = new ArrayList<>();
-        graph.path("edges").forEach(item -> {
-            if (indexes.containsKey(item.path("source").asText()) && indexes.containsKey(item.path("target").asText())) edges.add(item);
-        });
-        Point3D[] positions = forceLayout(nodes, edges, indexes);
-        graphAnimations.forEach(Animation::stop);
-        graphAnimations.clear();
-        graphLayer.getChildren().clear(); renderedNodes.clear(); graphNodes.clear();
-        boolean hasMemory = !nodes.isEmpty();
+    public void setReducedMotion(boolean value) {
+        reducedMotion = value;
+        if (value) { spinA.pause(); spinB.pause(); spinC.pause(); haloPulse.pause(); haloBreathe.pause(); edgePulse.stop(); }
+        else if (scene.getScene() != null) { spinA.play(); spinB.play(); spinC.play(); edgePulse.start(); }
+    }
+
+    /** Apply a background-prepared plan by identity, preserving unchanged scene nodes. */
+    public void applyPlan(GraphRenderPlan plan) {
+        if (plan == null) return;
+        boolean hasMemory = !plan.nodes().isEmpty();
         if (hasMemory) {
             haloPulse.pause();
             haloBreathe.pause();
@@ -164,32 +166,32 @@ public final class DecisionCore3D {
         orbitA.setOpacity(hasMemory ? 0.0 : 1.0);
         orbitB.setOpacity(hasMemory ? 0.0 : 1.0);
         orbitC.setOpacity(hasMemory ? 0.0 : 1.0);
-        for (JsonNode edge : edges) {
-            Point3D source = positions[indexes.get(edge.path("source").asText())];
-            Point3D target = positions[indexes.get(edge.path("target").asText())];
-            Cylinder line = connection(source, target, edge.path("active").asBoolean(false));
-            graphLayer.getChildren().add(line);
-            if (edge.path("active").asBoolean(false)) {
-                FadeTransition pulse = new FadeTransition(Duration.seconds(1.15), line);
-                pulse.setFromValue(0.18); pulse.setToValue(0.92); pulse.setAutoReverse(true);
-                pulse.setCycleCount(Animation.INDEFINITE); pulse.play();
-                graphAnimations.add(pulse);
-            }
-        }
-        for (int index = 0; index < nodes.size(); index++) {
-            JsonNode data = nodes.get(index);
-            String id = data.path("id").asText();
-            double radius = Math.max(3.0, Math.min(12.0, data.path("size").asDouble(6.0)));
-            Sphere point = new Sphere(radius, 18);
-            PhongMaterial material = new PhongMaterial(safeColor(data.path("color").asText("#84939a")));
-            material.setSpecularColor(Color.WHITE); material.setSpecularPower(72);
-            point.setMaterial(material);
-            point.setTranslateX(positions[index].getX()); point.setTranslateY(positions[index].getY()); point.setTranslateZ(positions[index].getZ());
-            point.setOnMouseClicked(event -> { selectNode(id); event.consume(); });
-            Tooltip.install(point, new Tooltip(data.path("label").asText(id) + "\n" + data.path("type").asText("memory").toUpperCase()));
-            point.setUserData(id);
-            renderedNodes.put(id, point); graphNodes.put(id, data); graphLayer.getChildren().add(point);
-        }
+        renderedEdges.keySet().removeIf(id -> {
+            if (plan.edges().containsKey(id)) return false;
+            graphLayer.getChildren().remove(renderedEdges.get(id)); activeEdges.remove(id); return true;
+        });
+        renderedNodes.keySet().removeIf(id -> {
+            if (plan.nodes().containsKey(id)) return false;
+            graphLayer.getChildren().remove(renderedNodes.get(id)); return true;
+        });
+        plan.edges().forEach((id, edge) -> {
+            Point3D source = plan.nodes().get(edge.source()).position(), target = plan.nodes().get(edge.target()).position();
+            Cylinder line = renderedEdges.computeIfAbsent(id, ignored -> { Cylinder value = new Cylinder(); graphLayer.getChildren().add(0, value); return value; });
+            updateConnection(line, source, target, edge.active()); activeEdges.put(id, edge.active());
+        });
+        plan.nodes().forEach((id, data) -> {
+            Sphere point = renderedNodes.computeIfAbsent(id, ignored -> {
+                Sphere value = new Sphere(data.radius(), 14);
+                value.setOnMouseClicked(event -> { selectNode(id); event.consume(); }); value.setUserData(id);
+                graphLayer.getChildren().add(value); return value;
+            });
+            PhongMaterial material = new PhongMaterial(safeColor(data.color())); material.setSpecularColor(Color.WHITE); material.setSpecularPower(72);
+            point.setMaterial(material); point.setRadius(data.radius());
+            point.setTranslateX(data.position().getX()); point.setTranslateY(data.position().getY()); point.setTranslateZ(data.position().getZ());
+            Tooltip.install(point, new Tooltip(data.label() + "\n" + data.type().toUpperCase()));
+        });
+        if (selectedId != null && !plan.nodes().containsKey(selectedId)) selectedId = null;
+        fingerprint = plan.fingerprint();
     }
 
     public void selectNode(String id) {
@@ -198,63 +200,24 @@ public final class DecisionCore3D {
             sphere.setScaleX(scale); sphere.setScaleY(scale); sphere.setScaleZ(scale);
             sphere.setOpacity(key.equals(id) ? 1.0 : 0.82);
         });
-        JsonNode selected = graphNodes.get(id);
-        if (selected != null) selectionListener.accept(selected);
+        if (renderedNodes.containsKey(id) && !id.equals(selectedId)) {
+            selectedId = id;
+            selectionListener.accept(id);
+        }
     }
 
-    private static Point3D[] forceLayout(List<JsonNode> nodes, List<JsonNode> edges, Map<String, Integer> indexes) {
-        int count = nodes.size();
-        Point3D[] positions = new Point3D[count];
-        Random random = new Random(57L);
-        int center = -1;
-        for (int index = 0; index < count; index++) {
-            if ("decision:current".equals(nodes.get(index).path("id").asText())) center = index;
-            double angle = Math.PI * 2 * index / Math.max(count, 1);
-            double radius = 75 + (index % 5) * 28;
-            positions[index] = new Point3D(Math.cos(angle) * radius, Math.sin(angle) * radius * 0.58,
-                    -65 + random.nextDouble() * 130);
-        }
-        if (center >= 0) positions[center] = Point3D.ZERO;
-        for (int iteration = 0; iteration < 70; iteration++) {
-            Point3D[] forces = new Point3D[count];
-            for (int index = 0; index < count; index++) forces[index] = Point3D.ZERO;
-            for (int left = 0; left < count; left++) for (int right = left + 1; right < count; right++) {
-                Point3D delta = positions[left].subtract(positions[right]);
-                double distance = Math.max(delta.magnitude(), 8.0);
-                Point3D force = delta.normalize().multiply(1050.0 / (distance * distance));
-                forces[left] = forces[left].add(force); forces[right] = forces[right].subtract(force);
-            }
-            for (JsonNode edge : edges) {
-                Integer left = indexes.get(edge.path("source").asText()), right = indexes.get(edge.path("target").asText());
-                if (left == null || right == null) continue;
-                Point3D delta = positions[right].subtract(positions[left]);
-                double distance = Math.max(delta.magnitude(), 1.0);
-                double target = 58.0 + 8.0 / Math.max(edge.path("weight").asDouble(1.0), 0.2);
-                Point3D force = delta.normalize().multiply((distance - target) * 0.012);
-                forces[left] = forces[left].add(force); forces[right] = forces[right].subtract(force);
-            }
-            for (int index = 0; index < count; index++) {
-                if (index == center) continue;
-                Point3D gravity = positions[index].multiply(-0.0025);
-                Point3D next = positions[index].add(forces[index].add(gravity).multiply(0.72));
-                positions[index] = new Point3D(clamp(next.getX(), -235, 235), clamp(next.getY(), -135, 135), clamp(next.getZ(), -105, 105));
-            }
-        }
-        return positions;
-    }
-
-    private static Cylinder connection(Point3D source, Point3D target, boolean active) {
+    private static void updateConnection(Cylinder line, Point3D source, Point3D target, boolean active) {
         Point3D difference = target.subtract(source);
         double height = Math.max(difference.magnitude(), 0.1);
-        Cylinder line = new Cylinder(active ? 0.75 : 0.38, height, 8);
+        line.setRadius(active ? 0.75 : 0.38); line.setHeight(height);
         line.setMaterial(new PhongMaterial(active ? Color.web("#5cf2b5") : Color.web("#1d6070")));
         line.setOpacity(active ? 0.72 : 0.28);
         Point3D midpoint = source.midpoint(target);
         line.setTranslateX(midpoint.getX()); line.setTranslateY(midpoint.getY()); line.setTranslateZ(midpoint.getZ());
         Point3D axis = new Point3D(0, 1, 0).crossProduct(difference);
         double angle = Math.toDegrees(Math.acos(clamp(new Point3D(0, 1, 0).normalize().dotProduct(difference.normalize()), -1, 1)));
+        line.getTransforms().clear();
         if (axis.magnitude() > 1e-6) line.getTransforms().add(new Rotate(angle, axis));
-        return line;
     }
 
     private static Color safeColor(String value) {
