@@ -12,6 +12,7 @@ This package provides the local Python control gateway used by the native JavaFX
 - **AI Lab:** selectable Ollama or Kimi engines, generation-level diagnostics, and eight FinGPT-assisted research, RAG, council, labeling, advice, and candidate workflows. Large evidence payloads are compacted for the local 1B model. Recoverable Kimi quota/availability failures fall back to local Ollama for the current research job; the configured provider is not silently rewritten. The LLM has no broker authority.
 - **Volatility Lab:** a video-reference-inspired research workstation using local GLD one-minute bars. Interactive controls recalculate log-return volatility, empirical low/normal/high/extreme clusters, transition persistence, historical VaR and CVaR, horizon volatility, and a bounded position-size multiplier. A synchronized Three.js temporal network, regime timeline, return histogram, and transition matrix explain the result. Nothing is written into live risk settings.
 - **3D Core:** an Obsidian-style Three.js knowledge graph of real bot services and flows. Nodes represent the stream, feature engine, deterministic agents, classical ML, Transformer shadow runtime, decision council, risk, execution, Alpaca paper broker, SQLite, journal, outcomes, and offline LLM research. Status, pulse, color, and selected-node details are driven by telemetry.
+- **Memory Graph:** a native JavaFX, force-directed map built from bounded SQLite summaries and immutable model manifests. It connects the current decision to evidence, playbooks, candidates, champions, training runs, datasets, outcomes, LLM reviews, and safety state. Filters and inspectors are analytical only.
 - **White Paper:** an in-app reader for `docs/BOT_WHITE_PAPER.md`.
 - **Control Plane:** backend-derived health/readiness, API version, managed jobs, safety state, correlation IDs, and a tamper-evident operator-command ledger.
 - **Settings:** paper credentials and offline provider settings with secret masking.
@@ -21,6 +22,8 @@ This package provides the local Python control gateway used by the native JavaFX
 `DashboardService` validates actions. `ControlPlane` serializes typed commands and enforces idempotency and a local command-rate bound. `AuditLedger` writes redacted SHA-256-linked evidence. `contracts.py` owns API/event schemas and version identifiers. `ProcessManager` owns child jobs. `TelemetryRepository` performs read-only SQLite queries. `TransformerCatalog` supplies presets and complete archives. `PerformanceAnalytics` builds chart-ready summaries. `JobResultRepository` parses structured job output. `LLMProviderService` manages secret-safe provider selection and verifies actual text generation rather than treating a model-list response as proof of inference. `WhitePaperRepository` exposes the versioned local document. The native client is documented in `apps/desktop-ui/README.md`; fallback browser classes are documented in `static/js/README.md`.
 
 `TelemetryRepository.model_validation()` powers `/api/model-validation` and `/api/v1/models/validation`. It flattens immutable registry evidence for the JavaFX analytics view while retaining the complete structured payload for audit. The route is read-only and degrades to an empty collection when an older database has no model rows.
+
+`MemoryGraphRepository.graph()` powers `/api/memory-graph` and `/api/v1/memory-graph`. It opens SQLite with URI `mode=ro` plus `PRAGMA query_only=ON`, imposes a node ceiling, and reads only compact decision, registry, training, dataset, outcome, review, and safety tables. It never scans `quotes` or `market_trades`. Summaries are cached by database, filter set, and time window for at least 15 seconds, even while the live database file changes. Model-manifest discovery is separately bounded. A graph request therefore cannot promote a model, mutate a record, submit an order, or turn the 244-million-quote archive into an interactive query workload.
 
 The locally vendored Three.js HUD is visual only. Its low-power renderer pauses with a hidden tab and cannot affect signals, risk, or execution.
 
@@ -35,6 +38,7 @@ The locally vendored Three.js HUD is visual only. Its low-power renderer pauses 
 - `llm_providers.py`: defines Ollama/Kimi profiles, activation rules, small generation tests, and FinGPT source discovery without exposing provider secrets. A successful model-list request alone is not reported as a healthy LLM.
 - `whitepaper.py`: reads the versioned white paper for the local interface.
 - `telemetry.py`: opens SQLite separately in read-only/query-only mode and produces account, quote, episode, outcome, model, decision, safety, and equity views. Performance analytics groups malformed legacy bracket identifiers under `legacy_unclassified` instead of presenting them as playbooks.
+- `memory_graph.py`: builds the bounded learned-state graph, model lineage, node inspector payloads, time-filtered memory timeline, visual status encoding, and TTL cache without touching raw quote/trade archives.
 - `static/index.html`: operational views for market, performance, trades, intelligence, training, system diagnostics, and local settings.
 - `static/styles.css`: responsive cyan/green command-center visual system.
 - `static/app.js`: live WebSocket updates, native chart telemetry, research providers, forms, process controls, tables, settings, and terminal output.
@@ -55,6 +59,7 @@ The server binds only to `127.0.0.1`, `localhost`, or `::1`. State-changing requ
 7. Completion or rejection is recorded in the hash-chained audit ledger with its correlation ID.
 8. Paper execution continues through the existing bot; the dashboard only observes its database and process state.
 9. Stop sends `CTRL_BREAK_EVENT` on Windows so the bot can run its normal safety shutdown.
+10. Memory-graph requests run through an independent read-only repository. The JavaFX animation thread receives already-bounded JSON and never enters the bot's decision or order threads.
 
 JavaFX is the primary Windows presentation client. The browser/PWA is retained as a fallback and API-development harness. Both use the same stable gateway; neither duplicates or rewrites the Python execution engine. See `docs/architecture/JARVIS_CONTROL_PLANE.md`.
 

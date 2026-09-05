@@ -14,6 +14,7 @@ from gld_scalper.dashboard.analytics import PerformanceAnalytics
 from gld_scalper.dashboard.catalog import TransformerCatalog
 from gld_scalper.dashboard.job_results import JobResultRepository
 from gld_scalper.dashboard.llm_providers import LLMProviderService
+from gld_scalper.dashboard.memory_graph import MemoryGraphRepository
 from gld_scalper.dashboard.process_manager import ProcessManager
 from gld_scalper.dashboard.settings_store import EnvFileStore
 from gld_scalper.dashboard.telemetry import TelemetryRepository
@@ -134,6 +135,58 @@ def test_telemetry_exposes_model_validation_evidence(tmp_path: Path) -> None:
     assert payload["models"][0]["holdout_selective_accuracy"] == pytest.approx(0.61)
 
 
+def test_memory_graph_is_bounded_cached_and_read_only(tmp_path: Path) -> None:
+    settings = Settings(database_url=f"sqlite:///{tmp_path / 'memory.db'}")
+    database = Database(settings=settings)
+    database.init_db()
+    database.conn.execute(
+        """INSERT INTO model_versions(model_version,model_type,model_scope,created_at,
+               feature_columns_json,metrics_json,thresholds_json,status)
+           VALUES (?,?,?,?,?,?,?,?)""",
+        (
+            "memory-champion", "random_forest", "entry:minute:proper_breakout",
+            "2026-09-05T08:00:00+00:00", '["spread_pct","rsi_14"]',
+            '{"sample_count":1200,"expected_calibration_error":0.04}',
+            '{"minimum_confidence":0.62,"minimum_expected_edge":0.0002}', "champion",
+        ),
+    )
+    database.conn.execute(
+        """INSERT INTO signals(timestamp,symbol,decision,confidence,regime,reason,model_version,feature_snapshot_json)
+           VALUES (?,?,?,?,?,?,?,?)""",
+        (
+            "2026-09-05T09:00:00+00:00", "GLD", "LONG", 0.71, "bullish_trend",
+            "proper break with positive expected edge", "memory-champion",
+            '{"spread_pct":0.0002,"liquidity_score":0.84,"ml_expected_net_edge":0.0007}',
+        ),
+    )
+    database.conn.execute(
+        """INSERT INTO trade_outcomes(trade_id,symbol,direction,entry_time,exit_time,playbook,
+               model_version,net_pnl_after_costs,exit_reason,win_loss)
+           VALUES (?,?,?,?,?,?,?,?,?,?)""",
+        (
+            "trade-memory-1", "GLD", "LONG", "2026-09-05T09:00:01+00:00",
+            "2026-09-05T09:03:00+00:00", "proper_breakout", "memory-champion",
+            3.25, "trailing_profit_lock", "WIN",
+        ),
+    )
+    database.conn.commit()
+    database.close()
+    repository = MemoryGraphRepository(tmp_path, lambda: settings.database_path, ttl_seconds=60, maximum_nodes=80)
+
+    first = repository.graph(window="all")
+    settings.database_path.touch()
+    second = repository.graph(window="all")
+
+    node_ids = {node["id"] for node in first["nodes"]}
+    assert {"decision:current", "model:memory-champion", "trade:trade-memory-1"} <= node_ids
+    assert any(edge["relation"] == "advises" for edge in first["edges"])
+    assert first["read_only"] is True
+    assert first["raw_market_tables_queried"] is False
+    assert first["limits"]["nodes"] <= 80
+    assert first["cache"]["hit"] is False
+    assert second["cache"]["hit"] is True
+
+
 def test_dashboard_app_is_local_and_serves_expected_routes(tmp_path: Path) -> None:
     (tmp_path / ".env").write_text("", encoding="utf-8")
     app = create_dashboard_app(tmp_path)
@@ -144,6 +197,7 @@ def test_dashboard_app_is_local_and_serves_expected_routes(tmp_path: Path) -> No
     assert "/api/market-series" in paths
     assert "/api/analytics" in paths
     assert "/api/model-validation" in paths
+    assert "/api/memory-graph" in paths
     assert "/api/transformer/catalog" in paths
     assert "/api/llm/providers" in paths
     assert "/api/llm/providers/activate" in paths
@@ -156,6 +210,7 @@ def test_dashboard_app_is_local_and_serves_expected_routes(tmp_path: Path) -> No
     assert "/api/v1/system/status" in paths
     assert "/api/v1/training/jobs" in paths
     assert "/api/v1/models/validation" in paths
+    assert "/api/v1/memory-graph" in paths
     assert "/api/v1/audit/events" in paths
     assert "/api/v1/events" in paths
     assert len(app.state.dashboard_token) >= 32

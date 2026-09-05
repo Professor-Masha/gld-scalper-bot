@@ -122,7 +122,7 @@ public final class JarvisApplication extends Application {
         if (smokeDirectory != null && !smokeDirectory.isBlank()) {
             DesktopSmokeCheck.run(stage, java.nio.file.Path.of(smokeDirectory), () -> latestSnapshot != null, List.of(
                     this::showOverview, this::showOverview, this::showMarket, this::showPerformance,
-                    this::showTrading, this::showIntelligence, this::showTraining, this::showAiLab,
+                    this::showTrading, this::showIntelligence, this::showMemoryGraph, this::showTraining, this::showAiLab,
                     this::showWhitePaper, this::showControlPlane, this::showSettings, this::showOverview));
         }
         worker.scheduleWithFixedDelay(() -> Platform.runLater(() -> currentRefresh.run()), 10, 10, TimeUnit.SECONDS);
@@ -177,6 +177,7 @@ public final class JarvisApplication extends Application {
         addNav(nav, "PERFORMANCE", this::showPerformance);
         addNav(nav, "TRADING", this::showTrading);
         addNav(nav, "INTELLIGENCE", this::showIntelligence);
+        addNav(nav, "MEMORY GRAPH", this::showMemoryGraph);
         addNav(nav, "TRAINING", this::showTraining);
         addNav(nav, "AI LAB", this::showAiLab);
         addNav(nav, "WHITE PAPER", this::showWhitePaper);
@@ -217,6 +218,8 @@ public final class JarvisApplication extends Application {
         decision.setMinWidth(180);
         terminal.setEditable(false); terminal.setWrapText(false); terminal.setPrefRowCount(10);
         setWorkspace(page("SYSTEM OVERVIEW", telemetryBand, metrics, center, panel("LIVE OPERATIONS LOG", terminal)));
+        currentRefresh = this::refreshOverviewGraph;
+        refreshOverviewGraph();
     }
 
     private void showMarket() {
@@ -260,6 +263,21 @@ public final class JarvisApplication extends Application {
             } catch (Exception exc) { showError(exc); }
         });
         currentRefresh.run();
+    }
+
+    private void showMemoryGraph() {
+        MemoryGraphWorkspace memory = new MemoryGraphWorkspace(gateway, worker, this::showError);
+        setWorkspace(page("DECISION CORE MEMORY GRAPH", memory));
+        currentRefresh = memory::refresh;
+    }
+
+    private void refreshOverviewGraph() {
+        worker.execute(() -> {
+            try {
+                JsonNode graph = gateway.get("/api/v1/memory-graph?types=decision,market,model,playbook,risk&window=1d");
+                Platform.runLater(() -> core3D.setGraph(graph));
+            } catch (Exception exc) { showError(exc); }
+        });
     }
 
     private void showTraining() {

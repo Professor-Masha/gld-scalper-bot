@@ -32,6 +32,7 @@ from .analytics import PerformanceAnalytics
 from .catalog import TransformerCatalog
 from .job_results import JobResultRepository
 from .llm_providers import LLMProviderService
+from .memory_graph import GRAPH_TYPES, MemoryGraphRepository
 from .settings_store import EnvFileStore
 from .telemetry import TelemetryRepository
 from .whitepaper import WhitePaperRepository
@@ -77,6 +78,10 @@ class DashboardService:
         self.whitepaper = WhitePaperRepository(self.project_root)
         self.audit = AuditLedger(self.project_root / "logs" / "dashboard" / "control_plane_audit.jsonl")
         self.control_plane = ControlPlane(audit=self.audit, start=self.start, stop=self.stop)
+        self.memory_graph = MemoryGraphRepository(
+            self.project_root,
+            lambda: load_settings(self.project_root / ".env").database_path,
+        )
 
     @property
     def telemetry(self) -> TelemetryRepository:
@@ -308,6 +313,16 @@ def create_dashboard_app(project_root: Path = PROJECT_ROOT) -> FastAPI:
     async def models(): return await asyncio.to_thread(service.telemetry.models)
     @app.get("/api/model-validation")
     async def model_validation(): return await asyncio.to_thread(service.telemetry.model_validation)
+    @app.get("/api/memory-graph")
+    async def memory_graph(types: str = "", window: str = "30d"):
+        selected = {value.strip() for value in types.split(",") if value.strip()}
+        unknown = selected - GRAPH_TYPES
+        if unknown:
+            raise HTTPException(400, f"Unknown memory graph types: {', '.join(sorted(unknown))}")
+        try:
+            return await asyncio.to_thread(service.memory_graph.graph, types=selected or None, window=window)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
     @app.get("/api/equity")
     async def equity(): return await asyncio.to_thread(service.telemetry.equity_curve)
     @app.get("/api/market-series")
@@ -370,6 +385,9 @@ def create_dashboard_app(project_root: Path = PROJECT_ROOT) -> FastAPI:
     async def v1_models(): return await asyncio.to_thread(service.telemetry.models)
     @app.get("/api/v1/models/validation")
     async def v1_model_validation(): return await asyncio.to_thread(service.telemetry.model_validation)
+    @app.get("/api/v1/memory-graph")
+    async def v1_memory_graph(types: str = "", window: str = "30d"):
+        return await memory_graph(types=types, window=window)
     @app.get("/api/v1/training/jobs")
     async def v1_training_jobs(): return [item for item in service.processes.statuses() if item.get("name") != "paper"]
     @app.get("/api/v1/audit/events")

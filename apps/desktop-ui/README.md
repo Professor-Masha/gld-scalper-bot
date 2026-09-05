@@ -15,8 +15,9 @@ submit broker orders, or implement risk rules.
    `X-Dashboard-Token`, and consumes versioned `/api/v1/events` envelopes.
 5. `JarvisApplication` renders operations, market, performance, trading,
    intelligence, training, AI, control-plane, and settings workspaces.
-6. `DecisionCore3D` visualizes backend state with a hardware-accelerated JavaFX
-   `SubScene`. It is a display component and cannot influence a trade.
+6. `DecisionCore3D` visualizes backend state and the bounded memory graph with a
+   hardware-accelerated JavaFX `SubScene`. It is a display component and cannot
+   influence a trade.
 
 ## Files
 
@@ -27,7 +28,8 @@ submit broker orders, or implement risk rules.
 | `GatewayRuntime.java` | Secure lifecycle for the local Python gateway. |
 | `GatewayClient.java` | REST/WebSocket transport and authenticated commands. |
 | `JarvisApplication.java` | Native window, navigation, tables, charts, forms, and state projection. |
-| `DecisionCore3D.java` | Native 3D telemetry visualization. |
+| `DecisionCore3D.java` | Native 3D force layout, color/size encoding, live-evidence pulses, selection, drag, and zoom. It consumes bounded JSON and has no database or broker dependency. |
+| `MemoryGraphWorkspace.java` | Read-only graph filters, node inspector, cache status, and chronological training-lineage timeline. |
 | `HudBackdrop.java` | Lightweight canvas grid and corner registration marks behind the native command deck. |
 | `JobWorkspace.java` | Scope presets, artifact discovery/browsing, multi-candidate forms, typed starts/stops, and five-second job logs. |
 | `AnalyticsWorkspace.java` | Native line/pie/bar charts separating observed paper outcomes, simulated backtests, and model calibration/holdout/walk-forward evidence. |
@@ -83,6 +85,32 @@ Advanced browser volatility experiments and the original Three.js service
 graph remain in the fallback client; the native client does not claim feature
 parity for those research-only visuals. Its 3D core supports drag and zoom,
 pauses when detached, and changes color/speed with backend health.
+
+## Learned-State Memory Graph
+
+Open **Memory Graph** to inspect what the bot has recorded and which approved
+artifacts it can currently use. The JavaFX client requests
+`/api/v1/memory-graph`; it never reads SQLite itself. Models, trades, playbooks,
+datasets, training experiments, and LLM reviews can be filtered independently,
+with one-day through all-history windows. Current decision, market, and risk
+nodes remain present as orientation anchors.
+
+The force layout runs on bounded response data outside the trading process.
+Green marks approved champions and profitable outcomes, cyan marks current
+market/decision flow, blue marks datasets and training artifacts, purple marks
+Transformer models, yellow marks candidates or uncertain evidence, red marks
+losses/rejections/drift/safety faults, and gray marks archived or unavailable
+records. Node size represents evidence volume; brighter pulsing edges identify
+the current live path. Selecting a node fills the inspector with the exact
+manifest or outcome fields supplied by Python. Selecting a timeline event finds
+the corresponding graph node.
+
+This graph is an audit and interpretation surface. It visualizes model
+registries, manifests, outcomes, and labels; it is not the model's parameter
+memory itself. It exposes no mutation control, promotion action, risk override,
+or order method. Repeated refreshes stop prior edge animations before rendering
+new ones, and a graph-fetch failure remains a local workspace error rather than
+declaring the trading system degraded.
 
 ## Visual System
 

@@ -454,9 +454,10 @@ core are visual analysis only and cannot submit an Alpaca order.
 | Performance | Equity curve, after-cost P/L, win rate, holding time, and closed root outcomes. |
 | Trades | Auditable root trading episodes rather than duplicated partial-exit tranches. |
 | Intelligence | Conventional/Transformer model registry and recent decision history, refreshed every ten seconds. |
+| Memory Graph | Read-only Obsidian-style 3D map of current evidence, model lineage, datasets, playbooks, trades, training experiments, LLM reviews, and safety memory. Includes filters, node inspector, and a chronological lineage timeline. |
 | Training | Classical candidate, continual loop, Transformer dataset/candidate, and backtest controls. |
 | AI Lab | Select and generation-test Ollama or Kimi, preserve the saved model name, start offline reviews, and retrieve completed results. Additional FinGPT-assisted workflows are selectable in Training & Research Jobs. |
-| 3D Core | Hardware-accelerated JavaFX `SubScene` whose nucleus, orbital particles, color, and speed follow backend health. It visualizes state and has no decision authority. |
+| 3D Core | Hardware-accelerated JavaFX `SubScene` whose nucleus, force-directed learned-state nodes, orbital particles, color, and speed follow backend evidence. It visualizes state and has no decision authority. |
 | Backtest Lab | Run chronological simulations and inspect return, drawdown, win rate, profit factor, direction, and trade economics in charts. |
 | White Paper | Read the versioned technical, mathematical, risk, training, security, and governance specification in the application. |
 | Control Plane | Backend-derived state, health/readiness checks, managed-job information, and tamper-evident operator audit. Job-specific live logs and cancellation are in Training & Research Jobs. |
@@ -473,6 +474,37 @@ ownership and [`src/gld_scalper/dashboard/README.md`](src/gld_scalper/dashboard/
 for the backend security and process-lifecycle contract. The old static browser
 client remains tracked as a fallback and API-development harness; the Windows
 Desktop shortcut no longer launches it.
+
+#### Decision-Core Memory Graph
+
+The native **Memory Graph** answers operational questions such as: which model
+is approved, what training run produced it, which dataset supported that run,
+which playbook and prediction contributed to a trade, what outcome became its
+label, why a candidate was rejected, and whether the active champion is showing
+drift. Its center is the latest stored decision. Directed connections express
+relationships such as `informs`, `advises`, `can_veto`, `trained`, `produced`,
+`predicted`, `executed_as`, and `parent_of`.
+
+The visual encoding is consistent: green means approved/profitable evidence;
+cyan means current market or decision flow; blue means datasets/training
+artifacts; purple means Transformer models; yellow means candidates or
+uncertainty; red means losses, rejection, drift, or safety faults; and gray
+means archived/unavailable evidence. Node size reflects evidence volume and a
+pulsing edge marks the active decision path. Click a model to inspect its exact
+scope, playbook, parent, date range, samples, features, hyperparameters,
+calibration, thresholds, holdout/walk-forward/paper metrics, promotion reason,
+artifact path, and fingerprint. Click a trade to inspect its entry/exit,
+strategy, probabilities, expected costs/net edge, MFE, MAE, close reason, and
+resulting training label.
+
+This is a map of persisted evidence, not a writable model editor and not a
+claim that the model stores human-like memories. The API opens SQLite in strict
+read-only/query-only mode, caps graph size, bounds manifest discovery, and
+caches summaries. It never interactively queries raw `quotes` or
+`market_trades`, so the historical 244-million-quote archive cannot stall the
+interface. The native animation receives bounded JSON on a background worker;
+no force-layout or pulse work runs in the trading thread. There are no graph
+buttons for broker orders, risk changes, or model promotion.
 
 #### Daily Native Desktop Workflow
 
