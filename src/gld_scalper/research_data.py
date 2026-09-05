@@ -521,14 +521,24 @@ class ResearchDataScheduler:
 
 def news_response_to_records(response: Any) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    if hasattr(response, "df"):
-        df = response.df
+    data = getattr(response, "data", None)
+    if isinstance(data, dict):
+        return [_news_row_from_object(item) for item in data.values()]
+    if isinstance(data, list):
+        return [_news_row_from_object(item) for item in data]
+    try:
+        df = getattr(response, "df", None)
+    except (KeyError, ValueError):
+        # alpaca-py can raise while materializing an empty NewsSet dataframe
+        # because no `id` column exists. An empty page is a valid result.
+        return []
+    if df is not None:
         if getattr(df, "empty", True):
             return []
         for row in df.reset_index().to_dict(orient="records"):
             rows.append(_news_row_from_mapping(row))
         return rows
-    data = getattr(response, "data", response)
+    data = response if data is None else data
     if isinstance(data, dict):
         iterable = data.values()
     else:
