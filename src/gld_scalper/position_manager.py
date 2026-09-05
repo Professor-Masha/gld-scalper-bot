@@ -782,11 +782,32 @@ class DynamicPositionRuntime:
         status: str,
         details: dict[str, Any] | None = None,
     ) -> None:
+        with self._context_lock:
+            context = dict(self._context)
+        contextual_fields = (
+            "liquidity_score",
+            "trade_intensity",
+            "quote_imbalance",
+            "volatility_burst",
+            "spread_regime",
+            "quote_age_seconds",
+            "trade_age_seconds",
+            "session_phase",
+            "pattern",
+            "regime",
+        )
         event_details = {
-            "economic_breakeven_pct": episode.details.get("economic_breakeven_pct"),
+            "economic_breakeven_pct": self._economic_breakeven_pct(episode, self._spread_pct(mark)),
+            "expected_exit_cost_pct": max(self._spread_pct(mark), 0.0)
+            + self.settings.estimated_round_trip_slippage_pct
+            + self.settings.estimated_regulatory_fee_pct,
             "playbook": episode.details.get("playbook"),
             "strategy_path": episode.details.get("strategy_path"),
             "spread_pct": self._spread_pct(mark),
+            "take_profit_price": episode.take_profit_price,
+            "stop_distance_pct": abs(episode.entry_price - episode.current_stop_price) / max(episode.entry_price, 1e-12),
+            "holding_seconds": max((now - episode.entry_time).total_seconds(), 0.0),
+            **{field: context.get(field) for field in contextual_fields},
             **(details or {}),
         }
         database.insert_position_management_event(

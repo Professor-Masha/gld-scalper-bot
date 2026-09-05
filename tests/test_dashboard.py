@@ -108,6 +108,32 @@ def test_telemetry_reads_performance_without_writing(tmp_path: Path) -> None:
     assert snapshot["performance"]["win_rate"] == 1
 
 
+def test_telemetry_exposes_model_validation_evidence(tmp_path: Path) -> None:
+    settings = Settings(database_url=f"sqlite:///{tmp_path / 'validation.db'}")
+    database = Database(settings=settings)
+    database.init_db()
+    database.conn.execute(
+        """INSERT INTO model_versions(model_version,model_type,model_scope,created_at,metrics_json,status)
+           VALUES (?,?,?,?,?,?)""",
+        (
+            "candidate-test",
+            "random_forest",
+            "entry:minute:proper_breakout",
+            "2026-09-05T00:00:00+00:00",
+            '{"expected_calibration_error":0.04,"selective_accuracy":0.61,"net_return":0.02,"profit_factor":1.4}',
+            "candidate",
+        ),
+    )
+    database.conn.commit()
+    database.close()
+
+    payload = TelemetryRepository(settings.database_path).model_validation()
+
+    assert payload["summary"]["registered"] == 1
+    assert payload["models"][0]["holdout_ece"] == pytest.approx(0.04)
+    assert payload["models"][0]["holdout_selective_accuracy"] == pytest.approx(0.61)
+
+
 def test_dashboard_app_is_local_and_serves_expected_routes(tmp_path: Path) -> None:
     (tmp_path / ".env").write_text("", encoding="utf-8")
     app = create_dashboard_app(tmp_path)
@@ -117,6 +143,7 @@ def test_dashboard_app_is_local_and_serves_expected_routes(tmp_path: Path) -> No
     assert "/api/snapshot" in paths
     assert "/api/market-series" in paths
     assert "/api/analytics" in paths
+    assert "/api/model-validation" in paths
     assert "/api/transformer/catalog" in paths
     assert "/api/llm/providers" in paths
     assert "/api/llm/providers/activate" in paths
@@ -128,6 +155,7 @@ def test_dashboard_app_is_local_and_serves_expected_routes(tmp_path: Path) -> No
     assert "/api/v1/system/readiness" in paths
     assert "/api/v1/system/status" in paths
     assert "/api/v1/training/jobs" in paths
+    assert "/api/v1/models/validation" in paths
     assert "/api/v1/audit/events" in paths
     assert "/api/v1/events" in paths
     assert len(app.state.dashboard_token) >= 32

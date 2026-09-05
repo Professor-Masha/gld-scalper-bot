@@ -306,6 +306,8 @@ def create_dashboard_app(project_root: Path = PROJECT_ROOT) -> FastAPI:
     async def decisions(limit: int = 100): return await asyncio.to_thread(service.telemetry.decisions, limit)
     @app.get("/api/models")
     async def models(): return await asyncio.to_thread(service.telemetry.models)
+    @app.get("/api/model-validation")
+    async def model_validation(): return await asyncio.to_thread(service.telemetry.model_validation)
     @app.get("/api/equity")
     async def equity(): return await asyncio.to_thread(service.telemetry.equity_curve)
     @app.get("/api/market-series")
@@ -366,6 +368,8 @@ def create_dashboard_app(project_root: Path = PROJECT_ROOT) -> FastAPI:
         return values[0] if values else {}
     @app.get("/api/v1/models")
     async def v1_models(): return await asyncio.to_thread(service.telemetry.models)
+    @app.get("/api/v1/models/validation")
+    async def v1_model_validation(): return await asyncio.to_thread(service.telemetry.model_validation)
     @app.get("/api/v1/training/jobs")
     async def v1_training_jobs(): return [item for item in service.processes.statuses() if item.get("name") != "paper"]
     @app.get("/api/v1/audit/events")

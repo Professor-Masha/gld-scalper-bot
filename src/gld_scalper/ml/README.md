@@ -17,11 +17,15 @@ Return to the [project manual](../../../README.md).
 |---|---|
 | [`__init__.py`](../../../src/gld_scalper/ml/__init__.py) | Machine-learning helpers for controlled trade-quality filtering. |
 | [`archive_dataset.py`](../../../src/gld_scalper/ml/archive_dataset.py) | Python module exposing `ArchiveDatasetResult`, `build_archive_training_records`, `save_archive_training_artifact`, `load_archive_training_artifact`. |
+| [`calibration.py`](../../../src/gld_scalper/ml/calibration.py) | Leakage-resistant train/calibration/threshold/holdout partitions and natural-frequency multiclass calibration. |
 | [`continual_training.py`](../../../src/gld_scalper/ml/continual_training.py) | Repeatable experiment loop with fingerprints, resume state, and no-improvement stopping. |
 | [`dataset_builder.py`](../../../src/gld_scalper/ml/dataset_builder.py) | Builds cost-aware, causal training records and excludes execution-corrupted episodes. |
+| [`decision_policy.py`](../../../src/gld_scalper/ml/decision_policy.py) | Converts calibrated probabilities, expected returns, costs, and uncertainty into an abstaining expected-edge decision. |
 | [`drift.py`](../../../src/gld_scalper/ml/drift.py) | Python module exposing `generate_drift_report`. |
 | [`evaluator.py`](../../../src/gld_scalper/ml/evaluator.py) | Python module exposing `policy_predictions`, `optimize_policy_thresholds`, `classification_metrics`, `trading_metrics`. |
 | [`exit_trainer.py`](../../../src/gld_scalper/ml/exit_trainer.py) | Python module exposing `train_exit_candidate`. |
+| [`feature_selection.py`](../../../src/gld_scalper/ml/feature_selection.py) | Train-only coverage, variance, drift, correlation, and feature-count controls. |
+| [`holding_labels.py`](../../../src/gld_scalper/ml/holding_labels.py) | Triple-barrier entry labels and path-aware `HOLD`/`REDUCE`/`CLOSE` labels. |
 | [`model_registry.py`](../../../src/gld_scalper/ml/model_registry.py) | Python module exposing `ModelRegistry`, `candidate_beats_champion`. |
 | [`predictor.py`](../../../src/gld_scalper/ml/predictor.py) | Python module exposing `Predictor`. |
 | [`retraining_scheduler.py`](../../../src/gld_scalper/ml/retraining_scheduler.py) | After-hours retraining gate that requires enough trustworthy closed episodes. |
@@ -310,6 +314,39 @@ test proving a weak candidate cannot pass.
 3. Follow persistence through `database.py` and `schema.sql`; multi-row execution state must remain transactional.
 4. Follow behavioral evidence into the matching tests before changing a public interface.
 5. Run focused tests first, then the complete suite. Paper execution is the final verification stage, not the first.
+
+## Ten-Part Calibration And Holding Upgrade
+
+The current learning contract deliberately separates fitting, probability calibration, policy selection, and final testing. It applies the following ten controls to both classical and Transformer candidates:
+
+1. **Classical calibration:** the balanced random forest learns structure on the training partition; an unweighted multinomial calibrator learns natural class prevalence on a separate calibration partition.
+2. **Transformer calibration:** early stopping uses validation data, scalar temperature is fitted separately, a full multiclass logit map is fitted on calibration data, and entry policy thresholds are selected on another partition.
+3. **Expected-net-edge entry:** direction-specific random-forest regressors estimate gross return from the same selected feature profile. A directional class is accepted only when calibrated confidence and margin pass and predicted gross return exceeds spread, slippage, estimated fees, uncertainty, and the minimum edge.
+4. **Path-aware holding:** clean position-management observations become `HOLD`, `REDUCE`, or `CLOSE` labels using only prices after that observation and within its configured horizon.
+5. **Triple barriers:** entry labels use the first economically meaningful upper or lower barrier, with a time barrier for no trade. This avoids calling a temporarily successful breakout a loss solely because it reversed at the final timestamp.
+6. **Dedicated exits:** exit candidates are scoped by fast/minute strategy path and playbook. Their feature set includes position state, MFE, MAE, giveback, structure, liquidity, spread, freshness, and time remaining. A separate threshold partition selects the minimum confidence; low-confidence actions become `HOLD`. Exit candidates remain advisory until clean paper evidence permits promotion.
+7. **Economic breakeven:** holding events preserve entry and expected exit costs. Ordinary profit exits must clear round-trip spread, slippage, fees, and the safety buffer. Hard risk and session-flat rules remain authoritative even when a position is losing.
+8. **Transformer objective:** focal-style classification reduces domination by `NO_TRADE`; robust return loss, uncertainty likelihood, normalized cost loss, early stopping, clipping, and independent policy tuning improve stability.
+9. **Scoped models:** fast microstructure, minute, news, and each playbook remain independently versioned. A weak scope cannot borrow another scope's validation result.
+10. **Evaluation:** holdout and walk-forward reports preserve after-cost net return, profit factor, drawdown, Brier score, ECE, abstention rate, selective accuracy, directional coverage, and a deterministic bootstrap confidence interval.
+
+The partitions are chronological and purged by the longest label horizon. No partition is shuffled across time. Promotion now expects at least 200 clean trades, ECE no greater than `0.10`, meaningful selective accuracy and directional coverage, positive walk-forward evidence, and a positive lower confidence bound when that evidence is available. Older artifacts remain readable, but missing new evidence never fabricates a pass.
+
+### Decision Equation
+
+For action $a \in \{LONG, SHORT\}$, the runtime evaluates:
+
+$$
+Edge_a = E[R_a \mid X_t] - C_t - \lambda U_t
+$$
+
+where $E[R_a \mid X_t]$ is the calibrated expected gross return, $C_t$ is current spread plus estimated slippage and fees, $U_t$ is model uncertainty or calibration risk, and $\lambda$ is the uncertainty penalty. The model abstains unless:
+
+$$
+Edge_a > Edge_{min}, \quad P(a\mid X_t) \ge P_{min}, \quad P(a\mid X_t)-P(a_2\mid X_t) \ge M_{min}
+$$
+
+The model is evidence, not broker authority. Freshness, liquidity, risk, reconciliation, session, and circuit-breaker blocks can always veto it.
 
 ## Data And Security
 

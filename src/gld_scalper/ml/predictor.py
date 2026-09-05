@@ -8,6 +8,7 @@ from typing import Any
 from ..database import Database
 from ..models import MLPrediction
 from .dataset_builder import _flatten_features
+from .decision_policy import expected_edge_decision
 from .model_registry import ModelRegistry
 from .scopes import model_scope_from_features, scope_fallbacks
 
@@ -78,6 +79,9 @@ class Predictor:
             "ml_probability_short": prediction.probability_short,
             "ml_probability_no_trade": prediction.probability_no_trade,
             "ml_expected_return": prediction.expected_return,
+            "ml_expected_cost": prediction.expected_cost,
+            "ml_uncertainty": prediction.uncertainty,
+            "ml_expected_net_edge": prediction.expected_net_edge,
             "ml_confidence": prediction.confidence,
             "ml_rejection_reason": prediction.rejection_reason,
             "ml_rejects_trade": prediction.rejects_trade,
@@ -120,31 +124,60 @@ class Predictor:
         probability_short = float(probability_by_class.get("short_good", 0.0))
         probability_no_trade = float(probability_by_class.get("no_trade", 0.0))
         confidence = max(probability_long, probability_short, probability_no_trade)
-        ordered = sorted((probability_long, probability_short, probability_no_trade), reverse=True)
-        margin = ordered[0] - ordered[1]
         abstention = self._payload.get("abstention") or {}
         minimum_confidence = float(abstention.get("minimum_confidence", self.database.settings.ml_min_confidence))
         minimum_margin = float(abstention.get("minimum_margin", self.database.settings.ml_min_probability_margin))
-        if predicted == "no_trade":
-            rejection_reasons.append("model prefers no-trade")
-        elif confidence < minimum_confidence:
-            predicted = "no_trade"
-            rejection_reasons.append(f"model confidence {confidence:.3f} below {minimum_confidence:.3f}")
-        elif margin < minimum_margin:
-            predicted = "no_trade"
-            rejection_reasons.append(f"model probability margin {margin:.3f} below {minimum_margin:.3f}")
-        expected_by_class = self._payload.get("expected_return_by_class") or {}
-        expected_return = (
-            probability_long * float(expected_by_class.get("long_good", 0.0) or 0.0)
-            + probability_short * float(expected_by_class.get("short_good", 0.0) or 0.0)
+        expected_by_class = (
+            self._payload.get("expected_gross_return_by_class")
+            or self._payload.get("expected_return_by_class")
+            or {}
         )
+        return_models = self._payload.get("return_models") or {}
+        if return_models:
+            expected_by_class = {
+                label: float(return_models[label].predict(row)[0])
+                for label in ("long_good", "short_good")
+                if label in return_models
+            }
+        expected_cost = max(
+            float(flat.get("spread_pct", 0.0) or 0.0),
+            float(flat.get("execution_spread_pct", 0.0) or 0.0),
+        ) + max(float(flat.get("expected_slippage_pct", 0.0) or 0.0), 0.0) + max(
+            float(flat.get("estimated_fee_pct", 0.0) or 0.0), 0.0
+        )
+        calibration = self._payload.get("calibration") or {}
+        uncertainty = max(float(calibration.get("expected_calibration_error", 0.0) or 0.0) * 0.001, 0.0)
+        edge = expected_edge_decision(
+            probabilities={
+                "long_good": probability_long,
+                "short_good": probability_short,
+                "no_trade": probability_no_trade,
+            },
+            expected_returns=expected_by_class,
+            expected_cost=expected_cost,
+            uncertainty=uncertainty,
+            minimum_edge=(
+                float(abstention.get("minimum_expected_edge", 0.0001) or 0.0001)
+                if expected_by_class else -1.0
+            ),
+            minimum_confidence=minimum_confidence,
+            minimum_margin=minimum_margin,
+        )
+        predicted = {"LONG": "long_good", "SHORT": "short_good"}.get(edge.action, "no_trade")
+        if not edge.accepted:
+            rejection_reasons.append(edge.reason)
         return MLPrediction(
             self._model_version,
             predicted,
             probability_long,
             probability_short,
             probability_no_trade,
-            expected_return=expected_return,
+            # Keep the public field backward compatible: it has historically
+            # represented the return available after the observed spread.
+            expected_return=edge.expected_net_edge,
+            expected_cost=edge.expected_cost,
+            uncertainty=edge.uncertainty_penalty,
+            expected_net_edge=edge.expected_net_edge,
             confidence=confidence,
             rejection_reason="; ".join(dict.fromkeys(rejection_reasons)) if rejection_reasons else None,
         )
@@ -219,6 +252,9 @@ class Predictor:
                 continue
             expected_model_state = str(payload.get("model_state_fingerprint") or "")
             if expected_model_state and _model_state_fingerprint(payload["model"]) != expected_model_state:
+                continue
+            expected_return_state = str(payload.get("return_model_state_fingerprint") or "")
+            if expected_return_state and _model_state_fingerprint(payload.get("return_models") or {}) != expected_return_state:
                 continue
             role = "champion" if candidate.get("status") == "champion" else "paper_shadow"
             version = str(candidate["model_version"])

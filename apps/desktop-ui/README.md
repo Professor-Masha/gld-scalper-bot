@@ -30,7 +30,9 @@ submit broker orders, or implement risk rules.
 | `DecisionCore3D.java` | Native 3D telemetry visualization. |
 | `HudBackdrop.java` | Lightweight canvas grid and corner registration marks behind the native command deck. |
 | `JobWorkspace.java` | Scope presets, artifact discovery/browsing, multi-candidate forms, typed starts/stops, and five-second job logs. |
-| `AnalyticsWorkspace.java` | Native line/pie/bar charts separating observed paper outcomes from simulated backtest metrics. |
+| `AnalyticsWorkspace.java` | Native line/pie/bar charts separating observed paper outcomes, simulated backtests, and model calibration/holdout/walk-forward evidence. |
+
+The **Model validation** analytics mode reads `/api/v1/models/validation`. It compares model scopes using after-cost holdout and walk-forward return, selective accuracy, expected calibration error, abstention, trade count, profit factor, and bootstrap return intervals. It is read-only and cannot promote a model.
 | `DesktopSmokeCheck.java` | Explicit opt-in, read-only visual checks; captures each view and exits without firing controls. |
 | `GatewayClientTest.java` | Loopback contract tests with a fake HTTP server, never Alpaca. |
 | `jarvis.css` | Restrained black/cyan/green command-center visual system. |

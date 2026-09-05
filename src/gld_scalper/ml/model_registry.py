@@ -327,6 +327,18 @@ class ModelRegistry:
                 f"calibration error above {self.settings.promotion_max_calibration_error}",
             ),
             (
+                "selective_accuracy" not in metrics or _metric(metrics, "selective_accuracy", 0.0) >= 0.48,
+                "accepted-trade selective accuracy below 0.48",
+            ),
+            (
+                "directional_coverage" not in metrics or _metric(metrics, "directional_coverage", 0.0) >= 0.03,
+                "directional opportunity coverage below 0.03",
+            ),
+            (
+                "average_return_ci_low" not in metrics or _metric(metrics, "average_return_ci_low", -1.0) > 0.0,
+                "95% bootstrap lower bound for after-cost expectancy is not positive",
+            ),
+            (
                 _metric(metrics, "inference_latency_ms", float("inf")) <= self.settings.ml_max_inference_latency_ms,
                 f"inference latency above {self.settings.ml_max_inference_latency_ms} ms",
             ),

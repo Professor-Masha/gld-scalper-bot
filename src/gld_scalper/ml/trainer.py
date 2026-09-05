@@ -13,8 +13,10 @@ from ..config import PROJECT_ROOT, Settings
 from ..database import Database
 from ..utils.time_utils import utc_now
 from .archive_dataset import load_archive_training_artifact
+from .calibration import NaturalFrequencyCalibrator, chronological_partitions, fit_natural_frequency_calibrator
 from .dataset_builder import build_training_records, label_quality
 from .evaluator import CLASSES, classification_metrics, optimize_policy_thresholds, policy_predictions, trading_metrics
+from .feature_selection import select_stable_features
 from .model_registry import ModelRegistry
 from .scopes import model_scope_from_context
 from .walk_forward import run_walk_forward_validation, save_walk_forward_experiment
@@ -86,17 +88,19 @@ def train_candidate_model(
     if not labels_ok:
         raise RuntimeError(f"Cannot train candidate model: {label_reason}.")
 
-    train_records, test_records = _purged_holdout_split(
-        records,
-        test_fraction=settings.ml_validation_fraction,
-        purge_minutes=settings.ml_purge_minutes,
-    )
+    partitions = _partition_training_records(records, purge_minutes=settings.ml_purge_minutes)
+    train_records = partitions["train"]
+    calibration_records = partitions["calibration"]
+    threshold_records = partitions["threshold"]
+    test_records = partitions["holdout"]
     labels_ok, label_reason = label_quality([record["label"] for record in train_records])
     if not labels_ok or not test_records:
         raise RuntimeError(f"Cannot create chronological validation split: {label_reason}.")
     selected = _train_latency_aware_candidate_models(
         settings,
         train_records,
+        calibration_records,
+        threshold_records,
         test_records,
         experiment_context=experiment_context,
     )
@@ -159,10 +163,12 @@ def train_candidate_model(
     thresholds = {
         "minimum_confidence": selected["minimum_confidence"],
         "minimum_margin": selected["minimum_margin"],
+        "minimum_expected_edge": selected["threshold_metrics"].get("minimum_expected_edge", 0.0001),
         "max_missing_fraction": settings.ml_max_missing_feature_fraction,
         "max_outlier_fraction": settings.ml_max_outlier_feature_fraction,
     }
     model_state_fingerprint = _model_state_fingerprint(selected["model"])
+    return_model_state_fingerprint = _model_state_fingerprint(selected.get("return_models") or {})
     artifact_fingerprint = _artifact_fingerprint(
         model_scope=model_scope,
         feature_columns=selected["feature_columns"],
@@ -174,15 +180,21 @@ def train_candidate_model(
         data_end=records[-1]["timestamp"],
     )
     payload = {
-        "format_version": 3,
+        "format_version": 4,
         "model": selected["model"],
         "model_scope": model_scope,
         "artifact_fingerprint": artifact_fingerprint,
         "model_state_fingerprint": model_state_fingerprint,
+        "return_model_state_fingerprint": return_model_state_fingerprint,
         "feature_columns": selected["feature_columns"],
         "feature_profile": selected["feature_profile"],
         "feature_statistics": selected["feature_statistics"],
         "expected_return_by_class": _expected_return_by_class(train_records),
+        "expected_gross_return_by_class": _expected_gross_return_by_class(train_records),
+        "return_models": selected.get("return_models") or {},
+        "calibration": selected["calibration_metrics"],
+        "feature_selection": selected["feature_selection"],
+        "data_partitions": {name: len(items) for name, items in partitions.items()},
         "abstention": thresholds,
         "metrics": metrics,
         "holdout_metrics": holdout_metrics,
@@ -229,6 +241,8 @@ def train_candidate_model(
         "samples": len(records),
         "train_samples": len(train_records),
         "validation_samples": len(test_records),
+        "calibration_samples": len(calibration_records),
+        "threshold_samples": len(threshold_records),
         "features": len(selected["feature_columns"]),
         "class_counts": dict(Counter(labels)),
         "metrics": metrics,
@@ -246,6 +260,9 @@ def train_candidate_model(
             "tuning_metrics": selected["threshold_metrics"],
         },
         "model_parameters": model_parameters,
+        "calibration": selected["calibration_metrics"],
+        "feature_selection": selected["feature_selection"],
+        "data_partitions": {name: len(items) for name, items in partitions.items()},
         "experiment_context": experiment_context or {},
     }
     manifest_dir = model_dir / "manifests"
@@ -269,6 +286,8 @@ def _dump_model(payload: dict[str, Any], path: Path) -> None:
 def _train_latency_aware_candidate_models(
     settings: Settings,
     train_records: list[dict[str, Any]],
+    calibration_records: list[dict[str, Any]],
+    threshold_records: list[dict[str, Any]],
     test_records: list[dict[str, Any]],
     *,
     experiment_context: dict[str, Any] | None = None,
@@ -286,9 +305,9 @@ def _train_latency_aware_candidate_models(
     fast_columns = [column for column in all_columns if any(term in column.lower() for term in FAST_FEATURE_TERMS)]
     model_scope = model_scope_from_context(experiment_context)
     if model_scope == "entry:fast_microstructure" and len(fast_columns) >= 5:
-        profiles = [("fast", fast_columns)]
+        profiles = [("fast", fast_columns, 96)]
     else:
-        profiles = [("context", all_columns)]
+        profiles = [("context", all_columns, 128)]
     search_round = max(0, int((experiment_context or {}).get("search_round", 0) or 0))
     random_seed = 7 + search_round * 101
     logistic_c_values = [0.05, 0.10, 0.25, 0.50, 1.0, 2.0, 5.0, 10.0]
@@ -331,27 +350,43 @@ def _train_latency_aware_candidate_models(
     ]
     trained: list[dict[str, Any]] = []
     last_error: Exception | None = None
-    for profile_name, columns in profiles:
+    for profile_name, raw_columns, maximum_features in profiles:
+        columns, feature_selection = select_stable_features(
+            train_records,
+            raw_columns,
+            maximum_features=maximum_features,
+            maximum_missing_fraction=settings.ml_max_missing_feature_fraction,
+        )
+        if len(columns) < 5:
+            continue
         matrix_test = _matrix(test_records, columns)
         y_test = [record["label"] for record in test_records]
         outcomes_test = [record["outcome"] for record in test_records]
         for model_name, factory in factories:
             try:
-                tuning_size = max(25, int(len(train_records) * 0.15))
-                model_records = train_records[:-tuning_size]
-                tuning_records = train_records[-tuning_size:]
                 fit_started = time.perf_counter()
-                model = _fit_with_time_calibration(factory(), model_records, columns)
+                model, calibration_metrics = _fit_with_time_calibration(
+                    factory(), train_records, calibration_records, columns
+                )
+                return_models = _fit_return_models(train_records, columns, random_seed=random_seed)
                 fit_seconds = time.perf_counter() - fit_started
                 tuning_probabilities = _probabilities_in_class_order(
-                    model.predict_proba(_matrix(tuning_records, columns)),
+                    model.predict_proba(_matrix(threshold_records, columns)),
                     list(model.classes_),
+                )
+                gross_returns = _expected_gross_return_by_class(train_records)
+                tuning_expected_returns = _predict_expected_returns(
+                    return_models,
+                    _matrix(threshold_records, columns),
+                    fallback=gross_returns,
                 )
                 threshold_metrics = optimize_policy_thresholds(
                     tuning_probabilities,
-                    [record["outcome"] for record in tuning_records],
+                    [record["outcome"] for record in threshold_records],
                     classes=CLASSES,
-                    minimum_trades=max(10, int(len(tuning_records) * 0.01)),
+                    minimum_trades=max(10, int(len(threshold_records) * 0.01)),
+                    expected_returns=tuning_expected_returns,
+                    expected_costs=[float(record["outcome"].get("spread_cost", 0.0) or 0.0) for record in threshold_records],
                 )
                 predict_started = time.perf_counter()
                 probabilities = model.predict_proba(matrix_test)
@@ -362,6 +397,12 @@ def _train_latency_aware_candidate_models(
                     classes=CLASSES,
                     minimum_confidence=float(threshold_metrics["minimum_confidence"]),
                     minimum_margin=float(threshold_metrics["minimum_margin"]),
+                )
+                predictions = _edge_filter_predictions(
+                    predictions,
+                    _predict_expected_returns(return_models, matrix_test, fallback=gross_returns),
+                    [record["outcome"] for record in test_records],
+                    float(threshold_metrics.get("minimum_expected_edge", 0.0) or 0.0),
                 )
                 metrics = classification_metrics(y_test, predictions, probability_rows, CLASSES)
                 metrics.update(trading_metrics(predictions, outcomes_test))
@@ -379,6 +420,10 @@ def _train_latency_aware_candidate_models(
                         "minimum_confidence": threshold_metrics["minimum_confidence"],
                         "minimum_margin": threshold_metrics["minimum_margin"],
                         "threshold_metrics": threshold_metrics,
+                        "calibration_metrics": calibration_metrics,
+                        "feature_selection": feature_selection,
+                        "expected_gross_return_by_class": gross_returns,
+                        "return_models": return_models,
                     }
                 )
             except Exception as exc:
@@ -393,8 +438,10 @@ def _train_latency_aware_candidate_models(
             "metrics": item["metrics"],
             "minimum_confidence": item["minimum_confidence"],
             "minimum_margin": item["minimum_margin"],
-                "threshold_metrics": item["threshold_metrics"],
-                "model_parameters": _model_parameters(item["model"].base_model),
+            "threshold_metrics": item["threshold_metrics"],
+            "calibration_metrics": item["calibration_metrics"],
+            "feature_selection": item["feature_selection"],
+            "model_parameters": _model_parameters(item["model"].base_model),
         }
         for item in sorted(trained, key=lambda item: item["metrics"]["selection_score"], reverse=True)
     ]
@@ -412,27 +459,26 @@ def _model_parameters(model: Any) -> dict[str, Any]:
     return result
 
 
-def _fit_with_time_calibration(base_model: Any, records: list[dict[str, Any]], columns: list[str]) -> ProbabilityCalibratedModel:
-    calibration_size = max(1, int(len(records) * 0.15))
-    fit_records = records[:-calibration_size]
-    calibration_records = records[-calibration_size:]
-    if len(set(record["label"] for record in fit_records)) < 2:
-        fit_records = records
-        calibration_records = []
+def _fit_with_time_calibration(
+    base_model: Any,
+    fit_records: list[dict[str, Any]],
+    calibration_records: list[dict[str, Any]],
+    columns: list[str],
+) -> tuple[ProbabilityCalibratedModel, dict[str, Any]]:
     balanced_fit_records = _balanced_training_records(fit_records)
     base_model.fit(_matrix(balanced_fit_records, columns), [record["label"] for record in balanced_fit_records])
-    calibrator = None
+    calibrator: NaturalFrequencyCalibrator | None = None
+    metrics: dict[str, Any] = {"method": "identity", "samples": 0.0}
     if calibration_records and len(set(record["label"] for record in calibration_records)) >= 2:
-        from sklearn.linear_model import LogisticRegression
-
         raw = _align_probabilities(
             base_model.predict_proba(_matrix(calibration_records, columns)),
             list(base_model.classes_),
             CLASSES,
         )
-        calibrator = LogisticRegression(max_iter=500, class_weight="balanced", random_state=19)
-        calibrator.fit(raw, [record["label"] for record in calibration_records])
-    return ProbabilityCalibratedModel(base_model, calibrator, CLASSES)
+        calibrator, metrics = fit_natural_frequency_calibrator(
+            raw, [record["label"] for record in calibration_records], CLASSES
+        )
+    return ProbabilityCalibratedModel(base_model, calibrator, CLASSES), metrics
 
 
 def _balanced_training_records(records: list[dict[str, Any]], *, majority_ratio: int = 2) -> list[dict[str, Any]]:
@@ -476,6 +522,16 @@ def _evaluate_subset(selected: dict[str, Any], records: list[dict[str, Any]]) ->
         classes=CLASSES,
         minimum_confidence=float(selected["minimum_confidence"]),
         minimum_margin=float(selected["minimum_margin"]),
+    )
+    predictions = _edge_filter_predictions(
+        predictions,
+        _predict_expected_returns(
+            selected.get("return_models") or {},
+            _matrix(records, selected["feature_columns"]),
+            fallback=selected.get("expected_gross_return_by_class") or {},
+        ),
+        [record["outcome"] for record in records],
+        float(selected.get("threshold_metrics", {}).get("minimum_expected_edge", 0.0) or 0.0),
     )
     metrics = classification_metrics([record["label"] for record in records], predictions, probabilities, CLASSES)
     metrics.update(trading_metrics(predictions, [record["outcome"] for record in records]))
@@ -575,6 +631,96 @@ def _expected_return_by_class(records: list[dict[str, Any]]) -> dict[str, float]
         else:
             values[label].append(0.0)
     return {label: sum(items) / max(len(items), 1) for label, items in values.items()}
+
+
+def _expected_gross_return_by_class(records: list[dict[str, Any]]) -> dict[str, float]:
+    net = _expected_return_by_class(records)
+    costs = [float(record["outcome"].get("spread_cost", 0.0) or 0.0) for record in records]
+    average_cost = sum(costs) / max(len(costs), 1)
+    return {
+        "long_good": max(0.0, net.get("long_good", 0.0) + average_cost),
+        "short_good": max(0.0, net.get("short_good", 0.0) + average_cost),
+        "no_trade": 0.0,
+    }
+
+
+def _edge_filter_predictions(
+    predictions: Sequence[str],
+    expected_gross_returns: dict[str, float] | list[dict[str, float]],
+    outcomes: Sequence[dict[str, Any]],
+    minimum_edge: float,
+) -> list[str]:
+    filtered: list[str] = []
+    expected_rows = (
+        expected_gross_returns
+        if isinstance(expected_gross_returns, list)
+        else [expected_gross_returns] * len(predictions)
+    )
+    for prediction, outcome, expected in zip(predictions, outcomes, expected_rows):
+        cost = float(outcome.get("spread_cost", 0.0) or 0.0)
+        edge = float(expected.get(prediction, 0.0) or 0.0) - cost
+        filtered.append(prediction if prediction != "no_trade" and edge > minimum_edge else "no_trade")
+    return filtered
+
+
+def _fit_return_models(
+    records: list[dict[str, Any]], columns: list[str], *, random_seed: int
+) -> dict[str, Any]:
+    """Fit direction-specific gross-return regressors on the fit partition only."""
+
+    from sklearn.ensemble import RandomForestRegressor
+
+    matrix = _matrix(records, columns)
+    raw_returns = [float(record["outcome"].get("raw_forward_return", 0.0) or 0.0) for record in records]
+    result: dict[str, Any] = {}
+    for label, sign, offset in (("long_good", 1.0, 1), ("short_good", -1.0, 2)):
+        regressor = RandomForestRegressor(
+            n_estimators=80,
+            max_depth=6,
+            min_samples_leaf=8,
+            random_state=random_seed + offset,
+            n_jobs=1,
+        )
+        regressor.fit(matrix, [sign * value for value in raw_returns])
+        result[label] = regressor
+    return result
+
+
+def _predict_expected_returns(
+    models: dict[str, Any], matrix: list[list[float]], *, fallback: dict[str, float]
+) -> list[dict[str, float]]:
+    if not matrix:
+        return []
+    values: dict[str, list[float]] = {}
+    for label in ("long_good", "short_good"):
+        model = models.get(label)
+        values[label] = (
+            [float(value) for value in model.predict(matrix)]
+            if model is not None
+            else [float(fallback.get(label, 0.0) or 0.0)] * len(matrix)
+        )
+    return [
+        {"long_good": values["long_good"][index], "short_good": values["short_good"][index]}
+        for index in range(len(matrix))
+    ]
+
+
+def _partition_training_records(
+    records: list[dict[str, Any]], *, purge_minutes: int
+) -> dict[str, list[dict[str, Any]]]:
+    timestamps = [record["timestamp"].timestamp() for record in records]
+    minimum = max(10, min(25, len(records) // 8))
+    split = chronological_partitions(
+        timestamps,
+        purge_seconds=max(0, purge_minutes) * 60,
+        minimum_partition_size=minimum,
+    )
+    return {
+        "train": [records[index] for index in split.train],
+        "calibration": [records[index] for index in split.calibration],
+        "threshold": [records[index] for index in split.threshold],
+        "holdout": [records[index] for index in split.holdout],
+    }
 
 
 def _selection_score(metrics: dict[str, Any], settings: Settings) -> float:

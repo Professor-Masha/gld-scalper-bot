@@ -39,6 +39,9 @@ class MLPrediction:
     probability_short: float
     probability_no_trade: float
     expected_return: float = 0.0
+    expected_cost: float = 0.0
+    uncertainty: float = 0.0
+    expected_net_edge: float = 0.0
     confidence: float = 0.0
     rejection_reason: str | None = None
 

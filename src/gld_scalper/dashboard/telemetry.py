@@ -78,6 +78,47 @@ class TelemetryRepository:
         return self._query("""SELECT model_version,model_type,model_scope,status,created_at,training_start,
             training_end,feature_profile,metrics_json,rejection_reason FROM model_versions ORDER BY created_at DESC LIMIT 100""")
 
+    def model_validation(self) -> dict[str, Any]:
+        """Expose comparable calibration, selectivity and return evidence."""
+
+        rows = self.models()
+        models: list[dict[str, Any]] = []
+        for row in rows:
+            metrics = row.get("metrics_json") if isinstance(row.get("metrics_json"), dict) else {}
+            holdout = metrics.get("holdout") if isinstance(metrics.get("holdout"), dict) else metrics
+            walk_forward = metrics.get("walk_forward") if isinstance(metrics.get("walk_forward"), dict) else {}
+            aggregate = walk_forward.get("aggregate") if isinstance(walk_forward.get("aggregate"), dict) else {}
+            models.append({
+                "model_version": row.get("model_version"),
+                "model_type": row.get("model_type"),
+                "model_scope": row.get("model_scope"),
+                "status": row.get("status"),
+                "created_at": row.get("created_at"),
+                "feature_profile": row.get("feature_profile"),
+                "holdout_ece": _metric(holdout, "expected_calibration_error"),
+                "holdout_selective_accuracy": _metric(holdout, "selective_accuracy"),
+                "holdout_abstention_rate": _metric(holdout, "abstention_rate"),
+                "holdout_trade_count": _metric(holdout, "trade_count"),
+                "holdout_profit_factor": _metric(holdout, "profit_factor"),
+                "holdout_net_return": _metric(holdout, "net_return"),
+                "holdout_return_ci_low": _metric(holdout, "average_return_ci_low"),
+                "holdout_return_ci_high": _metric(holdout, "average_return_ci_high"),
+                "walk_forward_profit_factor": _metric(aggregate, "profit_factor"),
+                "walk_forward_net_return": _metric(aggregate, "net_return"),
+                "walk_forward_completed": _metric(metrics, "walk_forward_completed"),
+                "rejection_reason": row.get("rejection_reason"),
+            })
+        champions = [item for item in models if item.get("status") == "champion"]
+        return {
+            "models": models,
+            "summary": {
+                "registered": len(models),
+                "champions": len(champions),
+                "scopes": len({str(item.get("model_scope")) for item in models}),
+                "calibrated_models": sum(item.get("holdout_ece") is not None for item in models),
+            },
+        }
+
     def orders(self, limit: int = 100) -> list[dict[str, Any]]:
         return self._query("""SELECT id,alpaca_order_id AS order_id,client_order_id,parent_order_id,
             symbol,side,qty,order_type,status,limit_price AS submitted_price,filled_avg_price,
@@ -147,3 +188,11 @@ def _row(row: sqlite3.Row) -> dict[str,Any]:
             try: result[key]=json.loads(value)
             except json.JSONDecodeError: pass
     return result
+
+
+def _metric(values: dict[str, Any], key: str) -> float | None:
+    try:
+        value = values.get(key)
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None

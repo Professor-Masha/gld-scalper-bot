@@ -322,3 +322,6 @@ Tracked code and promoted model memory may be committed. Raw market data, accoun
 ---
 
 Copyright (c) Mashcorp. GLD Scalper Bot is a Mashcorp project.
+# Calibrated learning coverage
+
+`test_calibrated_learning.py` verifies the leakage-resistant chronological partitions, natural-frequency probability calibration, expected-net-edge gate, train-only feature selection, triple-barrier entry labels, and path-aware holding labels. These tests are intentionally small and deterministic so they can run before every model or dashboard release.

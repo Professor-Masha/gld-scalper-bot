@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import random
 from collections import Counter
 from typing import Any, Sequence
 
@@ -39,40 +40,58 @@ def optimize_policy_thresholds(
     *,
     classes: Sequence[str] = CLASSES,
     minimum_trades: int = 25,
+    expected_returns: Sequence[dict[str, float]] | None = None,
+    expected_costs: Sequence[float] | None = None,
+    uncertainties: Sequence[float] | None = None,
+    minimum_edge_values: Sequence[float] = (0.0, 0.00005, 0.0001, 0.0002),
 ) -> dict[str, float]:
     best: dict[str, float] | None = None
     confidence_values = [0.40, 0.46, 0.52, 0.58, 0.64, 0.70]
     margin_values = [0.00, 0.04, 0.08, 0.12, 0.16]
     for confidence in confidence_values:
         for margin in margin_values:
-            predictions = policy_predictions(
-                probabilities,
-                classes=classes,
-                minimum_confidence=confidence,
-                minimum_margin=margin,
-            )
-            metrics = trading_metrics(predictions, outcomes)
-            trade_count = int(metrics["trade_count"])
-            if trade_count < minimum_trades:
-                continue
-            score = (
-                float(metrics["average_pnl_per_trade"]) * 100.0
-                + min(float(metrics["profit_factor"]), 3.0) * 0.08
-                + float(metrics["win_rate"]) * 0.05
-                - float(metrics["max_drawdown"]) * 0.50
-            )
-            candidate = {
-                "minimum_confidence": confidence,
-                "minimum_margin": margin,
-                "threshold_score": score,
-                **metrics,
-            }
-            if best is None or candidate["threshold_score"] > best["threshold_score"]:
-                best = candidate
+            for minimum_edge in minimum_edge_values:
+                if expected_returns is None:
+                    minimum_edge = 0.0
+                predictions = policy_predictions(
+                    probabilities,
+                    classes=classes,
+                    minimum_confidence=confidence,
+                    minimum_margin=margin,
+                )
+                if expected_returns is not None:
+                    predictions = _apply_expected_edge(
+                        predictions,
+                        expected_returns,
+                        expected_costs or [0.0] * len(predictions),
+                        uncertainties or [0.0] * len(predictions),
+                        minimum_edge,
+                    )
+                metrics = trading_metrics(predictions, outcomes)
+                trade_count = int(metrics["trade_count"])
+                if trade_count >= minimum_trades:
+                    score = (
+                        float(metrics["average_pnl_per_trade"]) * 100.0
+                        + min(float(metrics["profit_factor"]), 3.0) * 0.08
+                        + float(metrics["win_rate"]) * 0.05
+                        - float(metrics["max_drawdown"]) * 0.50
+                    )
+                    candidate = {
+                        "minimum_confidence": confidence,
+                        "minimum_margin": margin,
+                        "minimum_expected_edge": minimum_edge,
+                        "threshold_score": score,
+                        **metrics,
+                    }
+                    if best is None or candidate["threshold_score"] > best["threshold_score"]:
+                        best = candidate
+                if expected_returns is None:
+                    break
     if best is None:
         return {
             "minimum_confidence": 0.70,
             "minimum_margin": 0.16,
+            "minimum_expected_edge": 0.0001,
             "threshold_score": -1.0,
             "trade_count": 0.0,
         }
@@ -123,12 +142,45 @@ def classification_metrics(
     metrics["balanced_accuracy"] = sum(recalls) / len(recalls)
     metrics["macro_f1"] = sum(f1_scores) / len(f1_scores)
     metrics["no_trade_accuracy"] = metrics.get("no_trade_recall", 0.0)
-    if probabilities:
+    if probabilities is not None and len(probabilities) > 0:
         probability_metrics = _probability_metrics(y_true, probabilities, classes)
         metrics.update(probability_metrics)
+        metrics.update(selective_classification_metrics(y_true, y_pred, probabilities, classes))
     else:
         metrics.update({"log_loss": 0.0, "brier_score": 0.0, "expected_calibration_error": 0.0})
     return metrics
+
+
+def selective_classification_metrics(
+    y_true: Sequence[str],
+    y_pred: Sequence[str],
+    probabilities: Sequence[Sequence[float]],
+    classes: Sequence[str] = CLASSES,
+) -> dict[str, float]:
+    """Measure reliability among accepted directional predictions, not headline accuracy."""
+
+    accepted = [index for index, value in enumerate(y_pred) if value != "no_trade"]
+    correct = sum(y_true[index] == y_pred[index] for index in accepted)
+    directional_actual = {"long_good", "short_good"}
+    directional_total = sum(value in directional_actual for value in y_true)
+    covered_directional = sum(y_true[index] in directional_actual for index in accepted)
+    result = {
+        "abstention_rate": 1.0 - len(accepted) / max(len(y_pred), 1),
+        "selective_accuracy": correct / max(len(accepted), 1),
+        "directional_coverage": covered_directional / max(directional_total, 1),
+        "accepted_prediction_count": float(len(accepted)),
+    }
+    try:
+        from sklearn.metrics import average_precision_score
+
+        for label in ("long_good", "short_good"):
+            class_index = list(classes).index(label)
+            targets = [1 if actual == label else 0 for actual in y_true]
+            scores = [float(row[class_index]) for row in probabilities]
+            result[f"{label.replace('_good', '')}_pr_auc"] = float(average_precision_score(targets, scores))
+    except (ImportError, ValueError):
+        result.update({"long_pr_auc": 0.0, "short_pr_auc": 0.0})
+    return result
 
 
 def trading_metrics(
@@ -157,6 +209,7 @@ def trading_metrics(
     wins = sum(value > 0 for value in traded)
     losses_count = sum(value < 0 for value in traded)
     profit_factor = gains / losses if losses > 0 else (999.0 if gains > 0 else 0.0)
+    confidence = bootstrap_return_confidence_interval(traded)
     return {
         "trade_count": float(trade_count),
         "trade_label_count": float(trade_count),
@@ -171,7 +224,40 @@ def trading_metrics(
         "average_pnl_per_trade": sum(traded) / max(trade_count, 1),
         "max_drawdown": max_drawdown,
         "trade_coverage": trade_count / max(len(predictions), 1),
+        **confidence,
     }
+
+
+def bootstrap_return_confidence_interval(
+    returns: Sequence[float], *, samples: int = 500, confidence: float = 0.95, seed: int = 73
+) -> dict[str, float]:
+    """Deterministic bootstrap interval for mean after-cost return."""
+
+    values = [float(value) for value in returns]
+    if len(values) < 2:
+        point = values[0] if values else 0.0
+        return {"average_return_ci_low": point, "average_return_ci_high": point}
+    generator = random.Random(seed)
+    means = sorted(sum(generator.choice(values) for _ in values) / len(values) for _ in range(samples))
+    tail = (1.0 - confidence) / 2.0
+    low = means[max(0, int(samples * tail))]
+    high = means[min(samples - 1, int(samples * (1.0 - tail)))]
+    return {"average_return_ci_low": low, "average_return_ci_high": high}
+
+
+def _apply_expected_edge(
+    predictions: Sequence[str],
+    expected_returns: Sequence[dict[str, float]],
+    expected_costs: Sequence[float],
+    uncertainties: Sequence[float],
+    minimum_edge: float,
+) -> list[str]:
+    result: list[str] = []
+    for prediction, returns, cost, uncertainty in zip(predictions, expected_returns, expected_costs, uncertainties):
+        key = "long_good" if prediction == "long_good" else "short_good"
+        edge = float(returns.get(key, 0.0) or 0.0) - max(float(cost or 0.0), 0.0) - max(float(uncertainty or 0.0), 0.0)
+        result.append(prediction if prediction != "no_trade" and edge > minimum_edge else "no_trade")
+    return result
 
 
 def validation_trade_metrics(

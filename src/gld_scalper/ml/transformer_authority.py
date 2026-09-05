@@ -163,7 +163,11 @@ def _advice(
     expected_cost = max(0.0, float(prediction.expected_cost or 0.0))
     uncertainty = 1.0 if prediction.uncertainty is None else float(prediction.uncertainty)
     directional_return = expected_return if action == "LONG" else -expected_return if action == "SHORT" else 0.0
-    edge = directional_return - expected_cost
+    edge = (
+        float(prediction.expected_net_edge)
+        if prediction.expected_net_edge is not None
+        else directional_return - expected_cost
+    )
     blocks = _hard_blocks(features)
     if prediction.status in {"unavailable", "no_model", "stale", "error"}:
         blocks.append(prediction.reason or prediction.status)

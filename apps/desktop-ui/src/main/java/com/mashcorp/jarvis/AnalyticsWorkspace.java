@@ -20,7 +20,7 @@ final class AnalyticsWorkspace extends VBox {
 
     AnalyticsWorkspace(GatewayClient gateway, Executor worker, Consumer<Throwable> errors) {
         super(14); this.gateway = gateway; this.worker = worker; this.errors = errors;
-        mode.getItems().addAll("Paper outcomes (latest 5,000)", "Latest backtest"); mode.getSelectionModel().selectFirst();
+        mode.getItems().addAll("Paper outcomes (latest 5,000)", "Latest backtest", "Model validation"); mode.getSelectionModel().selectFirst();
         Button refresh = new Button("REFRESH"); refresh.setOnAction(event -> refresh()); mode.setOnAction(event -> refresh());
         evidence.setEditable(false); evidence.setPrefRowCount(8);
         TitledPane details = new TitledPane("Structured evidence", evidence); details.setExpanded(false);
@@ -28,15 +28,17 @@ final class AnalyticsWorkspace extends VBox {
     }
 
     private void refresh() {
-        boolean backtest = mode.getSelectionModel().getSelectedIndex() == 1;
+        int selectedMode = mode.getSelectionModel().getSelectedIndex();
+        boolean backtest = selectedMode == 1;
+        boolean validation = selectedMode == 2;
         worker.execute(() -> {
             try {
-                JsonNode data = gateway.get(backtest ? "/api/results/backtest" : "/api/analytics");
-                JsonNode equity = backtest ? null : gateway.get("/api/equity");
+                JsonNode data = gateway.get(backtest ? "/api/results/backtest" : validation ? "/api/v1/models/validation" : "/api/analytics");
+                JsonNode equity = backtest || validation ? null : gateway.get("/api/equity");
                 Platform.runLater(() -> {
-                    if (backtest != (mode.getSelectionModel().getSelectedIndex() == 1)) return;
+                    if (selectedMode != mode.getSelectionModel().getSelectedIndex()) return;
                     metrics.getChildren().clear(); plots.getChildren().clear(); evidence.setText(data.toPrettyString());
-                    if (backtest) renderBacktest(data.path("result")); else renderPaper(data, equity);
+                    if (backtest) renderBacktest(data.path("result")); else if (validation) renderValidation(data); else renderPaper(data, equity);
                 });
             } catch (Exception exc) { errors.accept(exc); }
         });
@@ -66,6 +68,19 @@ final class AnalyticsWorkspace extends VBox {
         nodes.addObject().put("label", "Long").put("value", data.path("long_net_pnl").asDouble());
         nodes.addObject().put("label", "Short").put("value", data.path("short_net_pnl").asDouble());
         plots.getChildren().add(bars("Simulated direction P/L (USD)", nodes, "label", "value"));
+    }
+
+    private void renderValidation(JsonNode data) {
+        JsonNode summary = data.path("summary");
+        metric("Registered models", summary.path("registered").asText("0"));
+        metric("Approved champions", summary.path("champions").asText("0"));
+        metric("Independent scopes", summary.path("scopes").asText("0"));
+        metric("With calibration evidence", summary.path("calibrated_models").asText("0"));
+        JsonNode models = data.path("models");
+        plots.getChildren().add(bars("Holdout after-cost net return", models, "model_scope", "holdout_net_return"));
+        plots.getChildren().add(bars("Holdout selective accuracy", models, "model_scope", "holdout_selective_accuracy"));
+        plots.getChildren().add(bars("Holdout calibration error", models, "model_scope", "holdout_ece"));
+        plots.getChildren().add(bars("Walk-forward after-cost net return", models, "model_scope", "walk_forward_net_return"));
     }
 
     private void metric(String title, String value) {

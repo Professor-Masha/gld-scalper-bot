@@ -37,6 +37,7 @@ class TransformerShadowPrediction:
     class_probabilities: dict[str, float] = field(default_factory=dict)
     expected_returns: dict[int, float] = field(default_factory=dict)
     expected_cost: float | None = None
+    expected_net_edge: float | None = None
     uncertainty: float | None = None
     inference_latency_ms: float | None = None
     cache_age_seconds: float | None = None
@@ -52,6 +53,7 @@ class TransformerShadowPrediction:
             f"{prefix}_prediction": self.predicted_direction,
             f"{prefix}_uncertainty": self.uncertainty,
             f"{prefix}_expected_cost": self.expected_cost,
+            f"{prefix}_expected_net_edge": self.expected_net_edge,
             f"{prefix}_inference_latency_ms": self.inference_latency_ms,
             f"{prefix}_cache_age_seconds": self.cache_age_seconds,
             f"{prefix}_shadow_only": 1.0 if self.authority_mode == "shadow" else 0.0,
@@ -180,6 +182,7 @@ class AsyncTransformerShadowRuntime:
                 class_probabilities=dict(cached.class_probabilities),
                 expected_returns=dict(cached.expected_returns),
                 expected_cost=cached.expected_cost,
+                expected_net_edge=cached.expected_net_edge,
                 uncertainty=cached.uncertainty,
                 inference_latency_ms=cached.inference_latency_ms,
                 cache_age_seconds=age,
@@ -291,6 +294,17 @@ class AsyncTransformerShadowRuntime:
         entropy = -sum(value * math.log(max(value, 1e-12)) for value in probabilities) / math.log(max(len(probabilities), 2))
         return_values = returns[0].cpu().numpy()
         variance_values = np.exp(log_variance[0].cpu().numpy())
+        horizon = 1 if request.scope == "fast_microstructure" else 5
+        horizon_index = list(HORIZONS_MINUTES).index(horizon)
+        direction = 1.0 if predicted == "long_good" else -1.0 if predicted == "short_good" else 0.0
+        expected_net_edge = (
+            direction * float(return_values[horizon_index])
+            - float(cost.reshape(-1)[0].cpu())
+            - float(abstention.get("uncertainty_multiplier", 0.0) or 0.0)
+            * float(np.sqrt(variance_values[horizon_index]))
+        )
+        if expected_net_edge <= float(abstention.get("minimum_expected_edge", 0.0) or 0.0):
+            predicted = "no_trade" if "no_trade" in classes else "hold"
         uncertainty = max(float(entropy), min(1.0, float(np.sqrt(variance_values).mean()) / 0.01))
         prediction = TransformerShadowPrediction(
             scope=request.scope,
@@ -301,6 +315,7 @@ class AsyncTransformerShadowRuntime:
             class_probabilities=class_probabilities,
             expected_returns={horizon: float(return_values[index]) for index, horizon in enumerate(HORIZONS_MINUTES)},
             expected_cost=float(cost.reshape(-1)[0].cpu()),
+            expected_net_edge=expected_net_edge,
             uncertainty=uncertainty,
             inference_latency_ms=latency_ms,
             cache_age_seconds=0.0,
@@ -325,6 +340,7 @@ class AsyncTransformerShadowRuntime:
                 "expected_return_5m": prediction.expected_returns[5],
                 "expected_return_15m": prediction.expected_returns[15],
                 "expected_cost": prediction.expected_cost,
+                "expected_net_edge": prediction.expected_net_edge,
                 "uncertainty": prediction.uncertainty,
                 "inference_latency_ms": latency_ms,
                 "cache_age_seconds": 0.0,

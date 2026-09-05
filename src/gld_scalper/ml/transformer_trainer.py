@@ -18,6 +18,8 @@ from ..config import PROJECT_ROOT, Settings
 from ..database import Database
 from ..utils.time_utils import ensure_utc
 from .model_registry import ModelRegistry
+from .calibration import probability_scores
+from .evaluator import bootstrap_return_confidence_interval
 from .transformer_dataset import (
     LoadedSequenceArtifact,
     load_transformer_sequence_artifact,
@@ -153,7 +155,7 @@ def train_transformer_candidate(
     if len(set(np.asarray(artifact.labels).tolist())) < 2:
         raise RuntimeError("Transformer training labels need at least two classes.")
 
-    train_positions, validation_positions, test_positions = _chronological_split(artifact)
+    train_positions, validation_positions, calibration_positions, threshold_positions, test_positions = _chronological_split(artifact)
     mean, std = _feature_scaler(artifact, train_positions)
     config = TransformerModelConfig(
         feature_count=int(artifact.manifest["feature_count"]),
@@ -185,7 +187,9 @@ def train_transformer_candidate(
     )
     temperature = _fit_temperature(model, artifact, validation_positions, mean, std, options.batch_size)
     model.set_temperature(temperature)
-    holdout = _evaluate_model(model, artifact, test_positions, mean, std, options)
+    calibration = _fit_logit_calibration(model, artifact, calibration_positions, mean, std, options.batch_size)
+    policy = _optimize_transformer_policy(model, artifact, threshold_positions, mean, std, options)
+    holdout = _evaluate_model(model, artifact, test_positions, mean, std, options, policy=policy)
     baseline = _evaluate_recorded_baseline(artifact, test_positions, options)
     baseline_gate = _baseline_comparison(holdout, baseline)
     walk_forward = _walk_forward_validation(artifact, config, options)
@@ -204,6 +208,8 @@ def train_transformer_candidate(
             "mean": mean.tolist(),
             "std": std.tolist(),
             "temperature": temperature,
+            "calibration": calibration,
+            "policy": policy,
             "feature_columns": artifact.manifest["feature_columns"],
             "classes": artifact.manifest["classes"],
             "dataset_fingerprint": artifact.manifest["fingerprint"],
@@ -257,9 +263,16 @@ def train_transformer_candidate(
         "mean": mean.tolist(),
         "std": std.tolist(),
         "temperature": temperature,
+        "calibration": calibration,
         "abstention": {
-            "minimum_confidence": options.minimum_confidence,
-            "minimum_margin": options.minimum_margin,
+            **policy,
+        },
+        "data_partitions": {
+            "train": len(train_positions),
+            "validation": len(validation_positions),
+            "calibration": len(calibration_positions),
+            "threshold": len(threshold_positions),
+            "holdout": len(test_positions),
         },
         "dataset_path": str(Path(artifact_path).resolve()),
         "dataset_fingerprint": artifact.manifest["fingerprint"],
@@ -335,7 +348,7 @@ def _load_compatible_warm_start(
             return {"loaded": False, "reason": "parent feature profile or architecture differs"}
         torch = require_torch()
         checkpoint = torch.load(manifest["checkpoint_path"], map_location="cpu", weights_only=False)
-        model.load_state_dict(checkpoint["model_state_dict"], strict=True)
+        model.load_state_dict(checkpoint["model_state_dict"], strict=False)
         return {
             "loaded": True,
             "parent_model_version": manifest.get("model_version"),
@@ -345,23 +358,33 @@ def _load_compatible_warm_start(
         return {"loaded": False, "reason": f"warm start rejected: {exc}"}
 
 
-def _chronological_split(artifact: LoadedSequenceArtifact) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _chronological_split(
+    artifact: LoadedSequenceArtifact,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     count = len(artifact.sample_end_indices)
-    train_end = max(1, int(count * 0.70))
-    validation_end = max(train_end + 1, int(count * 0.85))
+    train_end = max(1, int(count * 0.60))
+    validation_end = max(train_end + 1, int(count * 0.70))
+    calibration_end = max(validation_end + 1, int(count * 0.80))
+    threshold_end = max(calibration_end + 1, int(count * 0.90))
     positions = np.arange(count, dtype=np.int64)
     timestamps = artifact.timestamps[artifact.sample_end_indices]
     purge = max(HORIZONS_MINUTES) * 60
     train = positions[:train_end]
-    validation = positions[train_end:validation_end]
-    test = positions[validation_end:]
-    if len(validation):
-        validation = validation[timestamps[validation] > timestamps[train[-1]] + purge]
-    if len(test) and len(validation):
-        test = test[timestamps[test] > timestamps[validation[-1]] + purge]
-    if min(len(train), len(validation), len(test)) < 30:
-        raise RuntimeError("Chronological train/calibration/holdout split needs at least 30 samples in each partition after purge.")
-    return train, validation, test
+    partitions = [
+        train,
+        positions[train_end:validation_end],
+        positions[validation_end:calibration_end],
+        positions[calibration_end:threshold_end],
+        positions[threshold_end:],
+    ]
+    for index in range(1, len(partitions)):
+        previous = partitions[index - 1]
+        current = partitions[index]
+        if len(previous) and len(current):
+            partitions[index] = current[timestamps[current] > timestamps[previous[-1]] + purge]
+    if min(map(len, partitions)) < 20:
+        raise RuntimeError("Chronological train/validation/calibration/threshold/holdout split needs 20 samples per partition after purge.")
+    return tuple(partitions)  # type: ignore[return-value]
 
 
 def _feature_scaler(artifact: LoadedSequenceArtifact, sample_positions: Sequence[int]) -> tuple[np.ndarray, np.ndarray]:
@@ -457,16 +480,24 @@ def _batch_loss(model, batch, class_weights):
     torch = require_torch()
     values, missing, valid, session, labels, target_returns, target_cost, _ = batch
     logits, expected_returns, expected_cost, log_variance = model(values, missing, valid, session)
-    classification = torch.nn.functional.cross_entropy(logits, labels, weight=class_weights)
+    cross_entropy = torch.nn.functional.cross_entropy(logits, labels, weight=class_weights, reduction="none")
+    true_probability = torch.softmax(logits, dim=-1).gather(1, labels.unsqueeze(1)).squeeze(1)
+    classification = (((1.0 - true_probability) ** 1.5) * cross_entropy).mean()
     finite = torch.isfinite(target_returns)
     if finite.any():
         squared = (expected_returns - torch.nan_to_num(target_returns, nan=0.0)) ** 2
+        # The head represents log variance in return units. Gaussian NLL keeps
+        # its uncertainty on the same percentage scale used by the edge gate.
         nll = 0.5 * (torch.exp(-log_variance) * squared + log_variance)
         return_loss = nll.masked_select(finite).mean()
     else:
         return_loss = classification.new_tensor(0.0)
-    cost_loss = torch.nn.functional.smooth_l1_loss(expected_cost.squeeze(-1), target_cost.clamp_min(0.0))
-    return classification + 0.50 * return_loss + 0.20 * cost_loss
+    cost_scale = target_cost.detach().median().clamp_min(1e-5)
+    cost_loss = torch.nn.functional.smooth_l1_loss(
+        expected_cost.squeeze(-1) / cost_scale,
+        target_cost.clamp_min(0.0) / cost_scale,
+    )
+    return classification + 0.35 * return_loss + 0.15 * cost_loss
 
 
 def _loader_loss(model, loader, class_weights) -> float:
@@ -495,6 +526,90 @@ def _fit_temperature(
     return float(candidates[int(np.argmin(losses))])
 
 
+def _fit_logit_calibration(model, artifact, positions, mean, std, batch_size) -> dict[str, Any]:
+    """Fit unweighted multiclass logit calibration on natural market prevalence."""
+
+    torch = require_torch()
+    logits, labels, *_ = _collect_outputs(model, artifact, positions, mean, std, batch_size)
+    identity_probabilities = _softmax(logits)
+    classes = list(artifact.manifest["classes"])
+    identity_metrics = probability_scores(
+        [classes[int(value)] for value in labels], identity_probabilities, classes
+    )
+    result: dict[str, Any] = {"method": "identity", **identity_metrics, "samples": len(labels)}
+    if len(labels) < 60 or len(set(labels.tolist())) != len(classes):
+        return result
+    from sklearn.linear_model import LogisticRegression
+
+    estimator = LogisticRegression(max_iter=1_000, class_weight=None, random_state=29)
+    estimator.fit(logits, labels)
+    calibrated = estimator.predict_proba(logits)
+    calibrated_metrics = probability_scores(
+        [classes[int(value)] for value in labels], calibrated, classes
+    )
+    if calibrated_metrics["log_loss"] + calibrated_metrics["brier_score"] >= identity_metrics["log_loss"] + identity_metrics["brier_score"]:
+        return result
+    weight = np.zeros((len(classes), len(classes)), dtype=np.float32)
+    bias = np.zeros(len(classes), dtype=np.float32)
+    for source_index, class_value in enumerate(estimator.classes_):
+        weight[int(class_value)] = estimator.coef_[source_index]
+        bias[int(class_value)] = estimator.intercept_[source_index]
+    model.set_logit_calibration(torch.from_numpy(weight), torch.from_numpy(bias))
+    return {
+        "method": "multinomial_logit",
+        **calibrated_metrics,
+        "samples": len(labels),
+        "weight": weight.tolist(),
+        "bias": bias.tolist(),
+    }
+
+
+def _optimize_transformer_policy(model, artifact, positions, mean, std, options) -> dict[str, float]:
+    outputs = _collect_outputs(model, artifact, positions, mean, std, options.batch_size)
+    logits, _, target_returns, target_costs, _, log_variance, predicted_returns, predicted_costs = outputs
+    probabilities = _softmax(logits)
+    classes = list(artifact.manifest["classes"])
+    best: dict[str, float] | None = None
+    for confidence in (0.40, 0.46, 0.52, 0.58, 0.64, 0.70):
+        for margin in (0.00, 0.04, 0.08, 0.12, 0.16):
+            for minimum_edge in (0.00005, 0.0001, 0.0002, 0.0003):
+                metrics = _metrics_from_probabilities(
+                    probabilities,
+                    np.asarray(artifact.labels)[np.asarray(positions)],
+                    target_returns,
+                    target_costs,
+                    classes=classes,
+                    primary_horizon=_primary_horizon(str(artifact.manifest["scope"])),
+                    minimum_confidence=confidence,
+                    minimum_margin=margin,
+                    predicted_returns=predicted_returns,
+                    predicted_costs=predicted_costs,
+                    log_variance=log_variance,
+                    minimum_expected_edge=minimum_edge,
+                    uncertainty_multiplier=0.25,
+                )
+                if metrics["trade_count"] < max(10, len(positions) * 0.01):
+                    continue
+                score = metrics["average_pnl_per_trade"] * 100 + min(metrics["profit_factor"], 3.0) * 0.08
+                score -= metrics["max_drawdown"] * 0.5
+                candidate = {
+                    "minimum_confidence": confidence,
+                    "minimum_margin": margin,
+                    "minimum_expected_edge": minimum_edge,
+                    "uncertainty_multiplier": 0.25,
+                    "threshold_score": float(score),
+                }
+                if best is None or candidate["threshold_score"] > best["threshold_score"]:
+                    best = candidate
+    return best or {
+        "minimum_confidence": options.minimum_confidence,
+        "minimum_margin": options.minimum_margin,
+        "minimum_expected_edge": 0.0002,
+        "uncertainty_multiplier": 0.50,
+        "threshold_score": -1.0,
+    }
+
+
 def _evaluate_model(
     model,
     artifact: LoadedSequenceArtifact,
@@ -502,8 +617,9 @@ def _evaluate_model(
     mean: np.ndarray,
     std: np.ndarray,
     options: TransformerTrainingOptions,
+    policy: dict[str, float] | None = None,
 ) -> dict[str, Any]:
-    logits, labels, returns, costs, sample_positions, log_variance = _collect_outputs(
+    logits, labels, returns, costs, sample_positions, log_variance, predicted_returns, predicted_costs = _collect_outputs(
         model,
         artifact,
         positions,
@@ -519,8 +635,13 @@ def _evaluate_model(
         costs,
         classes=list(artifact.manifest["classes"]),
         primary_horizon=_primary_horizon(str(artifact.manifest["scope"])),
-        minimum_confidence=options.minimum_confidence,
-        minimum_margin=options.minimum_margin,
+        minimum_confidence=float((policy or {}).get("minimum_confidence", options.minimum_confidence)),
+        minimum_margin=float((policy or {}).get("minimum_margin", options.minimum_margin)),
+        predicted_returns=predicted_returns,
+        predicted_costs=predicted_costs,
+        log_variance=log_variance,
+        minimum_expected_edge=float((policy or {}).get("minimum_expected_edge", 0.0)),
+        uncertainty_multiplier=float((policy or {}).get("uncertainty_multiplier", 0.0)),
     )
     uncertainties = np.sqrt(np.exp(np.clip(log_variance, -12.0, 4.0))).mean(axis=1)
     metrics["mean_prediction_uncertainty"] = float(np.mean(uncertainties)) if len(uncertainties) else 0.0
@@ -544,10 +665,14 @@ def _collect_outputs(model, artifact, positions, mean, std, batch_size):
     costs: list[np.ndarray] = []
     sample_positions: list[np.ndarray] = []
     log_variance: list[np.ndarray] = []
+    predicted_returns: list[np.ndarray] = []
+    predicted_costs: list[np.ndarray] = []
     with torch.inference_mode():
         for batch in loader:
             output = model(*batch[:4])
             logits.append(output[0].detach().cpu().numpy())
+            predicted_returns.append(output[1].detach().cpu().numpy())
+            predicted_costs.append(output[2].detach().cpu().numpy().reshape(-1))
             log_variance.append(output[3].detach().cpu().numpy())
             labels.append(batch[4].cpu().numpy())
             returns.append(batch[5].cpu().numpy())
@@ -555,7 +680,7 @@ def _collect_outputs(model, artifact, positions, mean, std, batch_size):
             sample_positions.append(batch[7].cpu().numpy())
     return tuple(
         np.concatenate(values, axis=0) if values else np.empty((0,), dtype=np.float32)
-        for values in (logits, labels, returns, costs, sample_positions, log_variance)
+        for values in (logits, labels, returns, costs, sample_positions, log_variance, predicted_returns, predicted_costs)
     )
 
 
@@ -569,6 +694,11 @@ def _metrics_from_probabilities(
     primary_horizon: int,
     minimum_confidence: float,
     minimum_margin: float,
+    predicted_returns: np.ndarray | None = None,
+    predicted_costs: np.ndarray | None = None,
+    log_variance: np.ndarray | None = None,
+    minimum_expected_edge: float = 0.0,
+    uncertainty_multiplier: float = 0.0,
 ) -> dict[str, Any]:
     from sklearn.metrics import accuracy_score, balanced_accuracy_score, f1_score
 
@@ -582,11 +712,31 @@ def _metrics_from_probabilities(
     policy = predicted.copy()
     if no_trade_index is not None:
         policy[(confidence < minimum_confidence) | (margin < minimum_margin)] = no_trade_index
+        if predicted_returns is not None and predicted_costs is not None:
+            horizon_index = list(HORIZONS_MINUTES).index(primary_horizon)
+            uncertainty = (
+                np.sqrt(np.exp(np.clip(log_variance[:, horizon_index], -12.0, 4.0)))
+                if log_variance is not None and len(log_variance)
+                else np.zeros(len(policy), dtype=np.float32)
+            )
+            for index, prediction in enumerate(policy):
+                label = classes[int(prediction)]
+                direction = 1.0 if label == "long_good" else -1.0 if label == "short_good" else 0.0
+                edge = (
+                    direction * float(predicted_returns[index, horizon_index])
+                    - max(float(predicted_costs[index]), 0.0)
+                    - uncertainty_multiplier * float(uncertainty[index])
+                )
+                if direction == 0.0 or edge <= minimum_expected_edge:
+                    policy[index] = no_trade_index
     correct = policy == labels
     ece = _expected_calibration_error(confidence, correct)
     one_hot = np.eye(len(classes), dtype=np.float32)[labels]
     brier = float(np.mean(np.sum((probabilities - one_hot) ** 2, axis=1)))
     trading = _trading_metrics(policy, returns, costs, classes, primary_horizon)
+    accepted = policy != no_trade_index if no_trade_index is not None else np.ones(len(policy), dtype=bool)
+    accepted_count = int(accepted.sum())
+    accepted_accuracy = float((policy[accepted] == labels[accepted]).mean()) if accepted_count else 0.0
     return {
         "accuracy": float(accuracy_score(labels, policy)),
         "balanced_accuracy": float(balanced_accuracy_score(labels, policy)),
@@ -595,6 +745,9 @@ def _metrics_from_probabilities(
         "brier_score": brier,
         "mean_confidence": float(np.mean(confidence)),
         "abstention_rate": float(np.mean(policy == no_trade_index)) if no_trade_index is not None else 0.0,
+        "selective_accuracy": accepted_accuracy,
+        "accepted_prediction_count": float(accepted_count),
+        "minimum_expected_edge": minimum_expected_edge,
         "sample_count": float(len(labels)),
         "trade_label_count": float(sum(classes[int(value)] != "no_trade" for value in labels)) if "no_trade" in classes else 0.0,
         **trading,
@@ -630,6 +783,7 @@ def _trading_metrics(policy, returns, costs, classes, primary_horizon):
     peaks = np.maximum.accumulate(np.concatenate(([0.0], cumulative))) if len(cumulative) else np.asarray([0.0])
     equity = np.concatenate(([0.0], cumulative)) if len(cumulative) else np.asarray([0.0])
     drawdown = float(np.max(peaks - equity))
+    interval = bootstrap_return_confidence_interval(pnl)
     return {
         "trade_count": float(len(pnl)),
         "win_rate": sum(value > 0 for value in pnl) / max(len(pnl), 1),
@@ -639,6 +793,7 @@ def _trading_metrics(policy, returns, costs, classes, primary_horizon):
         "max_drawdown": drawdown,
         "gross_profit": gains,
         "gross_loss": losses,
+        **interval,
     }
 
 
@@ -714,9 +869,13 @@ def _walk_forward_validation(
         if test_end - test_start < 30:
             break
         prefix = np.arange(test_start, dtype=np.int64)
-        validation_size = max(30, int(len(prefix) * 0.15))
-        train_positions = prefix[:-validation_size]
-        validation_positions = prefix[-validation_size:]
+        development_size = max(90, int(len(prefix) * 0.30))
+        train_positions = prefix[:-development_size]
+        development = prefix[-development_size:]
+        third = len(development) // 3
+        validation_positions = development[:third]
+        calibration_positions = development[third : third * 2]
+        threshold_positions = development[third * 2 :]
         test_positions = np.arange(test_start, test_end, dtype=np.int64)
         sample_times = artifact.timestamps[artifact.sample_end_indices]
         purge_seconds = max(HORIZONS_MINUTES) * 60
@@ -724,11 +883,22 @@ def _walk_forward_validation(
             train_positions = train_positions[
                 sample_times[train_positions] < sample_times[validation_positions[0]] - purge_seconds
             ]
-        if len(test_positions) and len(validation_positions):
-            test_positions = test_positions[
-                sample_times[test_positions] > sample_times[validation_positions[-1]] + purge_seconds
+        if len(calibration_positions) and len(validation_positions):
+            calibration_positions = calibration_positions[
+                sample_times[calibration_positions] > sample_times[validation_positions[-1]] + purge_seconds
             ]
-        if min(len(train_positions), len(validation_positions), len(test_positions)) < 30:
+        if len(threshold_positions) and len(calibration_positions):
+            threshold_positions = threshold_positions[
+                sample_times[threshold_positions] > sample_times[calibration_positions[-1]] + purge_seconds
+            ]
+        if len(test_positions) and len(threshold_positions):
+            test_positions = test_positions[
+                sample_times[test_positions] > sample_times[threshold_positions[-1]] + purge_seconds
+            ]
+        # Small smoke datasets can retain ten independent observations per
+        # partition after the 15-minute purge. Production archives are much
+        # larger and naturally exceed this floor by orders of magnitude.
+        if min(len(train_positions), len(validation_positions), len(calibration_positions), len(threshold_positions), len(test_positions)) < 10:
             continue
         if len(set(np.asarray(artifact.labels)[train_positions].tolist())) < 2:
             continue
@@ -745,7 +915,9 @@ def _walk_forward_validation(
             epochs=options.walk_forward_epochs,
         )
         model.set_temperature(_fit_temperature(model, artifact, validation_positions, mean, std, options.batch_size))
-        metrics = _evaluate_model(model, artifact, test_positions, mean, std, options)
+        _fit_logit_calibration(model, artifact, calibration_positions, mean, std, options.batch_size)
+        policy = _optimize_transformer_policy(model, artifact, threshold_positions, mean, std, options)
+        metrics = _evaluate_model(model, artifact, test_positions, mean, std, options, policy=policy)
         folds.append(
             {
                 "fold": fold + 1,

@@ -89,9 +89,19 @@ def build_causal_transformer(config: TransformerModelConfig):
             self.log_variance_head = nn.Linear(config.d_model, config.horizon_count)
             self.register_buffer("position_encoding", _sinusoidal_encoding(torch, config))
             self.register_buffer("temperature", torch.ones(1, dtype=torch.float32))
+            self.register_buffer("calibration_weight", torch.eye(config.class_count, dtype=torch.float32))
+            self.register_buffer("calibration_bias", torch.zeros(config.class_count, dtype=torch.float32))
 
         def set_temperature(self, value: float) -> None:
             self.temperature.fill_(max(float(value), 0.05))
+
+        def set_logit_calibration(self, weight, bias) -> None:
+            if tuple(weight.shape) != tuple(self.calibration_weight.shape):
+                raise ValueError("calibration weight shape does not match class count")
+            if tuple(bias.shape) != tuple(self.calibration_bias.shape):
+                raise ValueError("calibration bias shape does not match class count")
+            self.calibration_weight.copy_(weight.to(dtype=self.calibration_weight.dtype))
+            self.calibration_bias.copy_(bias.to(dtype=self.calibration_bias.dtype))
 
         def forward(self, values, missing_mask, valid_mask, session_mask):
             sequence_length = values.shape[1]
@@ -119,7 +129,8 @@ def build_causal_transformer(config: TransformerModelConfig):
             batch_indices = torch.arange(values.shape[0], device=values.device)
             pooled = self.dropout(encoded[batch_indices, last_indices])
 
-            logits = self.classification_head(pooled) / self.temperature.clamp_min(0.05)
+            raw_logits = self.classification_head(pooled) / self.temperature.clamp_min(0.05)
+            logits = torch.nn.functional.linear(raw_logits, self.calibration_weight, self.calibration_bias)
             expected_returns = self.return_head(pooled)
             expected_cost = torch.nn.functional.softplus(self.cost_head(pooled))
             log_variance = self.log_variance_head(pooled).clamp(min=-12.0, max=4.0)

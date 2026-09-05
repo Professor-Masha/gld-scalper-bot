@@ -20,6 +20,8 @@ This package provides the local Python control gateway used by the native JavaFX
 
 `DashboardService` validates actions. `ControlPlane` serializes typed commands and enforces idempotency and a local command-rate bound. `AuditLedger` writes redacted SHA-256-linked evidence. `contracts.py` owns API/event schemas and version identifiers. `ProcessManager` owns child jobs. `TelemetryRepository` performs read-only SQLite queries. `TransformerCatalog` supplies presets and complete archives. `PerformanceAnalytics` builds chart-ready summaries. `JobResultRepository` parses structured job output. `LLMProviderService` manages secret-safe provider selection and verifies actual text generation rather than treating a model-list response as proof of inference. `WhitePaperRepository` exposes the versioned local document. The native client is documented in `apps/desktop-ui/README.md`; fallback browser classes are documented in `static/js/README.md`.
 
+`TelemetryRepository.model_validation()` powers `/api/model-validation` and `/api/v1/models/validation`. It flattens immutable registry evidence for the JavaFX analytics view while retaining the complete structured payload for audit. The route is read-only and degrades to an empty collection when an older database has no model rows.
+
 The locally vendored Three.js HUD is visual only. Its low-power renderer pauses with a hidden tab and cannot affect signals, risk, or execution.
 
 ## Files

@@ -3508,9 +3508,9 @@ Relevant promotion settings:
 PROMOTION_MIN_PROFIT_FACTOR=1.20
 PROMOTION_MIN_WIN_RATE=0.48
 PROMOTION_MAX_DRAWDOWN=0.015
-PROMOTION_MIN_TRADE_COUNT=100
+PROMOTION_MIN_TRADE_COUNT=200
 PROMOTION_MIN_PROFITABLE_FOLD_RATIO=0.60
-PROMOTION_MAX_CALIBRATION_ERROR=0.15
+PROMOTION_MAX_CALIBRATION_ERROR=0.10
 PROMOTION_MIN_FOLD_COUNT=3
 ```
 
@@ -4173,9 +4173,9 @@ Promotion defaults require:
 PROMOTION_MIN_PROFIT_FACTOR=1.20
 PROMOTION_MIN_WIN_RATE=0.48
 PROMOTION_MAX_DRAWDOWN=0.015
-PROMOTION_MIN_TRADE_COUNT=100
+PROMOTION_MIN_TRADE_COUNT=200
 PROMOTION_MIN_PROFITABLE_FOLD_RATIO=0.60
-PROMOTION_MAX_CALIBRATION_ERROR=0.15
+PROMOTION_MAX_CALIBRATION_ERROR=0.10
 PROMOTION_MIN_FOLD_COUNT=3
 PROMOTION_REQUIRE_PAPER_RESULTS=true
 PROMOTION_MIN_PAPER_TRADE_COUNT=30
@@ -5949,6 +5949,23 @@ Before a paper-trading session, the following should pass:
 .\.venv\Scripts\python.exe -m compileall src tests
 .\.venv\Scripts\python.exe -m pip check
 ```
+
+## Calibrated Model Release Standard
+
+Classical and Transformer training now use distinct chronological partitions for fitting, early stopping or validation, natural-frequency calibration, threshold selection, and untouched holdout measurement. Boundaries are purged by the longest forward horizon. Training-only feature selection removes highly missing, constant, drifting, and redundant inputs and caps the feature profile so the 8 GB laptop does not pay inference cost for duplicated evidence.
+
+A model recommendation is submitted to the deterministic decision council only when calibrated probability, probability margin, and after-cost expected edge all pass. Direction-specific regressors estimate gross return from the current selected features; expected edge then subtracts live spread, estimated slippage, fees, and uncertainty. Triple-barrier labels preserve the price path; dedicated exit candidates learn `HOLD`, `REDUCE`, and `CLOSE` from clean episodes instead of reusing entry labels. Safety stops, session flattening, stale-data blocks, and broker reconciliation remain independent of ML and cannot be vetoed by a model.
+
+The JavaFX **Performance & Backtest** workspace now includes **Model validation**. Use it to compare scopes by holdout and walk-forward return, profit factor, calibration error, abstention, selective accuracy, and confidence intervals before considering promotion. A higher headline accuracy alone is not sufficient.
+
+The stricter defaults are:
+
+```dotenv
+PROMOTION_MIN_TRADE_COUNT=200
+PROMOTION_MAX_CALIBRATION_ERROR=0.10
+```
+
+These defaults apply to newly evaluated candidates. Existing champions remain versioned for rollback; they are not overwritten by training.
 
 Only run `reset-data` here if you intentionally want to delete the active paper dataset. For normal paper-trading sessions, keep the data and start the bot:
 

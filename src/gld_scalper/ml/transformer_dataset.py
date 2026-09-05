@@ -746,9 +746,10 @@ def _exit_timeline(database: Database, settings: Settings, start: datetime, end:
 
 
 def _label_raw_timeline(timeline: _Timeline, *, primary_horizon: int, stride: int, settings: Settings) -> None:
+    from .holding_labels import triple_barrier_entry_label
+
     timestamps = [value.timestamp() for value in timeline.timestamps]
     mids = [_finite(item.get("midpoint"), math.nan) for item in timeline.features]
-    primary_index = HORIZONS_MINUTES.index(primary_horizon)
     for index, timestamp in enumerate(timestamps):
         returns: list[float] = []
         for minutes in HORIZONS_MINUTES:
@@ -764,11 +765,18 @@ def _label_raw_timeline(timeline: _Timeline, *, primary_horizon: int, stride: in
                 returns.append(mids[future] / max(mids[index], 1e-12) - 1.0)
         timeline.returns[index] = returns
         if all(math.isfinite(value) for value in returns):
-            timeline.labels[index] = _direction_label(
-                returns[primary_index],
-                timeline.costs[index],
-                settings.outcome_label_min_edge_pct,
+            horizon_seconds = primary_horizon * 60
+            end = bisect.bisect_right(timestamps, timestamp + horizon_seconds, lo=index + 1)
+            future_prices = [value for value in mids[index + 1 : end] if math.isfinite(value) and value > 0]
+            label = triple_barrier_entry_label(
+                current_price=mids[index],
+                future_prices=future_prices,
+                seconds_per_observation=max(float(horizon_seconds) / max(len(future_prices), 1), 1.0),
+                profit_barrier_pct=timeline.costs[index] + settings.outcome_label_min_edge_pct,
+                risk_barrier_pct=timeline.costs[index] + settings.outcome_label_min_edge_pct,
+                round_trip_cost_pct=timeline.costs[index],
             )
+            timeline.labels[index] = label.label
             timeline.eligible[index] = index % stride == 0
 
 
