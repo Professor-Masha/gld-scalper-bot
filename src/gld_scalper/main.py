@@ -865,7 +865,6 @@ def run_paper_command(args: argparse.Namespace) -> None:
             trading_client=trading_client,
             coordinator=order_coordinator,
             transformer_runtime=transformer_runtime,
-            latency_tracker=latency_tracker,
         )
         position_runtime.start()
         execution_safety.set_internal_episode_provider(position_runtime.episode_snapshot)
@@ -883,6 +882,7 @@ def run_paper_command(args: argparse.Namespace) -> None:
             trading_client=trading_client,
             coordinator=order_coordinator,
             transformer_runtime=transformer_runtime,
+            latency_tracker=latency_tracker,
         )
         fast_scalp_runtime.start()
         db.log_event("INFO", __name__, "fast_scalp_runtime_started", "Fast scalp runtime started", fast_scalp_runtime.status())
