@@ -12,6 +12,12 @@ This bot is paper trading only. It is not financial advice, and paper trading re
 
 The primary Windows command center is now a native JavaFX desktop application in `apps/desktop-ui`. It uses the existing local Python gateway for market telemetry, after-cost analytics, backtest results, scope-aware Transformer forms, discovered candidate archives, research jobs, provider connections, and live logs. Its interactive 3D core uses JavaFX, not a browser or WebView. Python remains the only trading authority. The older browser dashboard, including its advanced volatility research and Three.js graph, remains available as a fallback; those browser-specific workspaces are not silently represented as native JavaFX features.
 
+Operator workspaces now share a human-readable evidence layer. Analytics,
+AI-provider diagnostics, completed LLM reviews, control-plane readiness and
+table values are displayed as labeled sections with local timestamps, money,
+percentages and plain-language states. Exact JSON is retained only in collapsed
+developer panels; secret fields are excluded from generated summaries.
+
 ## What The Bot Does Every Minute
 
 1. Syncs recent Alpaca GLD paper orders back into SQLite.

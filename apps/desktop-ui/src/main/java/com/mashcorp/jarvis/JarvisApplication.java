@@ -420,7 +420,8 @@ public final class JarvisApplication extends Application {
         TextField model = new TextField("llama3.2:1b");
         TextField baseUrl = new TextField("http://127.0.0.1:11434");
         PasswordField apiKey = new PasswordField();
-        TextArea result = outputArea();
+        HumanReadableView result = new HumanReadableView();
+        result.setPrefHeight(360);
         provider.setOnAction(event -> {
             boolean kimi = "kimi".equals(provider.getValue());
             model.setText(kimi ? "kimi-k2.6" : "llama3.2:1b");
@@ -431,11 +432,13 @@ public final class JarvisApplication extends Application {
             execute("Activating research provider", () -> gateway.post("/api/llm/providers/activate", request)); apiKey.clear();
         });
         Button test = actionButton("TEST CONNECTION", "secondary", () -> {
-            var request = Map.of("provider", provider.getValue()); result.setText("Testing generation...");
+            var request = Map.of("provider", provider.getValue());
+            result.show(new com.fasterxml.jackson.databind.ObjectMapper().valueToTree(Map.of(
+                    "status", "testing", "message", "Sending a small generation request to " + provider.getValue())));
             research.execute(() -> {
             try {
                 JsonNode response = gateway.post("/api/llm/providers/test", request);
-                Platform.runLater(() -> result.setText(response.toPrettyString()));
+                Platform.runLater(() -> result.show(response));
             } catch (Exception exc) { showError(exc); }
             });
         });
@@ -445,7 +448,7 @@ public final class JarvisApplication extends Application {
             execute("Starting offline review", () -> gateway.startJob("llm_analysis", options));
         });
         Button latest = actionButton("LATEST REVIEW", "secondary", () -> readWorkers.execute(() -> {
-            try { JsonNode response = gateway.get("/api/results/llm_analysis"); Platform.runLater(() -> result.setText(response.toPrettyString())); }
+            try { JsonNode response = gateway.get("/api/results/llm_analysis"); Platform.runLater(() -> result.show(response)); }
             catch (Exception exc) { showError(exc); }
         }));
         HBox controls = new HBox(10, activate, test);
@@ -459,14 +462,15 @@ public final class JarvisApplication extends Application {
                 Platform.runLater(() -> {
                     provider.setValue(config.path("llm_provider").asText("ollama"));
                     model.setText(config.path("llm_model").asText()); baseUrl.setText(config.path("llm_base_url").asText());
-                    result.setText(catalog.toPrettyString());
+                    result.show(catalog);
                 });
             } catch (Exception exc) { showError(exc); }
         });
     }
 
     private void showControlPlane() {
-        TextArea health = outputArea();
+        HumanReadableView health = new HumanReadableView();
+        health.setPrefHeight(360);
         TableView<RowData> audit = table("Time", "timestamp", "Event", "event_type", "Action", "action", "Status", "status", "Actor", "actor_id");
         Button refresh = actionButton("VERIFY CONTROL PLANE", "primary", () -> readWorkers.execute(() -> {
             try {
@@ -475,7 +479,11 @@ public final class JarvisApplication extends Application {
                 JsonNode integrity = gateway.get("/api/v1/audit/verify");
                 JsonNode events = gateway.get("/api/v1/audit/events?limit=100");
                 Platform.runLater(() -> {
-                    health.setText(state.toPrettyString() + "\n" + readiness.toPrettyString() + "\n" + integrity.toPrettyString());
+                    var combined = new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode();
+                    combined.set("system_status", state);
+                    combined.set("readiness", readiness);
+                    combined.set("audit_integrity", integrity);
+                    health.show(combined);
                     audit.setItems(rows(events));
                 });
             } catch (Exception exc) { showError(exc); }
@@ -645,7 +653,9 @@ public final class JarvisApplication extends Application {
         commands.execute(() -> {
             try {
                 JsonNode result = action.get();
-                Platform.runLater(() -> notification.setText(result.path("accepted").asBoolean(true) ? "COMMAND RECEIVED\n" + result.path("correlation_id").asText("See result/status") : result.toPrettyString()));
+                Platform.runLater(() -> notification.setText(result.path("accepted").asBoolean(true)
+                        ? "COMMAND RECEIVED\n" + HumanReadableFormatter.value("correlation_id", result.path("correlation_id"))
+                        : HumanReadableFormatter.plainText(result)));
             } catch (Exception exc) { showError(exc); }
         });
     }
@@ -852,7 +862,7 @@ public final class JarvisApplication extends Application {
     }
 
     private record RowData(JsonNode node) {
-        String value(String key) { JsonNode value = node.path(key); return value.isMissingNode() || value.isNull() ? "" : value.asText(); }
+        String value(String key) { return HumanReadableFormatter.value(key, node.path(key)); }
     }
 
     private void writeClientPerformance() {

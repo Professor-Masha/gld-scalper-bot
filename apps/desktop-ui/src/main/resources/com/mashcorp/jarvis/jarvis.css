@@ -335,6 +335,24 @@
     -fx-font-size: 12px;
     -fx-line-spacing: 2px;
 }
+.human-readable-view { -fx-min-height: 180px; }
+.human-readable-scroll,
+.human-readable-scroll > .viewport { -fx-background-color: transparent; }
+.evidence-section {
+    -fx-padding: 11 12;
+    -fx-background-color: #041015;
+    -fx-border-color: #153f4b;
+    -fx-border-radius: 4;
+    -fx-background-radius: 4;
+}
+.evidence-section-title {
+    -fx-text-fill: #2de1ff;
+    -fx-font-family: "Consolas";
+    -fx-font-size: 11px;
+    -fx-font-weight: 800;
+}
+.evidence-field-name { -fx-text-fill: #789da7; -fx-font-size: 10px; }
+.evidence-field-value { -fx-text-fill: #e1f5f8; -fx-font-size: 12px; -fx-line-spacing: 2px; }
 .memory-node-title { -fx-text-fill: #5cf2b5; -fx-font-family: "Bahnschrift"; -fx-font-size: 17px; -fx-font-weight: 800; }
 .memory-node-type { -fx-text-fill: #65b7c6; -fx-font-family: "Consolas"; -fx-font-size: 11px; }
 .memory-summary { -fx-text-fill: #45dff5; -fx-font-family: "Consolas"; -fx-font-size: 11px; }

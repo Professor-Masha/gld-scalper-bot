@@ -125,6 +125,22 @@ graph remain in the fallback client; the native client does not claim feature
 parity for those research-only visuals. Its 3D core supports drag and zoom,
 pauses when detached, and changes color/speed with backend health.
 
+## Human-Readable Evidence
+
+The native dashboard does not present gateway JSON as the primary operator
+interface. `HumanReadableFormatter` converts snake-case keys, UTC timestamps,
+booleans, percentages, currency, latency and state values into consistent
+labels and local-time descriptions. `HumanReadableView` groups nested results
+into bounded evidence sections used by Analytics, AI Lab and Control Plane.
+Tables use the same formatting rules, so an order, signal or model has the same
+meaning in every workspace.
+
+Exact gateway responses remain available in a collapsed **Developer payload**
+section for diagnosis. Secret-like keys are excluded from generated evidence
+and never rendered into that operator summary. Live logs and training logs stay
+monospace because they are intentionally terminal streams rather than business
+records.
+
 ## Learned-State Memory Graph
 
 Open **Memory Graph** to inspect what the bot has recorded and which approved

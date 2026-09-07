@@ -13,7 +13,7 @@ final class AnalyticsWorkspace extends VBox {
     private final ComboBox<String> mode = new ComboBox<>();
     private final FlowPane metrics = new FlowPane(12, 12);
     private final FlowPane plots = new FlowPane(12, 12);
-    private final TextArea evidence = new TextArea();
+    private final HumanReadableView evidence = new HumanReadableView();
     private final GatewayClient gateway;
     private final Executor worker;
     private final Consumer<Throwable> errors;
@@ -22,8 +22,7 @@ final class AnalyticsWorkspace extends VBox {
         super(14); this.gateway = gateway; this.worker = worker; this.errors = errors;
         mode.getItems().addAll("Paper outcomes (latest 5,000)", "Latest backtest", "Model validation"); mode.getSelectionModel().selectFirst();
         Button refresh = new Button("REFRESH"); refresh.setOnAction(event -> refresh()); mode.setOnAction(event -> refresh());
-        evidence.setEditable(false); evidence.setPrefRowCount(8);
-        TitledPane details = new TitledPane("Structured evidence", evidence); details.setExpanded(false);
+        TitledPane details = new TitledPane("Evidence details", evidence); details.setExpanded(false);
         getChildren().addAll(new HBox(10, mode, refresh), metrics, plots, details); refresh();
     }
 
@@ -37,7 +36,7 @@ final class AnalyticsWorkspace extends VBox {
                 JsonNode equity = backtest || validation ? null : gateway.get("/api/equity");
                 Platform.runLater(() -> {
                     if (selectedMode != mode.getSelectionModel().getSelectedIndex()) return;
-                    metrics.getChildren().clear(); plots.getChildren().clear(); evidence.setText(data.toPrettyString());
+                    metrics.getChildren().clear(); plots.getChildren().clear(); evidence.show(data);
                     if (backtest) renderBacktest(data.path("result")); else if (validation) renderValidation(data); else renderPaper(data, equity);
                 });
             } catch (Exception exc) { errors.accept(exc); }

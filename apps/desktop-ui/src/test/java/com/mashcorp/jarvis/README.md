@@ -9,6 +9,8 @@ process or broker is contacted. Run with Maven `test` or `package`.
 top opening, centered current decision, and immediate summary fields.
 `ClientLatencyMonitorTest` verifies bounded samples and normalized dynamic
 routes.
+`HumanReadableFormatterTest` verifies typed operator formatting, nested
+evidence sections and secret redaction.
 
 Visual QA is separate: `DesktopSmokeCheck` renders views without operating any
 buttons. Python authentication/settings/result tests remain in

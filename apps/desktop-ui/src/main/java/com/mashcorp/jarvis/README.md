@@ -16,6 +16,8 @@ GatewayClient -> Python gateway`. No Java class has broker execution authority.
 | `DecisionCore3D` | `scene`, open ring, learned-state nodes, orbital fallback, and transitions are presentation only. Drag/zoom alter the camera, not model or risk state. |
 | `MemoryGraphWorkspace` | Gives the graph most of the split view, preserves filters and selection, shows summary evidence immediately, and loads detailed node evidence lazily. |
 | `NodeInspector` | Presents compact previews and complete node details as labeled human-readable sections rather than JSON. |
+| `HumanReadableFormatter` | Converts gateway keys and typed values into bounded operator labels, local timestamps, money, percentages and safe summaries. |
+| `HumanReadableView` | Reusable sectioned evidence control with an optional collapsed developer payload. |
 | `DesktopSmokeCheck` | `views`, `index` and `directory` capture read-only screens for explicit QA without activating a job. |
 
 All GUI mutation belongs on the JavaFX application thread. Capture field values
