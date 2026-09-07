@@ -141,6 +141,13 @@ and never rendered into that operator summary. Live logs and training logs stay
 monospace because they are intentionally terminal streams rather than business
 records.
 
+The native **AI Lab** is a cached `AiLabWorkspace`. It preserves the current
+prompt while navigating, polls `/api/v1/llm/status` every three seconds only
+while attached to a scene, and automatically surfaces review completion or
+failure. Provider state explicitly distinguishes not configured, not tested,
+testing, healthy and failed. A model-list response is not enough to display
+healthy; the provider must complete a small generation request.
+
 ## Learned-State Memory Graph
 
 Open **Memory Graph** to inspect what the bot has recorded and which approved

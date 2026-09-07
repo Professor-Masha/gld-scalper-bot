@@ -18,6 +18,13 @@ table values are displayed as labeled sections with local timestamps, money,
 percentages and plain-language states. Exact JSON is retained only in collapsed
 developer panels; secret fields are excluded from generated summaries.
 
+The AI Lab treats provider configuration, verified generation and research-job
+completion as separate states. Ollama or Kimi is shown as healthy only after a
+real generation test succeeds. Offline review jobs are followed automatically
+through running, completed and failed states, with bounded recent activity and
+the latest structured result displayed without manual log inspection. This
+control path remains offline-only and has no broker or model-promotion access.
+
 ## What The Bot Does Every Minute
 
 1. Syncs recent Alpaca GLD paper orders back into SQLite.

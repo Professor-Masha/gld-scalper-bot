@@ -232,6 +232,45 @@ class DashboardService:
             result["configuration_error"] = configuration_error
         return result
 
+    def llm_status(self) -> dict[str, Any]:
+        """Return a compact, non-blocking view of provider and review progress."""
+        catalog = self.llm_providers.catalog()
+        active = str(catalog.get("active_provider") or "none")
+        provider = next((item for item in catalog.get("providers", []) if item.get("id") == active), None)
+        process = next((item for item in self.processes.statuses() if item.get("name") == "llm_analysis"), None)
+        result = self.results.latest("llm_analysis")
+        lines = self.processes.tail("llm_analysis", 24)
+        process_state = str((process or {}).get("state") or "idle")
+        if process_state == "completed" and result is not None:
+            message = "The latest offline review completed and is ready below."
+        elif process_state == "failed":
+            message = next((line for line in reversed(lines) if line.strip()), "The offline review failed. Review the recent activity.")
+        elif process_state in {"running", "stopping"}:
+            message = "The offline review is still running. Results will appear automatically when it finishes."
+        elif result is not None:
+            message = "A previous completed offline review is available."
+        else:
+            message = "No completed offline review is available yet."
+        safe_process = None if process is None else {
+            "name": process.get("name"),
+            "state": process_state,
+            "started_at": process.get("started_at"),
+            "return_code": process.get("return_code"),
+        }
+        return {
+            "provider": provider or {"id": active, "configured": False, "runtime": {"state": "not_configured"}},
+            "providers": catalog.get("providers") or [],
+            "review": {
+                "state": process_state,
+                "message": message[:500],
+                "process": safe_process,
+                "result_available": result is not None,
+                "result": result,
+                "recent_activity": lines[-12:],
+            },
+            "safety": catalog.get("safety") or {},
+        }
+
     def start(self, action: str, options: dict[str, Any]) -> dict[str, Any]:
         command = self._command(action, options)
         return asdict(self.processes.start(action, command))
@@ -431,6 +470,8 @@ def create_dashboard_app(project_root: Path = PROJECT_ROOT) -> FastAPI:
     async def llm_activity(limit: int = 30): return await asyncio.to_thread(service.telemetry.llm_activity, limit)
     @app.get("/api/llm/providers")
     async def llm_providers(): return await asyncio.to_thread(service.llm_providers.catalog)
+    @app.get("/api/v1/llm/status")
+    async def v1_llm_status(): return await asyncio.to_thread(service.llm_status)
     @app.get("/api/whitepaper")
     async def whitepaper(): return await asyncio.to_thread(service.whitepaper.payload)
     @app.get("/api/diagnostics")

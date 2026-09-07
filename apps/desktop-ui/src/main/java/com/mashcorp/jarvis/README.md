@@ -18,6 +18,7 @@ GatewayClient -> Python gateway`. No Java class has broker execution authority.
 | `NodeInspector` | Presents compact previews and complete node details as labeled human-readable sections rather than JSON. |
 | `HumanReadableFormatter` | Converts gateway keys and typed values into bounded operator labels, local timestamps, money, percentages and safe summaries. |
 | `HumanReadableView` | Reusable sectioned evidence control with an optional collapsed developer payload. |
+| `AiLabWorkspace` | Preserves provider/prompt state, runs generation checks off-thread, polls managed review jobs, and renders completion or failure automatically. |
 | `DesktopSmokeCheck` | `views`, `index` and `directory` capture read-only screens for explicit QA without activating a job. |
 
 All GUI mutation belongs on the JavaFX application thread. Capture field values

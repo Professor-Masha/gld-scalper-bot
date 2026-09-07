@@ -74,6 +74,38 @@ def test_llm_provider_catalog_distinguishes_engine_from_fingpt(tmp_path: Path) -
     assert payload["safety"]["live_broker_authority"] is False
 
 
+def test_llm_provider_runtime_state_requires_real_generation(tmp_path: Path, monkeypatch) -> None:
+    store = EnvFileStore(tmp_path / ".env")
+    store.update({"LLM_PROVIDER": "ollama", "LLM_MODEL": "llama3.2:1b"})
+    service = LLMProviderService(tmp_path, store)
+    monkeypatch.setattr(service, "_get_json", lambda *_args, **_kwargs: {"models": [{"name": "llama3.2:1b"}]})
+    monkeypatch.setattr(
+        "gld_scalper.dashboard.llm_providers._post_json",
+        lambda *_args, **_kwargs: {"message": {"content": '{"status":"ok"}'}},
+    )
+
+    assert service.catalog()["providers"][0]["runtime"]["state"] == "not_tested"
+    assert service.test("ollama")["ok"] is True
+    runtime = service.catalog()["providers"][0]["runtime"]
+    assert runtime["state"] == "healthy"
+    assert runtime["latency_ms"] >= 0
+
+
+def test_llm_status_exposes_completed_result_without_broker_authority(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text("LLM_PROVIDER=ollama\n", encoding="utf-8")
+    service = DashboardService(tmp_path)
+    log = tmp_path / "logs" / "dashboard" / "llm_analysis.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text('review started\n{"summary":"Use cleaner breakouts","confidence":0.72}\n', encoding="utf-8")
+
+    payload = service.llm_status()
+
+    assert payload["provider"]["id"] == "ollama"
+    assert payload["review"]["result_available"] is True
+    assert payload["review"]["result"]["summary"] == "Use cleaner breakouts"
+    assert payload["safety"]["live_broker_authority"] is False
+
+
 def test_dashboard_command_builder_rejects_paths_outside_project(tmp_path: Path) -> None:
     (tmp_path / ".env").write_text("", encoding="utf-8")
     service = DashboardService(tmp_path)
@@ -220,6 +252,7 @@ def test_dashboard_app_is_local_and_serves_expected_routes(tmp_path: Path) -> No
     assert "/api/llm/providers" in paths
     assert "/api/llm/providers/activate" in paths
     assert "/api/llm/providers/test" in paths
+    assert "/api/v1/llm/status" in paths
     assert "/api/whitepaper" in paths
     assert "/api/processes/{action}/start" in paths
     assert "/ws/live" in paths

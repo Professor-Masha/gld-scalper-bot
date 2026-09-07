@@ -81,6 +81,8 @@ public final class JarvisApplication extends Application {
     private Node overviewPage;
     private MemoryGraphWorkspace memoryWorkspace;
     private Node memoryPage;
+    private AiLabWorkspace aiWorkspace;
+    private Node aiPage;
     private final java.util.prefs.Preferences preferences = java.util.prefs.Preferences.userNodeForPackage(JarvisApplication.class);
     private boolean reducedMotion = preferences.getBoolean("reducedMotion", false);
     private volatile String overviewGraphFingerprint = "";
@@ -415,57 +417,13 @@ public final class JarvisApplication extends Application {
     }
 
     private void showAiLab() {
-        ComboBox<String> provider = new ComboBox<>(FXCollections.observableArrayList("ollama", "kimi"));
-        provider.getSelectionModel().select("ollama");
-        TextField model = new TextField("llama3.2:1b");
-        TextField baseUrl = new TextField("http://127.0.0.1:11434");
-        PasswordField apiKey = new PasswordField();
-        HumanReadableView result = new HumanReadableView();
-        result.setPrefHeight(360);
-        provider.setOnAction(event -> {
-            boolean kimi = "kimi".equals(provider.getValue());
-            model.setText(kimi ? "kimi-k2.6" : "llama3.2:1b");
-            baseUrl.setText(kimi ? "https://api.moonshot.ai/v1" : "http://127.0.0.1:11434");
-        });
-        Button activate = actionButton("ACTIVATE", "primary", () -> {
-            var request = Map.of("provider", provider.getValue(), "model", model.getText(), "base_url", baseUrl.getText(), "api_key", apiKey.getText());
-            execute("Activating research provider", () -> gateway.post("/api/llm/providers/activate", request)); apiKey.clear();
-        });
-        Button test = actionButton("TEST CONNECTION", "secondary", () -> {
-            var request = Map.of("provider", provider.getValue());
-            result.show(new com.fasterxml.jackson.databind.ObjectMapper().valueToTree(Map.of(
-                    "status", "testing", "message", "Sending a small generation request to " + provider.getValue())));
-            research.execute(() -> {
-            try {
-                JsonNode response = gateway.post("/api/llm/providers/test", request);
-                Platform.runLater(() -> result.show(response));
-            } catch (Exception exc) { showError(exc); }
-            });
-        });
-        TextArea prompt = new TextArea("Analyze completed trades, missed opportunities, execution quality, and model improvements.");
-        Button analyze = actionButton("RUN OFFLINE REVIEW", "primary", () -> {
-            JsonNode options = new com.fasterxml.jackson.databind.ObjectMapper().valueToTree(Map.of("query", prompt.getText()));
-            execute("Starting offline review", () -> gateway.startJob("llm_analysis", options));
-        });
-        Button latest = actionButton("LATEST REVIEW", "secondary", () -> readWorkers.execute(() -> {
-            try { JsonNode response = gateway.get("/api/results/llm_analysis"); Platform.runLater(() -> result.show(response)); }
-            catch (Exception exc) { showError(exc); }
-        }));
-        HBox controls = new HBox(10, activate, test);
-        setWorkspace(page("AI RESEARCH LAB",
-                panel("REASONING PROVIDER", labeled("Provider", provider), labeled("Model", model), labeled("Base URL", baseUrl), labeled("API key (never displayed)", apiKey), controls),
-                panel("RESEARCH TASK", prompt, new HBox(10, analyze, latest)), panel("AI RESULT", result)));
-        readWorkers.execute(() -> {
-            try {
-                JsonNode config = gateway.get("/api/settings");
-                JsonNode catalog = gateway.get("/api/llm/providers");
-                Platform.runLater(() -> {
-                    provider.setValue(config.path("llm_provider").asText("ollama"));
-                    model.setText(config.path("llm_model").asText()); baseUrl.setText(config.path("llm_base_url").asText());
-                    result.show(catalog);
-                });
-            } catch (Exception exc) { showError(exc); }
-        });
+        if (aiWorkspace == null) {
+            aiWorkspace = new AiLabWorkspace(gateway, commands, research, this::showError);
+            aiPage = page("AI RESEARCH LAB", aiWorkspace);
+        }
+        setWorkspace(aiPage);
+        aiWorkspace.refresh();
+        currentRefresh = aiWorkspace::refresh;
     }
 
     private void showControlPlane() {

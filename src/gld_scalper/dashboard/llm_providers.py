@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -35,6 +36,8 @@ class LLMProviderService:
     def __init__(self, project_root: Path, env_store: EnvFileStore) -> None:
         self.project_root = project_root
         self.env_store = env_store
+        self._runtime_lock = threading.Lock()
+        self._runtime_tests: dict[str, dict[str, Any]] = {}
 
     def catalog(self) -> dict[str, Any]:
         values = self.env_store.read()
@@ -42,6 +45,8 @@ class LLMProviderService:
         providers = []
         for key, profile in PROVIDER_DEFAULTS.items():
             configured = key == "ollama" or bool(values.get("MOONSHOT_API_KEY"))
+            with self._runtime_lock:
+                runtime = dict(self._runtime_tests.get(key) or {})
             providers.append(
                 {
                     "id": key,
@@ -50,6 +55,10 @@ class LLMProviderService:
                     "configured": configured,
                     "current_base_url": values.get("LLM_BASE_URL", profile["base_url"]) if active == key else profile["base_url"],
                     "current_model": values.get("LLM_MODEL", profile["model"]) if active == key else profile["model"],
+                    "runtime": runtime or {
+                        "state": "not_tested" if configured else "not_configured",
+                        "message": "Run a generation test to verify this provider." if configured else "Configuration is incomplete.",
+                    },
                 }
             )
         return {
@@ -88,6 +97,12 @@ class LLMProviderService:
             "ENABLE_LLM_LIVE_TRADING": "false",
         }
         self.env_store.update(changes)
+        with self._runtime_lock:
+            self._runtime_tests[provider] = {
+                "state": "not_tested",
+                "message": "Settings saved. Run a generation test to verify the provider.",
+                "checked_at": None,
+            }
         return self.catalog()
 
     def test(self, provider: str | None = None) -> dict[str, Any]:
@@ -100,8 +115,31 @@ class LLMProviderService:
         base_url = (values.get("LLM_BASE_URL") if active else defaults["base_url"]) or defaults["base_url"]
         model = (values.get("LLM_MODEL") if active else defaults["model"]) or defaults["model"]
         started = time.perf_counter()
+        self._record_runtime(selected, state="testing", message="A generation test is running.")
+        try:
+            result = self._test_provider(selected, str(base_url), str(model), values, started)
+        except Exception as exc:
+            self._record_runtime(selected, state="failed", message=str(exc)[:300])
+            raise
+        self._record_runtime(
+            selected,
+            state="healthy" if result["ok"] else "failed",
+            message=str(result["message"]),
+            latency_ms=result["latency_ms"],
+            model=str(model),
+        )
+        return result
+
+    def _test_provider(
+        self,
+        selected: str,
+        base_url: str,
+        model: str,
+        values: dict[str, str],
+        started: float,
+    ) -> dict[str, Any]:
         if selected == "ollama":
-            payload = self._get_json(f"{str(base_url).rstrip('/')}/api/tags", timeout=8)
+            payload = self._get_json(f"{base_url.rstrip('/')}/api/tags", timeout=8)
             names = [str(item.get("name") or "") for item in payload.get("models", []) if isinstance(item, dict)]
             installed = any(name == model or name.startswith(f"{model}:") for name in names)
             if not installed:
@@ -110,7 +148,7 @@ class LLMProviderService:
                 detail = {"installed_models": names, "model_available": False, "generation_tested": False}
             else:
                 response = _post_json(
-                    f"{str(base_url).rstrip('/')}/api/chat",
+                    f"{base_url.rstrip('/')}/api/chat",
                     {
                         "model": model,
                         "messages": [
@@ -135,7 +173,7 @@ class LLMProviderService:
                 raise RuntimeError("Kimi API key is not configured")
             try:
                 payload = _post_json(
-                    f"{str(base_url).rstrip('/')}/chat/completions",
+                    f"{base_url.rstrip('/')}/chat/completions",
                     {
                         "model": model,
                         "messages": [
@@ -170,6 +208,16 @@ class LLMProviderService:
             "latency_ms": round((time.perf_counter() - started) * 1000, 1),
             **detail,
         }
+
+    def _record_runtime(self, provider: str, *, state: str, message: str, **details: Any) -> None:
+        record = {
+            "state": state,
+            "message": message,
+            "checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            **details,
+        }
+        with self._runtime_lock:
+            self._runtime_tests[provider] = record
 
     def _fingpt_status(self, values: dict[str, str]) -> dict[str, Any]:
         configured = Path(values.get("FINGPT_SOURCE_DIR", "FINGPT/FinGPT-1.0.0/fingpt"))
