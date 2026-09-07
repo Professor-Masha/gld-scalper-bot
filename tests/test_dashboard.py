@@ -225,6 +225,7 @@ def test_dashboard_app_is_local_and_serves_expected_routes(tmp_path: Path) -> No
     assert "/ws/live" in paths
     assert "/api/v1/system/health" in paths
     assert "/api/v1/system/readiness" in paths
+    assert "/api/v1/system/interface-latency" in paths
     assert "/api/v1/system/status" in paths
     assert "/api/v1/training/jobs" in paths
     assert "/api/v1/models/validation" in paths
@@ -235,6 +236,36 @@ def test_dashboard_app_is_local_and_serves_expected_routes(tmp_path: Path) -> No
     assert "/api/v1/audit/events" in paths
     assert "/api/v1/events" in paths
     assert len(app.state.dashboard_token) >= 32
+
+
+def test_dashboard_latency_monitor_is_bounded_and_normalizes_routes() -> None:
+    from gld_scalper.dashboard.interface_performance import RequestLatencyMonitor
+
+    monitor = RequestLatencyMonitor(samples_per_route=32)
+    for index in range(40):
+        monitor.observe("get", f"/api/v1/memory-graph/nodes/trade:{index}", index + 1, 200)
+
+    snapshot = monitor.snapshot()
+    route = snapshot["routes"]["GET /api/v1/memory-graph/nodes/{id}"]
+    assert route["count"] == 32
+    assert route["p95_ms"] >= 38
+    assert snapshot["sample_count"] == 32
+
+
+def test_dashboard_startup_warms_caches_and_exposes_response_timing(tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    (tmp_path / ".env").write_text("", encoding="utf-8")
+    app = create_dashboard_app(tmp_path)
+    with TestClient(app) as client:
+        health = client.get("/api/v1/system/health")
+        latency = client.get("/api/v1/system/interface-latency").json()
+
+    assert health.status_code == 200
+    assert float(health.headers["X-Dashboard-Response-Ms"]) >= 0
+    assert health.headers["Server-Timing"].startswith("dashboard;dur=")
+    assert health.json()["cache_warmup"]["status"] in {"ready", "degraded"}
+    assert latency["sample_count"] >= 1
 
 
 def test_dashboard_accepts_desktop_session_token_from_process_environment(tmp_path: Path) -> None:

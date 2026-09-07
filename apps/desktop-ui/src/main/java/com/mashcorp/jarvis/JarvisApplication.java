@@ -31,16 +31,18 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 
 public final class JarvisApplication extends Application {
-    private final ScheduledExecutorService worker = Executors.newSingleThreadScheduledExecutor(r -> {
-        Thread thread = new Thread(r, "jarvis-gateway-client");
-        thread.setDaemon(true);
-        return thread;
-    });
+    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2, threadFactory("jarvis-scheduler"));
+    private final java.util.concurrent.ExecutorService startupWorker = Executors.newSingleThreadExecutor(threadFactory("jarvis-startup"));
+    private final java.util.concurrent.ExecutorService telemetryWorker = Executors.newSingleThreadExecutor(threadFactory("jarvis-telemetry"));
+    private final java.util.concurrent.ExecutorService readWorkers = Executors.newFixedThreadPool(3, threadFactory("jarvis-read"));
+    private final java.util.concurrent.ExecutorService graphWorker = Executors.newSingleThreadExecutor(threadFactory("jarvis-graph"));
+    private final AtomicBoolean telemetryPollQueued = new AtomicBoolean();
     private final StackPane workspace = new StackPane();
     private final Label systemState = new Label("STARTING");
     private final Label clock = new Label();
@@ -68,12 +70,8 @@ public final class JarvisApplication extends Application {
     private java.net.http.WebSocket socket;
     private volatile long lastEventNanos;
     private volatile long socketOpenedNanos;
-    private final java.util.concurrent.ExecutorService commands = Executors.newFixedThreadPool(2, r -> {
-        Thread thread = new Thread(r, "jarvis-operator-command"); thread.setDaemon(true); return thread;
-    });
-    private final java.util.concurrent.ExecutorService research = Executors.newSingleThreadExecutor(r -> {
-        Thread thread = new Thread(r, "jarvis-research"); thread.setDaemon(true); return thread;
-    });
+    private final java.util.concurrent.ExecutorService commands = Executors.newFixedThreadPool(2, threadFactory("jarvis-operator-command"));
+    private final java.util.concurrent.ExecutorService research = Executors.newSingleThreadExecutor(threadFactory("jarvis-research"));
     private Button paperStart;
     private Button paperStop;
     private final ToggleGroup navigationGroup = new ToggleGroup();
@@ -127,10 +125,11 @@ public final class JarvisApplication extends Application {
         });
         stage.show();
         startupOverlay.update(10, "JavaFX interface initialized");
-        worker.execute(() -> bootstrap(stage, root));
+        startupWorker.execute(() -> bootstrap(stage, root));
     }
 
     private void bootstrap(Stage stage, StackPane root) {
+        long startupStarted = System.nanoTime();
         try {
             startupOverlay.update(15, "Starting secure local Python gateway");
             runtime.start();
@@ -152,6 +151,7 @@ public final class JarvisApplication extends Application {
             runOnFxAndWait(() -> initializeShell(stage, root, snapshot, resolvedReadiness, graphPlan));
             startupOverlay.update(96, "Telemetry listener initialized");
             startupComplete = true;
+            gateway.recordOperation("startup_to_usable", (System.nanoTime() - startupStarted) / 1_000_000.0);
             Platform.runLater(() -> startupOverlay.complete(reducedMotion, () -> beginSmokeCheck(stage)));
         } catch (Exception exc) {
             Platform.runLater(() -> {
@@ -207,9 +207,9 @@ public final class JarvisApplication extends Application {
     }
 
     private void scheduleInterfaceTasks() {
-        worker.scheduleWithFixedDelay(() -> Platform.runLater(() -> currentRefresh.run()), 10, 10, TimeUnit.SECONDS);
-        worker.scheduleWithFixedDelay(this::refreshReadiness, 30, 30, TimeUnit.SECONDS);
-        worker.scheduleAtFixedRate(() -> Platform.runLater(() ->
+        scheduler.scheduleWithFixedDelay(() -> Platform.runLater(() -> currentRefresh.run()), 10, 10, TimeUnit.SECONDS);
+        scheduler.scheduleWithFixedDelay(() -> readWorkers.execute(this::refreshReadiness), 30, 30, TimeUnit.SECONDS);
+        scheduler.scheduleAtFixedRate(() -> Platform.runLater(() ->
                 clock.setText(DateTimeFormatter.ofPattern("EEE, dd MMM yyyy  HH:mm:ss")
                         .withZone(ZoneId.systemDefault()).format(Instant.now()))), 0, 1, TimeUnit.SECONDS);
     }
@@ -331,14 +331,14 @@ public final class JarvisApplication extends Application {
     }
 
     private void showPerformance() {
-        setWorkspace(page("PERFORMANCE & BACKTEST", new AnalyticsWorkspace(gateway, worker, this::showError)));
+        setWorkspace(page("PERFORMANCE & BACKTEST", new AnalyticsWorkspace(gateway, readWorkers, this::showError)));
     }
 
     private void showTrading() {
         TableView<RowData> episodes = table("Direction", "direction", "Playbook", "playbook", "Status", "status", "Quantity", "remaining_qty", "P/L", "realized_pnl");
         TableView<RowData> orders = table("Side", "side", "Type", "order_type", "Status", "status", "Qty", "qty", "Filled", "filled_qty");
         setWorkspace(page("TRADING & EXECUTION", panel("OPEN EXECUTION EPISODES", episodes), panel("RECENT BROKER ORDERS", orders)));
-        currentRefresh = () -> worker.execute(() -> {
+        currentRefresh = () -> readWorkers.execute(() -> {
             try {
                 JsonNode snapshot = gateway.get("/api/snapshot");
                 JsonNode recent = gateway.get("/api/v1/orders?limit=100");
@@ -355,7 +355,7 @@ public final class JarvisApplication extends Application {
         TableView<RowData> decisions = table("Time", "timestamp", "Decision", "decision", "Confidence", "confidence", "Regime", "regime", "Model", "model_version");
         TableView<RowData> models = table("Version", "model_version", "Type", "model_type", "Scope", "model_scope", "Status", "status", "Created", "created_at");
         setWorkspace(page("DECISION INTELLIGENCE", panel("RECENT SIGNALS", decisions), panel("MODEL REGISTRY", models)));
-        currentRefresh = () -> worker.execute(() -> {
+        currentRefresh = () -> readWorkers.execute(() -> {
             try {
                 JsonNode signalRows = gateway.get("/api/decisions?limit=100");
                 JsonNode modelRows = gateway.get("/api/v1/models");
@@ -367,7 +367,7 @@ public final class JarvisApplication extends Application {
 
     private void showMemoryGraph() {
         if (memoryWorkspace == null) {
-            memoryWorkspace = new MemoryGraphWorkspace(gateway, worker, this::showError);
+            memoryWorkspace = new MemoryGraphWorkspace(gateway, graphWorker, this::showError);
             memoryPage = page("DECISION CORE MEMORY GRAPH", memoryWorkspace);
         }
         setWorkspace(memoryPage);
@@ -375,7 +375,7 @@ public final class JarvisApplication extends Application {
     }
 
     private void refreshOverviewGraph() {
-        worker.execute(() -> {
+        graphWorker.execute(() -> {
             try {
                 JsonNode graph = gateway.get("/api/v1/memory-graph/summary?types=decision,market,model,playbook,risk&window=1d");
                 String fingerprint = graph.path("topology_fingerprint").asText();
@@ -390,7 +390,7 @@ public final class JarvisApplication extends Application {
 
     private void inspectOverviewNode(String nodeId) {
         overviewInspector.loading(nodeId.replace(':', ' '));
-        worker.execute(() -> {
+        graphWorker.execute(() -> {
             try {
                 String encoded = java.net.URLEncoder.encode(nodeId, StandardCharsets.UTF_8).replace("+", "%20");
                 JsonNode detail = gateway.get("/api/v1/memory-graph/nodes/" + encoded);
@@ -406,7 +406,7 @@ public final class JarvisApplication extends Application {
     private void showWhitePaper() {
         TextArea document = outputArea(); document.setWrapText(true); document.setPrefHeight(620);
         setWorkspace(page("BOT WHITE PAPER", document));
-        worker.execute(() -> {
+        readWorkers.execute(() -> {
             try {
                 JsonNode response = gateway.get("/api/whitepaper");
                 Platform.runLater(() -> document.setText(response.path("markdown").asText("Document unavailable")));
@@ -444,7 +444,7 @@ public final class JarvisApplication extends Application {
             JsonNode options = new com.fasterxml.jackson.databind.ObjectMapper().valueToTree(Map.of("query", prompt.getText()));
             execute("Starting offline review", () -> gateway.startJob("llm_analysis", options));
         });
-        Button latest = actionButton("LATEST REVIEW", "secondary", () -> worker.execute(() -> {
+        Button latest = actionButton("LATEST REVIEW", "secondary", () -> readWorkers.execute(() -> {
             try { JsonNode response = gateway.get("/api/results/llm_analysis"); Platform.runLater(() -> result.setText(response.toPrettyString())); }
             catch (Exception exc) { showError(exc); }
         }));
@@ -452,7 +452,7 @@ public final class JarvisApplication extends Application {
         setWorkspace(page("AI RESEARCH LAB",
                 panel("REASONING PROVIDER", labeled("Provider", provider), labeled("Model", model), labeled("Base URL", baseUrl), labeled("API key (never displayed)", apiKey), controls),
                 panel("RESEARCH TASK", prompt, new HBox(10, analyze, latest)), panel("AI RESULT", result)));
-        worker.execute(() -> {
+        readWorkers.execute(() -> {
             try {
                 JsonNode config = gateway.get("/api/settings");
                 JsonNode catalog = gateway.get("/api/llm/providers");
@@ -468,7 +468,7 @@ public final class JarvisApplication extends Application {
     private void showControlPlane() {
         TextArea health = outputArea();
         TableView<RowData> audit = table("Time", "timestamp", "Event", "event_type", "Action", "action", "Status", "status", "Actor", "actor_id");
-        Button refresh = actionButton("VERIFY CONTROL PLANE", "primary", () -> worker.execute(() -> {
+        Button refresh = actionButton("VERIFY CONTROL PLANE", "primary", () -> readWorkers.execute(() -> {
             try {
                 JsonNode state = gateway.get("/api/v1/system/status");
                 JsonNode readiness = gateway.get("/api/v1/system/readiness");
@@ -502,7 +502,7 @@ public final class JarvisApplication extends Application {
         });
         save.setDisable(true);
         setWorkspace(page("SECURE SETTINGS", panel("INTERFACE ACCESSIBILITY", reduceMotion), panel("ALPACA PAPER CREDENTIALS", labeled("API key", alpacaKey), labeled("Secret key", alpacaSecret), labeled("Data feed", feed), warning, save)));
-        worker.execute(() -> {
+        readWorkers.execute(() -> {
             try {
                 JsonNode config = gateway.get("/api/settings");
                 Platform.runLater(() -> { feed.setValue(config.path("alpaca_data_feed").asText("iex")); save.setDisable(false); });
@@ -511,38 +511,50 @@ public final class JarvisApplication extends Application {
     }
 
     private void startTelemetry() {
-        worker.scheduleAtFixedRate(() -> {
-            try {
-                if (socket == null || socket.isInputClosed()) {
-                    eventSequence = 0;
-                    socket = gateway.openEvents(event -> {
-                        if (event.path("version").asInt() != 1) return;
-                        synchronized (this) {
-                            long sequence = event.path("sequence").asLong();
-                            if (sequence <= eventSequence) return;
-                            eventSequence = sequence;
-                        }
-                        lastEventNanos = System.nanoTime();
-                        Platform.runLater(() -> applySnapshot(event.path("payload")));
-                    }, error -> { lastEventNanos = 0; showTelemetryError(error); });
-                    socketOpenedNanos = System.nanoTime();
-                    return;
+        scheduler.scheduleAtFixedRate(() -> {
+            if (!telemetryPollQueued.compareAndSet(false, true)) return;
+            telemetryWorker.execute(() -> {
+                try {
+                    pollTelemetry();
+                } finally {
+                    telemetryPollQueued.set(false);
                 }
-                long now = System.nanoTime();
-                boolean initialGraceExpired = lastEventNanos == 0
-                        && socketOpenedNanos > 0
-                        && now - socketOpenedNanos > TimeUnit.SECONDS.toNanos(8);
-                boolean establishedStreamStale = lastEventNanos > 0
-                        && now - lastEventNanos > TimeUnit.SECONDS.toNanos(8);
-                if (initialGraceExpired || establishedStreamStale) {
-                    JsonNode snapshot = gateway.get("/api/snapshot");
-                    JsonNode logs = gateway.get("/api/logs/bot?lines=80");
-                    ((com.fasterxml.jackson.databind.node.ObjectNode) snapshot).set("log_tail", logs.path("lines"));
-                    Platform.runLater(() -> applySnapshot(snapshot));
-                }
-            }
-            catch (Exception exc) { showTelemetryError(exc); }
+            });
         }, 2, 5, TimeUnit.SECONDS);
+    }
+
+    private void pollTelemetry() {
+        try {
+            if (socket == null || socket.isInputClosed()) {
+                eventSequence = 0;
+                socket = gateway.openEvents(event -> {
+                    if (event.path("version").asInt() != 1) return;
+                    synchronized (this) {
+                        long sequence = event.path("sequence").asLong();
+                        if (sequence <= eventSequence) return;
+                        eventSequence = sequence;
+                    }
+                    lastEventNanos = System.nanoTime();
+                    Platform.runLater(() -> applySnapshot(event.path("payload")));
+                }, error -> { lastEventNanos = 0; showTelemetryError(error); });
+                socketOpenedNanos = System.nanoTime();
+                return;
+            }
+            long now = System.nanoTime();
+            boolean initialGraceExpired = lastEventNanos == 0
+                    && socketOpenedNanos > 0
+                    && now - socketOpenedNanos > TimeUnit.SECONDS.toNanos(8);
+            boolean establishedStreamStale = lastEventNanos > 0
+                    && now - lastEventNanos > TimeUnit.SECONDS.toNanos(8);
+            if (initialGraceExpired || establishedStreamStale) {
+                JsonNode snapshot = gateway.get("/api/snapshot");
+                JsonNode logs = gateway.get("/api/logs/bot?lines=80");
+                ((com.fasterxml.jackson.databind.node.ObjectNode) snapshot).set("log_tail", logs.path("lines"));
+                Platform.runLater(() -> applySnapshot(snapshot));
+            }
+        } catch (Exception exc) {
+            showTelemetryError(exc);
+        }
     }
 
     private void refreshReadiness() {
@@ -617,7 +629,7 @@ public final class JarvisApplication extends Application {
     }
 
     private void refreshMarket() {
-        worker.execute(() -> {
+        readWorkers.execute(() -> {
             try {
                 JsonNode bars = gateway.get("/api/v1/market/GLD/bars?limit=390").path("bars");
                 XYChart.Series<Number, Number> series = new XYChart.Series<>();
@@ -812,8 +824,14 @@ public final class JarvisApplication extends Application {
 
     @Override
     public void stop() {
-        worker.shutdownNow();
-        commands.shutdownNow(); research.shutdownNow();
+        scheduler.shutdownNow();
+        startupWorker.shutdownNow();
+        telemetryWorker.shutdownNow();
+        readWorkers.shutdownNow();
+        graphWorker.shutdownNow();
+        commands.shutdownNow();
+        research.shutdownNow();
+        writeClientPerformance();
         if (socket != null) socket.abort();
         if (runtime != null) runtime.close();
         try { Files.deleteIfExists(runtime.projectRoot().resolve("logs/dashboard/javafx_client.pid")); }
@@ -835,6 +853,28 @@ public final class JarvisApplication extends Application {
 
     private record RowData(JsonNode node) {
         String value(String key) { JsonNode value = node.path(key); return value.isMissingNode() || value.isNull() ? "" : value.asText(); }
+    }
+
+    private void writeClientPerformance() {
+        if (gateway == null || runtime == null) return;
+        try {
+            java.nio.file.Path destination = runtime.projectRoot().resolve("logs/dashboard/javafx_client_latency.json");
+            Files.createDirectories(destination.getParent());
+            new com.fasterxml.jackson.databind.ObjectMapper()
+                    .writerWithDefaultPrettyPrinter()
+                    .writeValue(destination.toFile(), gateway.performanceSnapshot());
+        } catch (Exception ignored) {
+            // Shutdown diagnostics must never prevent the dashboard from closing.
+        }
+    }
+
+    private static java.util.concurrent.ThreadFactory threadFactory(String prefix) {
+        java.util.concurrent.atomic.AtomicInteger sequence = new java.util.concurrent.atomic.AtomicInteger();
+        return runnable -> {
+            Thread thread = new Thread(runnable, prefix + "-" + sequence.incrementAndGet());
+            thread.setDaemon(true);
+            return thread;
+        };
     }
 
     @FunctionalInterface private interface ThrowingSupplier { JsonNode get() throws Exception; }

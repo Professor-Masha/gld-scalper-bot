@@ -44,6 +44,10 @@ class GatewayClientTest {
             assertTrue(command.path("options").path("no_retraining").asBoolean());
             assertFalse(command.path("idempotency_key").asText().isBlank());
             assertThrows(IllegalStateException.class, () -> client.get("/api/error"));
+            @SuppressWarnings("unchecked")
+            var operations = (java.util.Map<String, Object>) client.performanceSnapshot().get("operations");
+            assertTrue(operations.containsKey("POST /api/v1/bot/start"));
+            assertTrue(operations.containsKey("GET /api/error"));
         } finally { server.stop(0); }
     }
 }

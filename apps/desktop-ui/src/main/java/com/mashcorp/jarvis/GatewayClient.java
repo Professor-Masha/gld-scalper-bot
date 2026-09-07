@@ -22,6 +22,7 @@ public final class GatewayClient {
     private final String token;
     private final HttpClient http;
     private final ObjectMapper json = new ObjectMapper();
+    private final ClientLatencyMonitor latency = new ClientLatencyMonitor();
 
     public GatewayClient(URI baseUri, String token) {
         if (!"http".equals(baseUri.getScheme()) || !java.util.Set.of("127.0.0.1", "localhost", "[::1]").contains(baseUri.getHost()) || baseUri.getUserInfo() != null) {
@@ -34,23 +35,37 @@ public final class GatewayClient {
     }
 
     public JsonNode get(String path) throws Exception {
-        HttpResponse<String> response = http.send(
-                HttpRequest.newBuilder(baseUri.resolve(path)).timeout(Duration.ofSeconds(12)).GET().build(),
-                HttpResponse.BodyHandlers.ofString());
-        return parse(response, path);
+        long started = System.nanoTime();
+        int status = 599;
+        try {
+            HttpResponse<String> response = http.send(
+                    HttpRequest.newBuilder(baseUri.resolve(path)).timeout(Duration.ofSeconds(12)).GET().build(),
+                    HttpResponse.BodyHandlers.ofString());
+            status = response.statusCode();
+            return parse(response, path);
+        } finally {
+            latency.observe("GET", path, elapsedMs(started), status);
+        }
     }
 
     public JsonNode post(String path, Object body) throws Exception {
         String payload = json.writeValueAsString(body);
-        HttpResponse<String> response = http.send(
-                HttpRequest.newBuilder(baseUri.resolve(path))
-                        .timeout(Duration.ofMinutes(5))
-                        .header("Content-Type", "application/json")
-                        .header("X-Dashboard-Token", token)
-                        .header("X-Correlation-ID", "javafx-" + UUID.randomUUID())
-                        .POST(HttpRequest.BodyPublishers.ofString(payload))
-                        .build(), HttpResponse.BodyHandlers.ofString());
-        return parse(response, path);
+        long started = System.nanoTime();
+        int status = 599;
+        try {
+            HttpResponse<String> response = http.send(
+                    HttpRequest.newBuilder(baseUri.resolve(path))
+                            .timeout(Duration.ofMinutes(5))
+                            .header("Content-Type", "application/json")
+                            .header("X-Dashboard-Token", token)
+                            .header("X-Correlation-ID", "javafx-" + UUID.randomUUID())
+                            .POST(HttpRequest.BodyPublishers.ofString(payload))
+                            .build(), HttpResponse.BodyHandlers.ofString());
+            status = response.statusCode();
+            return parse(response, path);
+        } finally {
+            latency.observe("POST", path, elapsedMs(started), status);
+        }
     }
 
     public JsonNode startPaper() throws Exception {
@@ -84,8 +99,10 @@ public final class GatewayClient {
     }
 
     public WebSocket openEvents(Consumer<JsonNode> onEvent, Consumer<Throwable> onError) {
-        return http.newWebSocketBuilder().connectTimeout(Duration.ofSeconds(5))
-                .buildAsync(webSocketUri(), new WebSocket.Listener() {
+        long started = System.nanoTime();
+        try {
+            WebSocket socket = http.newWebSocketBuilder().connectTimeout(Duration.ofSeconds(5))
+                    .buildAsync(webSocketUri(), new WebSocket.Listener() {
                     private final StringBuilder buffer = new StringBuilder();
 
                     @Override
@@ -110,7 +127,21 @@ public final class GatewayClient {
                     public void onError(WebSocket webSocket, Throwable error) {
                         onError.accept(error);
                     }
-                }).join();
+                    }).join();
+            latency.observe("WS", "/api/v1/events", elapsedMs(started), 101);
+            return socket;
+        } catch (RuntimeException exc) {
+            latency.observe("WS", "/api/v1/events", elapsedMs(started), 599);
+            throw exc;
+        }
+    }
+
+    public Map<String, Object> performanceSnapshot() {
+        return latency.snapshot();
+    }
+
+    public void recordOperation(String name, double elapsedMs) {
+        latency.observeOperation(name, elapsedMs);
     }
 
     private URI webSocketUri() {
@@ -122,5 +153,9 @@ public final class GatewayClient {
             throw new IllegalStateException(path + " returned HTTP " + response.statusCode() + ": " + response.body());
         }
         return response.body().isBlank() ? json.createObjectNode() : json.readTree(response.body());
+    }
+
+    private static double elapsedMs(long startedNanos) {
+        return (System.nanoTime() - startedNanos) / 1_000_000.0;
     }
 }

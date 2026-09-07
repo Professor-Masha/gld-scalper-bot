@@ -29,6 +29,13 @@ This package provides the local Python control gateway used by the native JavaFX
 deduplicates repeated evidence, and groups it for people while retaining the
 original reason. It cannot alter a signal or risk veto.
 
+`interface_performance.py` maintains bounded in-memory gateway timings by
+normalized route. Dynamic node IDs and result names collapse into stable route
+templates, preventing the metric registry from growing with trading history.
+`/api/v1/system/interface-latency` exposes p50, p95, p99, maximum, sample count,
+and HTTP status counts. Middleware also adds `X-Dashboard-Response-Ms` and
+`Server-Timing` to each response.
+
 `DashboardService.readiness()` also returns separate `interface`, `trading`,
 `market`, and `llm` sections. The trading section remains derived from database,
 configuration, audit-ledger, paper-mode, and command-allowlist checks. Market
@@ -55,6 +62,7 @@ The locally vendored Three.js HUD is visual only. Its low-power renderer pauses 
 - `telemetry.py`: opens SQLite separately in read-only/query-only mode and produces account, quote, episode, outcome, model, decision, safety, and equity views. Performance analytics groups malformed legacy bracket identifiers under `legacy_unclassified` instead of presenting them as playbooks.
 - `memory_graph.py`: builds the bounded learned-state graph, model lineage, node inspector payloads, time-filtered memory timeline, visual status encoding, and TTL cache without touching raw quote/trade archives.
 - `decision_explanation.py`: stable reason-code classification and grouped plain-language decision evidence.
+- `interface_performance.py`: bounded route-level latency samples and percentile summaries for the local gateway.
 - `static/index.html`: operational views for market, performance, trades, intelligence, training, system diagnostics, and local settings.
 - `static/styles.css`: responsive cyan/green command-center visual system.
 - `static/app.js`: live WebSocket updates, native chart telemetry, research providers, forms, process controls, tables, settings, and terminal output.
@@ -67,15 +75,16 @@ The server binds only to `127.0.0.1`, `localhost`, or `::1`. State-changing requ
 ## Runtime Flow
 
 1. `GatewayRuntime` starts `gld-scalper dashboard` on an unused loopback port with an in-memory one-session token.
-2. JavaFX waits for `/api/v1/system/health`, then consumes versioned REST and WebSocket contracts.
-3. `/api/v1/events` sends a versioned, traced, sequenced SQLite snapshot and log tail every two seconds.
-4. A start control creates a typed command with an idempotency key.
-5. `ControlPlane` serializes the operation, records the request, and maps it to a fixed CLI argument list.
-6. `ProcessManager` launches that CLI in its own process group and captures output. The Desktop launcher separately records the dashboard server PID and exact start time so its stop script cannot target a reused PID.
-7. Completion or rejection is recorded in the hash-chained audit ledger with its correlation ID.
-8. Paper execution continues through the existing bot; the dashboard only observes its database and process state.
-9. Stop sends `CTRL_BREAK_EVENT` on Windows so the bot can run its normal safety shutdown.
-10. Memory-graph requests run through an independent read-only repository. The JavaFX animation thread receives already-bounded JSON and never enters the bot's decision or order threads.
+2. Gateway lifespan startup prewarms bounded provider, Transformer, Overview, and Memory Graph summaries.
+3. JavaFX waits for `/api/v1/system/health`, then consumes versioned REST and WebSocket contracts.
+4. `/api/v1/events` sends a versioned, traced, sequenced SQLite snapshot and log tail every two seconds.
+5. A start control creates a typed command with an idempotency key.
+6. `ControlPlane` serializes the operation, records the request, and maps it to a fixed CLI argument list.
+7. `ProcessManager` launches that CLI in its own process group and captures output. The Desktop launcher separately records the dashboard server PID and exact start time so its stop script cannot target a reused PID.
+8. Completion or rejection is recorded in the hash-chained audit ledger with its correlation ID.
+9. Paper execution continues through the existing bot; the dashboard only observes its database and process state.
+10. Stop sends `CTRL_BREAK_EVENT` on Windows so the bot can run its normal safety shutdown.
+11. Memory-graph requests run through an independent read-only repository. The JavaFX animation thread receives already-bounded JSON and never enters the bot's decision or order threads.
 
 JavaFX is the primary Windows presentation client. The browser/PWA is retained as a fallback and API-development harness. Both use the same stable gateway; neither duplicates or rewrites the Python execution engine. See `docs/architecture/JARVIS_CONTROL_PLANE.md`.
 

@@ -548,6 +548,16 @@ read-only dashboard graph requests. It is a local regression check, not a claim
 about internet, exchange or broker latency. Fill timing can only be validated
 during an open paper session.
 
+Interface responsiveness is measured separately from trading latency. The
+gateway prewarms bounded catalogs and graph summaries during its lifespan
+startup, records normalized route p50/p95/p99 at
+`/api/v1/system/interface-latency`, and adds `Server-Timing` to each response.
+JavaFX separates startup, telemetry, graph, ordinary reads, commands, and LLM
+research into dedicated queues; telemetry fallback cannot accumulate duplicate
+polls. On clean shutdown it writes end-to-end client measurements to
+`logs/dashboard/javafx_client_latency.json`. Neither metric path reads raw quote
+archives or participates in signal, risk, or broker execution.
+
 #### Daily Native Desktop Workflow
 
 1. Double-click the Desktop shortcut. A second native instance for the same

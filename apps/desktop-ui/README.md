@@ -49,6 +49,7 @@ finished. LLM readiness is deliberately non-blocking and has no broker authority
 | `Launcher.java` | Stable non-JavaFX JVM entry point. |
 | `GatewayRuntime.java` | Secure lifecycle for the local Python gateway. |
 | `GatewayClient.java` | REST/WebSocket transport and authenticated commands. |
+| `ClientLatencyMonitor.java` | Bounded JavaFX end-to-end request, WebSocket-connect, and startup-to-usable percentiles. |
 | `JarvisApplication.java` | Native window, navigation, tables, charts, forms, and state projection. |
 | `StartupOverlay.java` | Immediate, phase-backed 0-100% startup presentation and failure state. |
 | `ReadinessSnapshot.java` | Pure projection of the gateway readiness contract into human-facing states. |
@@ -89,7 +90,11 @@ gateway process, not the bot's broker safety lifecycle. `JARVIS_PROJECT_ROOT`
 selects the project; `JARVIS_PYTHON` is an optional development interpreter
 override. Neither variable should contain credentials.
 
-The app uses separate telemetry, operator-command and long-research workers.
+The app uses separate startup, scheduler, telemetry, general-read, graph-read,
+operator-command, and long-research workers. A slow Memory Graph request cannot
+sit in front of telemetry fallback, and a slow analytics query cannot block a
+node inspection. Only one telemetry fallback poll may be queued at a time, so a
+temporarily busy SQLite database cannot create an unbounded poll backlog.
 JavaFX controls are read on the application thread before requests are queued;
 UI changes are applied with `Platform.runLater`. WebSocket events carry sequence
 numbers, with read-only HTTP polling as fallback. Live job logs refresh every
@@ -100,6 +105,15 @@ The client gives a newly opened event stream an eight-second first-message grace
 before REST fallback, avoiding duplicate cold snapshots against large retained
 paper databases. Workspace request failures remain local notifications; only a
 telemetry transport failure can mark the command center degraded.
+
+The Python gateway prewarms provider, Transformer-catalog, Overview-graph, and
+30-day Memory Graph caches before reporting startup complete. Every HTTP
+response includes `X-Dashboard-Response-Ms` and `Server-Timing`; the bounded
+gateway aggregate is available at `/api/v1/system/interface-latency`. JavaFX
+separately measures full client-observed latency, including transport and queue
+effects, and writes `logs/dashboard/javafx_client_latency.json` when the window
+closes. These measurements contain route names, status counts, and percentiles,
+not credentials or request bodies.
 
 For read-only rendering QA, set `JARVIS_SMOKE_DIR` to an ignored output folder
 before launching. It waits for the first real telemetry snapshot, visits every view, captures desktop/compact screenshots,

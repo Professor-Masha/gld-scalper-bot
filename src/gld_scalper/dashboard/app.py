@@ -5,7 +5,9 @@ import json
 import os
 import secrets
 import subprocess
+import time
 import webbrowser
+from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
 from threading import Timer
@@ -36,6 +38,7 @@ from .job_results import JobResultRepository
 from .llm_providers import LLMProviderService
 from .memory_graph import GRAPH_TYPES, MemoryGraphRepository
 from .decision_explanation import explain_decision
+from .interface_performance import RequestLatencyMonitor
 from .settings_store import EnvFileStore
 from .telemetry import TelemetryRepository
 from .whitepaper import WhitePaperRepository
@@ -85,6 +88,38 @@ class DashboardService:
             self.project_root,
             lambda: load_settings(self.project_root / ".env").database_path,
         )
+        self.interface_latency = RequestLatencyMonitor()
+        self.cache_warmup: dict[str, Any] = {"status": "pending", "steps": {}}
+
+    def warm_caches(self) -> dict[str, Any]:
+        started = time.perf_counter()
+        steps: dict[str, float] = {}
+
+        def run(name: str, operation) -> None:
+            step_started = time.perf_counter()
+            operation()
+            steps[name] = round((time.perf_counter() - step_started) * 1000, 3)
+
+        try:
+            run("provider_catalog", self.llm_providers.catalog)
+            run("transformer_catalog", self.catalog.payload)
+            run("overview_graph", lambda: self.memory_graph.graph(
+                types={"decision", "market", "model", "playbook", "risk"}, window="1d"
+            ))
+            run("memory_workspace", lambda: self.memory_graph.graph(window="30d"))
+            self.cache_warmup = {
+                "status": "ready",
+                "steps": steps,
+                "elapsed_ms": round((time.perf_counter() - started) * 1000, 3),
+            }
+        except Exception as exc:
+            self.cache_warmup = {
+                "status": "degraded",
+                "steps": steps,
+                "elapsed_ms": round((time.perf_counter() - started) * 1000, 3),
+                "error": str(exc)[:300],
+            }
+        return self.cache_warmup
 
     @property
     def telemetry(self) -> TelemetryRepository:
@@ -154,6 +189,7 @@ class DashboardService:
             "api_version": API_VERSION,
             "service": "gld-dashboard-gateway",
             "audit_integrity": bool(audit.get("valid")),
+            "cache_warmup": self.cache_warmup,
         }
 
     def readiness(self) -> dict[str, Any]:
@@ -304,9 +340,20 @@ class DashboardService:
 
 
 def create_dashboard_app(project_root: Path = PROJECT_ROOT) -> FastAPI:
-    app = FastAPI(title="Mashcorp GLD Command Center", docs_url=None, redoc_url=None)
-    app.add_middleware(GZipMiddleware, minimum_size=1024)
     service = DashboardService(project_root)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        await asyncio.to_thread(service.warm_caches)
+        yield
+
+    app = FastAPI(
+        title="Mashcorp GLD Command Center",
+        docs_url=None,
+        redoc_url=None,
+        lifespan=lifespan,
+    )
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
     supplied_token = os.getenv("DASHBOARD_SESSION_TOKEN", "").strip()
     if supplied_token and len(supplied_token) < 32:
         raise RuntimeError("DASHBOARD_SESSION_TOKEN must contain at least 32 characters")
@@ -323,8 +370,17 @@ def create_dashboard_app(project_root: Path = PROJECT_ROOT) -> FastAPI:
         if request.client and request.client.host not in LOCAL_HOSTS: raise HTTPException(403, "Dashboard is local-only")
         correlation_id = request.headers.get("X-Correlation-ID") or new_identifier("trace")
         request.state.correlation_id = correlation_id
-        response = await call_next(request)
+        started = time.perf_counter()
+        status_code = 500
+        try:
+            response = await call_next(request)
+            status_code = response.status_code
+        finally:
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            service.interface_latency.observe(request.method, request.url.path, elapsed_ms, status_code)
         response.headers["X-Correlation-ID"] = correlation_id
+        response.headers["X-Dashboard-Response-Ms"] = f"{elapsed_ms:.3f}"
+        response.headers["Server-Timing"] = f"dashboard;dur={elapsed_ms:.3f}"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
         return response
@@ -395,6 +451,8 @@ def create_dashboard_app(project_root: Path = PROJECT_ROOT) -> FastAPI:
     async def v1_health(): return await asyncio.to_thread(service.health)
     @app.get("/api/v1/system/readiness")
     async def v1_readiness(): return await asyncio.to_thread(service.readiness)
+    @app.get("/api/v1/system/interface-latency")
+    async def v1_interface_latency(): return service.interface_latency.snapshot()
     @app.get("/api/v1/system/status")
     async def v1_status(): return await asyncio.to_thread(service.control_status)
     @app.get("/api/v1/market/GLD/snapshot")
