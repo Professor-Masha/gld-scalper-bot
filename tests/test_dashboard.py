@@ -341,6 +341,11 @@ def test_dashboard_control_status_is_backend_derived(tmp_path: Path) -> None:
     assert status["environment"] == "paper"
     assert status["ui_broker_authority"] is False
     assert readiness["checks"]["paper_mode"] is True
+    assert readiness["interface"] == {"ready": True, "state": "ready"}
+    assert readiness["trading"]["authority"] == "python-risk-engine"
+    assert readiness["market"]["session"] in {"premarket", "regular", "afterhours", "closed"}
+    assert readiness["llm"]["blocking"] is False
+    assert readiness["llm"]["broker_authority"] is False
 
 
 def test_dashboard_includes_volatility_research_workspace() -> None:

@@ -27,9 +27,11 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 
@@ -54,6 +56,8 @@ public final class JarvisApplication extends Application {
     private final Label streamValue = statusValue("WAITING");
     private final Label modelValue = statusValue("DISCOVERING");
     private final Label sessionValue = statusValue("PAPER");
+    private final ReadinessStrip readinessStrip = new ReadinessStrip();
+    private final StartupOverlay startupOverlay = new StartupOverlay();
     private final TextArea terminal = new TextArea();
     private final DecisionCore3D core3D = new DecisionCore3D();
     private final NodeInspector overviewInspector = new NodeInspector();
@@ -83,29 +87,23 @@ public final class JarvisApplication extends Application {
     private boolean reducedMotion = preferences.getBoolean("reducedMotion", false);
     private volatile String overviewGraphFingerprint = "";
     private volatile GraphRenderPlan overviewGraphPlan;
+    private volatile boolean startupComplete;
+    private volatile boolean tradingAllowed;
+    private volatile ReadinessSnapshot readinessSnapshot = new ReadinessSnapshot(
+            "STARTING", "LOCKED", "CHECKING", "CHECKING", false);
 
     public static void launchApplication(String[] args) {
         launch(args);
     }
 
     @Override
-    public void init() throws Exception {
+    public void init() {
         runtime = new GatewayRuntime();
-        runtime.start();
-        gateway = new GatewayClient(runtime.baseUri(), runtime.token());
     }
 
     @Override
     public void start(Stage stage) {
-        writeClientPid();
-        BorderPane shell = new BorderPane();
-        shell.getStyleClass().add("app-shell");
-        shell.setTop(buildTopBar());
-        shell.setLeft(buildNavigation());
-        shell.setCenter(workspace);
-        showOverview();
-
-        StackPane root = new StackPane(new HudBackdrop(), shell);
+        StackPane root = new StackPane(new HudBackdrop(), startupOverlay);
         root.getStyleClass().add("root-deck");
         Scene scene = new Scene(root, 1500, 920, Color.web("#010507"));
         scene.getStylesheets().add(getClass().getResource("/com/mashcorp/jarvis/jarvis.css").toExternalForm());
@@ -115,6 +113,9 @@ public final class JarvisApplication extends Application {
         stage.setScene(scene);
         stage.widthProperty().addListener((observable, before, width) -> {
             boolean wide = width.doubleValue() >= 1100; clock.setVisible(wide); clock.setManaged(wide);
+            boolean readinessVisible = width.doubleValue() >= 1260;
+            readinessStrip.node().setVisible(readinessVisible);
+            readinessStrip.node().setManaged(readinessVisible);
         });
         stage.setMaximized(true);
         stage.setOnCloseRequest(event -> {
@@ -125,7 +126,95 @@ public final class JarvisApplication extends Application {
             }
         });
         stage.show();
+        startupOverlay.update(10, "JavaFX interface initialized");
+        worker.execute(() -> bootstrap(stage, root));
+    }
+
+    private void bootstrap(Stage stage, StackPane root) {
+        try {
+            startupOverlay.update(15, "Starting secure local Python gateway");
+            runtime.start();
+            gateway = new GatewayClient(runtime.baseUri(), runtime.token());
+            startupOverlay.update(25, "Local gateway healthy");
+
+            JsonNode readiness = gateway.get("/api/v1/system/readiness");
+            startupOverlay.update(40, "Database, configuration, and audit ledger checked");
+            JsonNode snapshot = gateway.get("/api/snapshot");
+            startupOverlay.update(55, "Account and bot status loaded");
+            JsonNode providers = providerCatalogOrFallback(readiness);
+            ReadinessSnapshot resolvedReadiness = ReadinessSnapshot.from(readiness, providers);
+            startupOverlay.update(70, "ML registry and research configuration discovered");
+            GraphRenderPlan graphPlan = loadInitialGraphPlan();
+            startupOverlay.update(88, graphPlan == null
+                    ? "Decision memory deferred; interface remains available"
+                    : "Decision memory summary cached");
+
+            runOnFxAndWait(() -> initializeShell(stage, root, snapshot, resolvedReadiness, graphPlan));
+            startupOverlay.update(96, "Telemetry listener initialized");
+            startupComplete = true;
+            Platform.runLater(() -> startupOverlay.complete(reducedMotion, () -> beginSmokeCheck(stage)));
+        } catch (Exception exc) {
+            Platform.runLater(() -> {
+                readinessStrip.degraded();
+                startupOverlay.fail(exc.getMessage());
+                notification.setText("STARTUP BLOCKED\n" + exc.getMessage());
+            });
+        }
+    }
+
+    private void initializeShell(
+            Stage stage,
+            StackPane root,
+            JsonNode snapshot,
+            ReadinessSnapshot resolvedReadiness,
+            GraphRenderPlan graphPlan) {
+        writeClientPid();
+        BorderPane shell = new BorderPane();
+        shell.getStyleClass().add("app-shell");
+        shell.setTop(buildTopBar());
+        shell.setLeft(buildNavigation());
+        shell.setCenter(workspace);
+        root.getChildren().add(1, shell);
+        showOverview();
+        if (graphPlan != null) {
+            core3D.applyPlan(graphPlan);
+            overviewGraphFingerprint = graphPlan.fingerprint();
+            overviewGraphPlan = graphPlan;
+        }
+        applyReadiness(resolvedReadiness);
+        applySnapshot(snapshot);
         startTelemetry();
+        scheduleInterfaceTasks();
+    }
+
+    private JsonNode providerCatalogOrFallback(JsonNode readiness) {
+        try {
+            return gateway.get("/api/llm/providers");
+        } catch (Exception ignored) {
+            var fallback = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
+            fallback.put("active_provider", readiness.path("llm").path("provider").asText("none"));
+            return fallback;
+        }
+    }
+
+    private GraphRenderPlan loadInitialGraphPlan() {
+        try {
+            JsonNode graph = gateway.get("/api/v1/memory-graph/summary?types=decision,market,model,playbook,risk&window=1d");
+            return GraphRenderPlan.build(graph, null);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private void scheduleInterfaceTasks() {
+        worker.scheduleWithFixedDelay(() -> Platform.runLater(() -> currentRefresh.run()), 10, 10, TimeUnit.SECONDS);
+        worker.scheduleWithFixedDelay(this::refreshReadiness, 30, 30, TimeUnit.SECONDS);
+        worker.scheduleAtFixedRate(() -> Platform.runLater(() ->
+                clock.setText(DateTimeFormatter.ofPattern("EEE, dd MMM yyyy  HH:mm:ss")
+                        .withZone(ZoneId.systemDefault()).format(Instant.now()))), 0, 1, TimeUnit.SECONDS);
+    }
+
+    private void beginSmokeCheck(Stage stage) {
         String smokeDirectory = System.getenv("JARVIS_SMOKE_DIR");
         if (smokeDirectory != null && !smokeDirectory.isBlank()) {
             DesktopSmokeCheck.run(stage, java.nio.file.Path.of(smokeDirectory), () -> latestSnapshot != null, List.of(
@@ -133,10 +222,6 @@ public final class JarvisApplication extends Application {
                     this::showTrading, this::showIntelligence, this::showMemoryGraph, this::showTraining, this::showAiLab,
                     this::showWhitePaper, this::showControlPlane, this::showSettings, this::showOverview));
         }
-        worker.scheduleWithFixedDelay(() -> Platform.runLater(() -> currentRefresh.run()), 10, 10, TimeUnit.SECONDS);
-        worker.scheduleAtFixedRate(() -> Platform.runLater(() ->
-                clock.setText(DateTimeFormatter.ofPattern("EEE, dd MMM yyyy  HH:mm:ss")
-                        .withZone(ZoneId.systemDefault()).format(Instant.now()))), 0, 1, TimeUnit.SECONDS);
     }
 
     private Node buildTopBar() {
@@ -164,7 +249,7 @@ public final class JarvisApplication extends Application {
         brand.setMinWidth(240); brand.setMaxWidth(410);
         title.setMinWidth(120); title.setMaxWidth(410); title.setWrapText(true);
         clock.setMinWidth(0); clock.setMaxWidth(210); clock.setWrapText(true);
-        HBox bar = new HBox(12, brand, systemState, spacer, network, clock, paperStop, paperStart);
+        HBox bar = new HBox(12, brand, systemState, readinessStrip.node(), spacer, network, clock, paperStop, paperStart);
         bar.setAlignment(Pos.CENTER_LEFT);
         bar.getStyleClass().add("top-bar");
         return bar;
@@ -203,7 +288,9 @@ public final class JarvisApplication extends Application {
 
     private void showOverview() {
         if (overviewPage != null) {
-            setWorkspace(overviewPage); currentRefresh = this::refreshOverviewGraph; refreshOverviewGraph(); return;
+            setWorkspace(overviewPage); currentRefresh = this::refreshOverviewGraph;
+            if (startupComplete) refreshOverviewGraph();
+            return;
         }
         FlowPane metrics = new FlowPane(10, 10,
                 metric("GLD MID", quoteValue), metric("EQUITY", equityValue), metric("NET P/L TODAY", pnlValue),
@@ -232,7 +319,7 @@ public final class JarvisApplication extends Application {
         core3D.setSelectionListener(this::inspectOverviewNode);
         setWorkspace(overviewPage);
         currentRefresh = this::refreshOverviewGraph;
-        refreshOverviewGraph();
+        if (startupComplete) refreshOverviewGraph();
     }
 
     private void showMarket() {
@@ -458,6 +545,35 @@ public final class JarvisApplication extends Application {
         }, 2, 5, TimeUnit.SECONDS);
     }
 
+    private void refreshReadiness() {
+        try {
+            JsonNode readiness = gateway.get("/api/v1/system/readiness");
+            JsonNode providers = gateway.get("/api/llm/providers");
+            ReadinessSnapshot resolved = ReadinessSnapshot.from(readiness, providers);
+            Platform.runLater(() -> applyReadiness(resolved));
+        } catch (Exception exc) {
+            Platform.runLater(() -> {
+                tradingAllowed = false;
+                readinessStrip.degraded();
+                if (paperStart != null) paperStart.setDisable(true);
+            });
+        }
+    }
+
+    private void applyReadiness(ReadinessSnapshot resolved) {
+        readinessSnapshot = resolved;
+        tradingAllowed = resolved.tradingAllowed();
+        readinessStrip.apply(resolved);
+        if (paperStart == null) return;
+        String bot = latestSnapshot == null
+                ? "OFFLINE"
+                : latestSnapshot.path("control_plane").path("paper_process").path("state").asText("offline").toUpperCase();
+        paperStart.setDisable(!tradingAllowed || bot.matches("RUNNING|STOPPING|UNKNOWN"));
+        if (bot.matches("RUNNING|STOPPING")) {
+            readinessStrip.setTrading("RUNNING".equals(bot) ? "ACTIVE" : "STOPPING");
+        }
+    }
+
     private void applySnapshot(JsonNode snapshot) {
         if (snapshot == null || snapshot.isMissingNode()) return;
         latestSnapshot = snapshot;
@@ -476,8 +592,11 @@ public final class JarvisApplication extends Application {
         JsonNode paper = snapshot.path("control_plane").path("paper_process");
         String bot = paper.path("state").asText("offline").toUpperCase();
         botValue.setText(bot.matches("RUNNING|STOPPING") ? bot : "OFFLINE");
-        paperStart.setDisable(bot.matches("RUNNING|STOPPING|UNKNOWN"));
+        paperStart.setDisable(!tradingAllowed || bot.matches("RUNNING|STOPPING|UNKNOWN"));
         paperStop.setDisable(!bot.matches("RUNNING"));
+        readinessStrip.setTrading(bot.matches("RUNNING|STOPPING")
+                ? ("RUNNING".equals(bot) ? "ACTIVE" : "STOPPING")
+                : readinessSnapshot.tradingState());
         String state = snapshot.path("control_plane").path("state").asText("UNKNOWN");
         updateSystemState(state);
         core3D.setState(state);
@@ -531,7 +650,29 @@ public final class JarvisApplication extends Application {
             updateSystemState("DEGRADED");
             core3D.setState("DEGRADED");
             paperStart.setDisable(true);
+            readinessStrip.setTrading("BLOCKED");
+            readinessStrip.setMarket("DEGRADED");
         });
+    }
+
+    private static void runOnFxAndWait(Runnable action) throws Exception {
+        if (Platform.isFxApplicationThread()) {
+            action.run();
+            return;
+        }
+        CountDownLatch completed = new CountDownLatch(1);
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Platform.runLater(() -> {
+            try {
+                action.run();
+            } catch (Throwable exc) {
+                failure.set(exc);
+            } finally {
+                completed.countDown();
+            }
+        });
+        completed.await();
+        if (failure.get() != null) throw new IllegalStateException("JavaFX startup composition failed", failure.get());
     }
 
     private void setWorkspace(Node node) {

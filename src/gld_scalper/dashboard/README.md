@@ -29,6 +29,13 @@ This package provides the local Python control gateway used by the native JavaFX
 deduplicates repeated evidence, and groups it for people while retaining the
 original reason. It cannot alter a signal or risk veto.
 
+`DashboardService.readiness()` also returns separate `interface`, `trading`,
+`market`, and `llm` sections. The trading section remains derived from database,
+configuration, audit-ledger, paper-mode, and command-allowlist checks. Market
+session is a time-zone-aware informational state. LLM configuration is
+non-blocking and explicitly carries `broker_authority=false`; it is not a
+generation-health claim.
+
 `TelemetryRepository.latency_summary()` powers `/api/v1/performance/latency`
 and reports stage percentiles from `execution_latency_events` without joining
 raw market archives.

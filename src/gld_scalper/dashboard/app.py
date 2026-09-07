@@ -18,6 +18,7 @@ from starlette.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel, Field
 
 from ..config import PROJECT_ROOT, load_settings
+from ..utils.time_utils import market_session, utc_now
 from .audit import AuditLedger
 from .contracts import (
     API_VERSION,
@@ -165,7 +166,32 @@ class DashboardService:
             "paper_mode": True,
             "allowlisted_commands": True,
         }
-        result = {"ready": all(checks.values()), "checks": checks, "api_version": API_VERSION}
+        ready = all(checks.values())
+        session = market_session(utc_now(), extended_hours=True)
+        providers = self.llm_providers.catalog()
+        active_provider = str(providers.get("active_provider") or "none")
+        result = {
+            "ready": ready,
+            "checks": checks,
+            "api_version": API_VERSION,
+            "interface": {"ready": True, "state": "ready"},
+            "trading": {
+                "ready": ready,
+                "state": "available" if ready else "blocked",
+                "authority": "python-risk-engine",
+            },
+            "market": {
+                "session": session,
+                "regular_open": session == "regular",
+                "data_stream_required_for_orders": True,
+            },
+            "llm": {
+                "provider": active_provider,
+                "configured": active_provider in {"ollama", "kimi"},
+                "blocking": False,
+                "broker_authority": False,
+            },
+        }
         if configuration_error:
             result["configuration_error"] = configuration_error
         return result

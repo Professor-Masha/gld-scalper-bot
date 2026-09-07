@@ -401,6 +401,14 @@ The installed operator surface is a native JavaFX 21 application. Python still
 owns trading, risk, reconciliation, persistence, model promotion, and broker
 access. JavaFX communicates only with the local versioned FastAPI gateway.
 
+The native window appears immediately with a real staged readiness loader. Its
+percentage advances as the local gateway, database and audit checks, first
+snapshot, model/research catalog, compact Memory Graph, and telemetry listener
+become available. At 100%, the interface is usable. A persistent top-bar strip
+separately reports interface readiness, the backend paper-trading gate, market
+session, and configured research LLM; a closed market or cold Ollama model does
+not falsely make the interface itself appear broken.
+
 Bootstrap the private project-local Java 21 and Maven toolchain once:
 
 ```powershell

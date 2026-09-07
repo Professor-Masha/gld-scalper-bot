@@ -19,6 +19,28 @@ submit broker orders, or implement risk rules.
    hardware-accelerated JavaFX `SubScene`. It is a display component and cannot
    influence a trade.
 
+## Staged Startup And Readiness
+
+JavaFX displays `StartupOverlay` immediately; it no longer waits behind Python
+gateway startup with a blank or frozen-looking window. The progress bar advances
+only after completed phases: JavaFX initialization, gateway health, database and
+audit checks, the first telemetry snapshot, model/research discovery, compact
+Memory Graph warmup, interface composition, and telemetry-listener startup.
+
+One hundred percent means the **core interface is usable**. It does not claim
+that the market is open, paper trading is active, or an LLM has completed a
+generation. `ReadinessStrip` therefore keeps four states separate:
+
+- **Interface:** whether the local operator application can be used.
+- **Trading:** locked, available, active, stopping, or blocked by backend checks.
+- **Market:** regular open, premarket, after-hours, closed, or degraded telemetry.
+- **Research AI:** disabled or the configured provider. Configuration is not
+  presented as proof that an Ollama/Kimi generation succeeded.
+
+The Python `/api/v1/system/readiness` response is authoritative for the trading
+gate. JavaFX cannot enable **Start Paper** merely because its own rendering has
+finished. LLM readiness is deliberately non-blocking and has no broker authority.
+
 ## Files
 
 | File | Responsibility |
@@ -28,6 +50,9 @@ submit broker orders, or implement risk rules.
 | `GatewayRuntime.java` | Secure lifecycle for the local Python gateway. |
 | `GatewayClient.java` | REST/WebSocket transport and authenticated commands. |
 | `JarvisApplication.java` | Native window, navigation, tables, charts, forms, and state projection. |
+| `StartupOverlay.java` | Immediate, phase-backed 0-100% startup presentation and failure state. |
+| `ReadinessSnapshot.java` | Pure projection of the gateway readiness contract into human-facing states. |
+| `ReadinessStrip.java` | Persistent interface, trading, market, and research-AI status display. |
 | `DecisionCore3D.java` | Native 3D force layout, color/size encoding, live-evidence pulses, selection, drag, and zoom. It consumes bounded JSON and has no database or broker dependency. |
 | `MemoryGraphWorkspace.java` | Read-only graph filters, node inspector, cache status, and chronological training-lineage timeline. |
 | `HudBackdrop.java` | Lightweight canvas grid and corner registration marks behind the native command deck. |
