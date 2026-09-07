@@ -237,20 +237,67 @@ class DashboardService:
         catalog = self.llm_providers.catalog()
         active = str(catalog.get("active_provider") or "none")
         provider = next((item for item in catalog.get("providers", []) if item.get("id") == active), None)
-        process = next((item for item in self.processes.statuses() if item.get("name") == "llm_analysis"), None)
-        result = self.results.latest("llm_analysis")
-        lines = self.processes.tail("llm_analysis", 24)
+        processes = self.processes.statuses()
+        review = self._research_job_status(
+            "llm_analysis",
+            processes,
+            empty_message="No completed offline review is available yet.",
+            completed_message="The latest offline review completed and is ready below.",
+        )
+        pipeline = self._research_job_status(
+            "llm_cycle",
+            processes,
+            empty_message="No FinGPT research cycle has been run from this workspace yet.",
+            completed_message="The latest FinGPT research cycle completed and its evidence is ready below.",
+        )
+        source = dict(catalog.get("fingpt") or {})
+        source["status"] = "ready" if source.get("available") else "source_missing"
+        source["execution_mode"] = "offline_only"
+        source["reasoning_engine"] = active
+        source["broker_authority"] = False
+        return {
+            "provider": provider or {"id": active, "configured": False, "runtime": {"state": "not_configured"}},
+            "providers": catalog.get("providers") or [],
+            "review": review,
+            "fingpt_pipeline": {
+                "source": source,
+                "cycle": pipeline,
+                "workflows": [
+                    "news price linkage",
+                    "financial sentiment classification",
+                    "GLD macro context",
+                    "local knowledge retrieval",
+                    "multi-agent advisory",
+                    "journal and training review",
+                ],
+                "can_run": bool(source.get("available")) and active in {"ollama", "kimi"},
+            },
+            "safety": catalog.get("safety") or {},
+        }
+
+    def _research_job_status(
+        self,
+        name: str,
+        processes: list[dict[str, Any]],
+        *,
+        empty_message: str,
+        completed_message: str,
+    ) -> dict[str, Any]:
+        """Describe one allowlisted research job without blocking or reading an unbounded log."""
+        process = next((item for item in processes if item.get("name") == name), None)
+        result = self.results.latest(name)
+        lines = self.processes.tail(name, 24)
         process_state = str((process or {}).get("state") or "idle")
         if process_state == "completed" and result is not None:
-            message = "The latest offline review completed and is ready below."
+            message = completed_message
         elif process_state == "failed":
-            message = next((line for line in reversed(lines) if line.strip()), "The offline review failed. Review the recent activity.")
+            message = next((line for line in reversed(lines) if line.strip()), f"The {name} job failed. Review recent activity.")
         elif process_state in {"running", "stopping"}:
-            message = "The offline review is still running. Results will appear automatically when it finishes."
+            message = "The research job is still running. Results will appear automatically when it finishes."
         elif result is not None:
-            message = "A previous completed offline review is available."
+            message = completed_message
         else:
-            message = "No completed offline review is available yet."
+            message = empty_message
         safe_process = None if process is None else {
             "name": process.get("name"),
             "state": process_state,
@@ -258,17 +305,12 @@ class DashboardService:
             "return_code": process.get("return_code"),
         }
         return {
-            "provider": provider or {"id": active, "configured": False, "runtime": {"state": "not_configured"}},
-            "providers": catalog.get("providers") or [],
-            "review": {
-                "state": process_state,
-                "message": message[:500],
-                "process": safe_process,
-                "result_available": result is not None,
-                "result": result,
-                "recent_activity": lines[-12:],
-            },
-            "safety": catalog.get("safety") or {},
+            "state": process_state,
+            "message": message[:500],
+            "process": safe_process,
+            "result_available": result is not None,
+            "result": result,
+            "recent_activity": lines[-12:],
         }
 
     def start(self, action: str, options: dict[str, Any]) -> dict[str, Any]:

@@ -106,6 +106,38 @@ def test_llm_status_exposes_completed_result_without_broker_authority(tmp_path: 
     assert payload["safety"]["live_broker_authority"] is False
 
 
+def test_llm_status_separates_fingpt_cycle_from_one_off_review(tmp_path: Path) -> None:
+    source = tmp_path / "FINGPT" / "FinGPT-1.0.0" / "fingpt" / "FinGPT_RAG"
+    source.mkdir(parents=True)
+    (tmp_path / ".env").write_text("LLM_PROVIDER=ollama\n", encoding="utf-8")
+    service = DashboardService(tmp_path)
+    log_root = tmp_path / "logs" / "dashboard"
+    (log_root / "llm_cycle.log").write_text(
+        'cycle started\n{"status":"completed","cadence":"daily","news_linked_fraction":0.75}\n',
+        encoding="utf-8",
+    )
+
+    payload = service.llm_status()
+
+    pipeline = payload["fingpt_pipeline"]
+    assert pipeline["source"]["status"] == "ready"
+    assert pipeline["source"]["broker_authority"] is False
+    assert pipeline["can_run"] is True
+    assert pipeline["cycle"]["result_available"] is True
+    assert pipeline["cycle"]["result"]["cadence"] == "daily"
+    assert payload["review"]["result_available"] is False
+
+
+def test_dashboard_builds_allowlisted_fingpt_cycle_command(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text("", encoding="utf-8")
+    service = DashboardService(tmp_path)
+
+    assert service._command("llm_cycle", {"cadence": "hourly"}) == [
+        "llm-offline-cycle", "--cadence", "hourly"
+    ]
+    assert "--force" not in service._command("llm_cycle", {"cadence": "daily", "force": True})
+
+
 def test_dashboard_command_builder_rejects_paths_outside_project(tmp_path: Path) -> None:
     (tmp_path / ".env").write_text("", encoding="utf-8")
     service = DashboardService(tmp_path)

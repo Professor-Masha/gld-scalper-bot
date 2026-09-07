@@ -354,6 +354,17 @@
 .evidence-field-name { -fx-text-fill: #789da7; -fx-font-size: 10px; }
 .evidence-field-value { -fx-text-fill: #e1f5f8; -fx-font-size: 12px; -fx-line-spacing: 2px; }
 .ai-status-message { -fx-text-fill: #94b9c1; -fx-font-size: 12px; -fx-line-spacing: 2px; }
+.ai-pipeline-detail {
+    -fx-padding: 10 12;
+    -fx-background-color: #031116;
+    -fx-border-color: #154552;
+    -fx-border-radius: 4;
+    -fx-background-radius: 4;
+    -fx-text-fill: #8fd5df;
+    -fx-font-family: "Consolas";
+    -fx-font-size: 11px;
+    -fx-line-spacing: 3px;
+}
 .ai-state-good { -fx-text-fill: #5cf2b5; -fx-border-color: #1c6b50; -fx-background-color: #071b17; }
 .ai-state-working { -fx-text-fill: #2de1ff; -fx-border-color: #18566b; -fx-background-color: #06171e; }
 .ai-state-failed { -fx-text-fill: #ff7189; -fx-border-color: #702031; -fx-background-color: #210a10; }

@@ -165,6 +165,11 @@ Return to the [project manual](../README.md).
 **Public interfaces:** `FixedProbabilityModel`, `FakeNewsClient`, `test_economic_breakeven_includes_spread_slippage_fees_and_buffer`, `test_playbook_exit_geometry_bounds_stop_and_requires_reward_for_risk`, `test_dynamic_exit_preserves_profit_after_large_mfe_giveback`, `test_session_close_management_tightens_then_reduces_then_flattens`, `test_experimental_paper_size_stays_small_until_model_and_market_are_validated`, `test_scopes_separate_fast_minute_news_and_playbook_models`, `test_tampered_fitted_model_state_is_not_loaded`, `test_drift_demotes_champion_and_keeps_history`, `test_champions_are_versioned_and_can_be_rolled_back`, `test_paper_drift_performance_uses_episode_returns_not_dollar_drawdown`, `test_exit_model_waits_for_trustworthy_completed_outcomes`, `test_news_sentiment_requires_both_price_and_spread_linkage`, `test_local_fingpt_profile_fingerprints_only_available_framework_files`, `test_llm_live_order_path_configuration_is_rejected`.
 **Internal dependencies:** `gld_scalper.config`, `gld_scalper.database`, `gld_scalper.exit_policy`, `gld_scalper.fingpt_offline`, `gld_scalper.llm_analysis`, `gld_scalper.llm_provider`, `gld_scalper.ml.drift`, `gld_scalper.ml.exit_trainer`, `gld_scalper.ml.model_registry`, `gld_scalper.ml.predictor`, `gld_scalper.ml.scopes`, `gld_scalper.models`.
 
+Dashboard AI tests also verify that the FinGPT `llm_cycle` result is isolated
+from a focused `llm_analysis` result, source readiness is explicit, the cycle
+command is allowlisted, `--force` cannot be injected through the interface, and
+neither path receives broker authority.
+
 Dashboard tests also verify that provider health requires an actual generated
 response and that `/api/v1/llm/status` exposes completed offline research
 without granting broker authority.

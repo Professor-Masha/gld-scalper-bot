@@ -18,7 +18,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
-/** Offline-only Ollama/Kimi console with automatic managed-job feedback. */
+/** Offline-only Ollama/Kimi and FinGPT research console with managed-job feedback. */
 final class AiLabWorkspace extends VBox {
     private final GatewayClient gateway;
     private final Executor commands;
@@ -31,10 +31,16 @@ final class AiLabWorkspace extends VBox {
     private final PasswordField apiKey = new PasswordField();
     private final Label providerState = stateLabel("CONFIGURED, NOT TESTED");
     private final Label reviewState = stateLabel("IDLE");
+    private final Label finGptSourceState = stateLabel("CHECKING SOURCE");
+    private final Label finGptCycleState = stateLabel("IDLE");
     private final Label reviewMessage = new Label("No completed offline review is available yet.");
+    private final Label finGptMessage = new Label("FinGPT supplies financial workflows; the selected provider performs inference.");
+    private final Label finGptModules = new Label("Discovering local FinGPT modules.");
     private final TextArea prompt = new TextArea("Analyze completed trades, missed opportunities, execution quality, and model improvements.");
     private final TextArea activity = new TextArea();
     private final HumanReadableView result = new HumanReadableView();
+    private final Button hourlyCycle = button("RUN HOURLY PIPELINE", "secondary", () -> startFinGptCycle("hourly"));
+    private final Button dailyCycle = button("RUN DAILY PIPELINE", "primary", () -> startFinGptCycle("daily"));
     private final AtomicBoolean refreshQueued = new AtomicBoolean();
     private final Timeline poller = new Timeline(new KeyFrame(Duration.seconds(3), event -> refresh()));
     private JsonNode catalog;
@@ -55,6 +61,10 @@ final class AiLabWorkspace extends VBox {
         result.setPrefHeight(330);
         reviewMessage.setWrapText(true);
         reviewMessage.getStyleClass().add("ai-status-message");
+        finGptMessage.setWrapText(true);
+        finGptMessage.getStyleClass().add("ai-status-message");
+        finGptModules.setWrapText(true);
+        finGptModules.getStyleClass().add("ai-pipeline-detail");
 
         Button activate = button("ACTIVATE", "primary", this::activate);
         Button test = button("TEST GENERATION", "secondary", this::testProvider);
@@ -64,10 +74,15 @@ final class AiLabWorkspace extends VBox {
         providerHeader.setAlignment(Pos.CENTER_LEFT);
         HBox reviewHeader = new HBox(12, new Label("Review status"), reviewState);
         reviewHeader.setAlignment(Pos.CENTER_LEFT);
+        HBox finGptHeader = new HBox(12, new Label("FinGPT source"), finGptSourceState,
+                new Label("Cycle"), finGptCycleState);
+        finGptHeader.setAlignment(Pos.CENTER_LEFT);
 
         getChildren().addAll(
                 section("REASONING PROVIDER", providerHeader, field("Provider", provider), field("Model", model),
                         field("Base URL", baseUrl), field("API key (never displayed)", apiKey), new HBox(10, activate, test)),
+                section("FINGPT FINANCIAL RESEARCH PIPELINE", finGptHeader, finGptMessage, finGptModules,
+                        new HBox(10, hourlyCycle, dailyCycle)),
                 section("RESEARCH TASK", reviewHeader, reviewMessage, prompt, new HBox(10, analyze, latest)),
                 section("RECENT ACTIVITY", activity),
                 section("AI RESULT", result));
@@ -153,6 +168,21 @@ final class AiLabWorkspace extends VBox {
         });
     }
 
+    private void startFinGptCycle(String cadence) {
+        finGptCycleState.setText("SUBMITTING");
+        styleState(finGptCycleState, "submitting");
+        finGptMessage.setText("Submitting the " + cadence + " FinGPT workflow to the managed offline research process.");
+        JsonNode options = json.valueToTree(Map.of("cadence", cadence));
+        commands.execute(() -> {
+            try {
+                JsonNode response = gateway.startJob("llm_cycle", options);
+                Platform.runLater(() -> { result.show(response); refresh(); });
+            } catch (Exception exc) {
+                Platform.runLater(() -> showPipelineFailure("FinGPT cycle could not start", exc));
+            }
+        });
+    }
+
     private void applyStatus(JsonNode status) {
         JsonNode providerPayload = status.path("provider");
         for (JsonNode candidate : status.path("providers")) {
@@ -173,10 +203,39 @@ final class AiLabWorkspace extends VBox {
         reviewMessage.setText(review.path("message").asText("No review status is available."));
         StringBuilder lines = new StringBuilder();
         review.path("recent_activity").forEach(line -> lines.append(line.asText()).append('\n'));
+        JsonNode pipeline = status.path("fingpt_pipeline");
+        JsonNode source = pipeline.path("source");
+        String sourceState = source.path("status").asText("source_missing");
+        finGptSourceState.setText(HumanReadableFormatter.label(sourceState).toUpperCase());
+        styleState(finGptSourceState, "ready".equals(sourceState) ? "healthy" : "failed");
+        JsonNode cycle = pipeline.path("cycle");
+        String cycleState = cycle.path("state").asText("idle");
+        finGptCycleState.setText(HumanReadableFormatter.label(cycleState).toUpperCase());
+        styleState(finGptCycleState, cycleState);
+        boolean canRun = pipeline.path("can_run").asBoolean(false);
+        hourlyCycle.setDisable(!canRun || cycleState.matches("running|stopping"));
+        dailyCycle.setDisable(!canRun || cycleState.matches("running|stopping"));
+        String cycleMessage = cycle.path("message").asText("No FinGPT cycle status is available.");
+        if (!source.path("available").asBoolean(false)) {
+            cycleMessage = "Local FinGPT workflow files were not found. Configure FINGPT_SOURCE_DIR before running a cycle.";
+        } else if (!canRun) {
+            cycleMessage = "Select and activate Ollama or Kimi before running the FinGPT workflow.";
+        }
+        finGptMessage.setText(cycleMessage);
+        String modules = joinText(source.path("modules"));
+        String workflows = joinText(pipeline.path("workflows"));
+        finGptModules.setText("Modules: " + (modules.isBlank() ? "not found" : modules)
+                + "\nReasoning engine: " + HumanReadableFormatter.label(source.path("reasoning_engine").asText("none"))
+                + "\nWorkflow: " + (workflows.isBlank() ? "not available" : workflows)
+                + "\nBroker authority: none");
+        cycle.path("recent_activity").forEach(line -> lines.append("[FinGPT] ").append(line.asText()).append('\n'));
         activity.setText(lines.isEmpty() ? "No recent AI activity." : lines.toString().trim());
         activity.positionCaret(activity.getLength());
 
         JsonNode completed = review.path("result");
+        if ((completed.isMissingNode() || completed.isNull()) && cycle.path("result_available").asBoolean()) {
+            completed = cycle.path("result");
+        }
         if (!completed.isMissingNode() && !completed.isNull()) {
             String fingerprint = Integer.toHexString(completed.toString().hashCode());
             if (!fingerprint.equals(renderedResult)) {
@@ -222,6 +281,25 @@ final class AiLabWorkspace extends VBox {
         reviewMessage.setText(title + ": " + String.valueOf(failure.getMessage()));
         result.show(json.valueToTree(Map.of("status", "failed", "message", title, "details", String.valueOf(failure.getMessage()))));
         errors.accept(failure);
+    }
+
+    private void showPipelineFailure(String title, Throwable failure) {
+        finGptCycleState.setText("FAILED");
+        styleState(finGptCycleState, "failed");
+        finGptMessage.setText(title + ": " + String.valueOf(failure.getMessage()));
+        result.show(json.valueToTree(Map.of("status", "failed", "message", title, "details", String.valueOf(failure.getMessage()))));
+        errors.accept(failure);
+    }
+
+    private static String joinText(JsonNode values) {
+        StringBuilder text = new StringBuilder();
+        if (values != null && values.isArray()) {
+            values.forEach(value -> {
+                if (!text.isEmpty()) text.append(", ");
+                text.append(HumanReadableFormatter.label(value.asText()));
+            });
+        }
+        return text.toString();
     }
 
     private static void styleState(Label label, String state) {

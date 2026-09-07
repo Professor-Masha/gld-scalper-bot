@@ -16,6 +16,7 @@ GatewayClient -> Python gateway`. No Java class has broker execution authority.
 | `DecisionCore3D` | `scene`, open ring, learned-state nodes, orbital fallback, and transitions are presentation only. Drag/zoom alter the camera, not model or risk state. |
 | `MemoryGraphWorkspace` | Gives the graph most of the split view, preserves filters and selection, shows summary evidence immediately, and loads detailed node evidence lazily. |
 | `NodeInspector` | Presents compact previews and complete node details as labeled human-readable sections rather than JSON. |
+| `AiLabWorkspace` | Keeps provider generation health, focused-review state, and FinGPT source/cycle state separate. It launches only allowlisted offline jobs and renders bounded results without exposing broker methods. |
 | `HumanReadableFormatter` | Converts gateway keys and typed values into bounded operator labels, local timestamps, money, percentages and safe summaries. |
 | `HumanReadableView` | Reusable sectioned evidence control with an optional collapsed developer payload. |
 | `AiLabWorkspace` | Preserves provider/prompt state, runs generation checks off-thread, polls managed review jobs, and renders completion or failure automatically. |

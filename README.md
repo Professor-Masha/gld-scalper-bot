@@ -477,7 +477,7 @@ core are visual analysis only and cannot submit an Alpaca order.
 | Intelligence | Conventional/Transformer model registry and recent decision history, refreshed every ten seconds. |
 | Memory Graph | Read-only Obsidian-style 3D map of current evidence, model lineage, datasets, playbooks, trades, training experiments, LLM reviews, and safety memory. Includes filters, node inspector, and a chronological lineage timeline. |
 | Training | Classical candidate, continual loop, Transformer dataset/candidate, and backtest controls. |
-| AI Lab | Select and generation-test Ollama or Kimi, preserve the saved model name, start offline reviews, and retrieve completed results. Additional FinGPT-assisted workflows are selectable in Training & Research Jobs. |
+| AI Lab | Select and generation-test Ollama or Kimi, inspect local FinGPT source readiness, run hourly or daily FinGPT research pipelines, start focused offline reviews, and retrieve each job's completed result independently. |
 | 3D Core | Hardware-accelerated JavaFX `SubScene` whose nucleus, stable open-ring learned-state nodes, orbital particles, color, and speed follow backend evidence. It visualizes state and has no decision authority. |
 | Backtest Lab | Run chronological simulations and inspect return, drawdown, win rate, profit factor, direction, and trade economics in charts. |
 | White Paper | Read the versioned technical, mathematical, risk, training, security, and governance specification in the application. |
@@ -601,9 +601,14 @@ archives or participates in signal, risk, or broker execution.
 6. **Request Stop** requests cancellation of the selected job; inspect its
    actual process state and terminal output rather than assuming it stopped.
 7. In **AI Lab**, activate the intended saved/local model and test generation.
-   FinGPT is the research workflow, not a third inference endpoint. Full advice,
-   labeling, council, macro and guarded candidate jobs are available in the job
-   selector. Long LLM tests use a separate worker from paper stop commands.
+   FinGPT is the research workflow, not a third inference endpoint. Its source
+   and cycle states are shown separately from provider health. **Run hourly
+   pipeline** performs bounded news linkage and focused research; **Run daily
+   pipeline** adds journal analysis, training advice, and advisory labels. The
+   interface follows the managed job automatically and presents its structured
+   result without confusing it with a one-off review. Full labeling, council,
+   macro and guarded candidate jobs remain available in the job selector. Long
+   LLM tests use a separate worker from paper stop commands.
 8. Press **Stop Bot** and wait for the backend shutdown before ending a paper
    session. Closing the JavaFX window alone does not flatten positions or stop
    a running bot. It only closes its own local gateway.

@@ -148,6 +148,17 @@ failure. Provider state explicitly distinguishes not configured, not tested,
 testing, healthy and failed. A model-list response is not enough to display
 healthy; the provider must complete a small generation request.
 
+FinGPT has a separate source and cycle panel in the same workspace. Source
+readiness means the configured local FinGPT workflow files were discovered; it
+does not mean a large FinGPT checkpoint is loaded. **Run hourly pipeline** and
+**Run daily pipeline** launch only the allowlisted `llm-offline-cycle` command.
+The hourly workflow links news reactions and produces focused context. The
+daily workflow additionally reviews the journal, generates training advice and
+creates advisory labels. Cycle state, bounded activity and the latest
+structured result update automatically and remain distinct from the ordinary
+`llm_analysis` review. Both paths use the selected Ollama/Kimi reasoning engine
+and have no broker authority.
+
 ## Learned-State Memory Graph
 
 Open **Memory Graph** to inspect what the bot has recorded and which approved
