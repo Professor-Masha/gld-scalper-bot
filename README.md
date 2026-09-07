@@ -465,7 +465,7 @@ core are visual analysis only and cannot submit an Alpaca order.
 | Memory Graph | Read-only Obsidian-style 3D map of current evidence, model lineage, datasets, playbooks, trades, training experiments, LLM reviews, and safety memory. Includes filters, node inspector, and a chronological lineage timeline. |
 | Training | Classical candidate, continual loop, Transformer dataset/candidate, and backtest controls. |
 | AI Lab | Select and generation-test Ollama or Kimi, preserve the saved model name, start offline reviews, and retrieve completed results. Additional FinGPT-assisted workflows are selectable in Training & Research Jobs. |
-| 3D Core | Hardware-accelerated JavaFX `SubScene` whose nucleus, force-directed learned-state nodes, orbital particles, color, and speed follow backend evidence. It visualizes state and has no decision authority. |
+| 3D Core | Hardware-accelerated JavaFX `SubScene` whose nucleus, stable open-ring learned-state nodes, orbital particles, color, and speed follow backend evidence. It visualizes state and has no decision authority. |
 | Backtest Lab | Run chronological simulations and inspect return, drawdown, win rate, profit factor, direction, and trade economics in charts. |
 | White Paper | Read the versioned technical, mathematical, risk, training, security, and governance specification in the application. |
 | Control Plane | Backend-derived state, health/readiness checks, managed-job information, and tamper-evident operator audit. Job-specific live logs and cancellation are in Training & Research Jobs. |
@@ -505,13 +505,21 @@ artifact path, and fingerprint. Click a trade to inspect its entry/exit,
 strategy, probabilities, expected costs/net edge, MFE, MAE, close reason, and
 resulting training label.
 
+The graph-first workspace assigns about 79% of its split view to the 3D canvas.
+Its nearly elliptical boundary remains open at the top, with deterministic
+category arcs for models, training, datasets, LLM reviews, trades, and
+playbooks. The current decision stays centered; market and risk nodes occupy an
+inner evidence band. Clicking a node shows its compact status and summary
+immediately, then loads the complete read-only evidence without blanking the
+inspector. Late detail responses are ignored after a newer selection.
+
 This is a map of persisted evidence, not a writable model editor and not a
 claim that the model stores human-like memories. The API opens SQLite in strict
 read-only/query-only mode, caps graph size, bounds manifest discovery, and
 caches summaries. It never interactively queries raw `quotes` or
 `market_trades`, so the historical 244-million-quote archive cannot stall the
 interface. The native animation receives bounded JSON on a background worker;
-no force-layout or pulse work runs in the trading thread. There are no graph
+no layout or pulse work runs in the trading thread. There are no graph
 buttons for broker orders, risk changes, or model promotion.
 
 The graph contract is deliberately split. `/api/v1/memory-graph/summary`

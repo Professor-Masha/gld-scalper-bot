@@ -338,6 +338,12 @@
 .memory-node-title { -fx-text-fill: #5cf2b5; -fx-font-family: "Bahnschrift"; -fx-font-size: 17px; -fx-font-weight: 800; }
 .memory-node-type { -fx-text-fill: #65b7c6; -fx-font-family: "Consolas"; -fx-font-size: 11px; }
 .memory-summary { -fx-text-fill: #45dff5; -fx-font-family: "Consolas"; -fx-font-size: 11px; }
+.memory-open-ring {
+    -fx-stroke: rgba(45, 225, 255, 0.34);
+    -fx-stroke-width: 1.2px;
+    -fx-stroke-dash-array: 3 7;
+    -fx-effect: dropshadow(gaussian, rgba(45, 225, 255, 0.42), 8, 0.35, 0, 0);
+}
 .list-view { -fx-background-color: #02080b; -fx-border-color: #143b46; }
 .list-cell { -fx-background-color: #030a0e; -fx-text-fill: #bad7de; -fx-font-family: "Consolas"; -fx-font-size: 11px; -fx-padding: 7; }
 .list-cell:odd { -fx-background-color: #061116; }

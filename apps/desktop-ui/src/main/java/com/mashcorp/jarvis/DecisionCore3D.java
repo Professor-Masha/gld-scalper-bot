@@ -45,6 +45,7 @@ public final class DecisionCore3D {
     private Consumer<String> selectionListener = node -> {};
     private final Map<String, Sphere> renderedNodes = new HashMap<>();
     private final Map<String, Cylinder> renderedEdges = new HashMap<>();
+    private final Map<String, Tooltip> renderedTooltips = new HashMap<>();
     private final Map<String, Boolean> activeEdges = new HashMap<>();
     private String fingerprint = "";
     private String selectedId;
@@ -172,7 +173,10 @@ public final class DecisionCore3D {
         });
         renderedNodes.keySet().removeIf(id -> {
             if (plan.nodes().containsKey(id)) return false;
-            graphLayer.getChildren().remove(renderedNodes.get(id)); return true;
+            Sphere removed = renderedNodes.get(id);
+            Tooltip tooltip = renderedTooltips.remove(id);
+            if (tooltip != null) Tooltip.uninstall(removed, tooltip);
+            graphLayer.getChildren().remove(removed); return true;
         });
         plan.edges().forEach((id, edge) -> {
             Point3D source = plan.nodes().get(edge.source()).position(), target = plan.nodes().get(edge.target()).position();
@@ -188,7 +192,15 @@ public final class DecisionCore3D {
             PhongMaterial material = new PhongMaterial(safeColor(data.color())); material.setSpecularColor(Color.WHITE); material.setSpecularPower(72);
             point.setMaterial(material); point.setRadius(data.radius());
             point.setTranslateX(data.position().getX()); point.setTranslateY(data.position().getY()); point.setTranslateZ(data.position().getZ());
-            Tooltip.install(point, new Tooltip(data.label() + "\n" + data.type().toUpperCase()));
+            String description = data.label() + "\n" + data.type().toUpperCase()
+                    + (data.subtitle().isBlank() ? "" : "\n" + data.subtitle())
+                    + (data.preview().isBlank() ? "" : "\n" + data.preview());
+            Tooltip tooltip = renderedTooltips.computeIfAbsent(id, ignored -> {
+                Tooltip value = new Tooltip();
+                Tooltip.install(point, value);
+                return value;
+            });
+            tooltip.setText(description);
         });
         if (selectedId != null && !plan.nodes().containsKey(selectedId)) selectedId = null;
         fingerprint = plan.fingerprint();
@@ -242,6 +254,7 @@ public final class DecisionCore3D {
         }
         return group;
     }
+
 
     private static PointLight pointLight() {
         PointLight light = new PointLight(Color.web("#7ffff0"));

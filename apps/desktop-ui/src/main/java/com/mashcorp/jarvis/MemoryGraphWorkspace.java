@@ -11,6 +11,7 @@ import javafx.scene.layout.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
 /** Read-only explorer for model lineage, training evidence, outcomes, and live decisions. */
@@ -31,6 +32,7 @@ final class MemoryGraphWorkspace extends VBox {
     private final ListView<TimelineItem> timeline = new ListView<>();
     private volatile String lastFingerprint = "";
     private volatile GraphRenderPlan lastPlan;
+    private final AtomicLong inspectionGeneration = new AtomicLong();
 
     MemoryGraphWorkspace(GatewayClient gateway, Executor worker, Consumer<Throwable> errors) {
         super(12);
@@ -46,13 +48,25 @@ final class MemoryGraphWorkspace extends VBox {
         filters.setAlignment(Pos.CENTER_LEFT); filters.setPrefWrapLength(880); filters.setMinWidth(0);
         filters.getStyleClass().add("memory-filters");
 
-        StackPane graphDeck = new StackPane(graph.node()); graphDeck.getStyleClass().add("memory-graph-deck");
-        graphDeck.setMinWidth(0); graphDeck.setMinHeight(420); graphDeck.setPrefHeight(560);
+        javafx.scene.shape.Arc boundary = new javafx.scene.shape.Arc();
+        boundary.setStartAngle(125);
+        boundary.setLength(290);
+        boundary.setType(javafx.scene.shape.ArcType.OPEN);
+        boundary.setFill(javafx.scene.paint.Color.TRANSPARENT);
+        boundary.setMouseTransparent(true);
+        boundary.setManaged(false);
+        boundary.getStyleClass().add("memory-open-ring");
+        StackPane graphDeck = new StackPane(graph.node(), boundary); graphDeck.getStyleClass().add("memory-graph-deck");
+        graphDeck.setMinWidth(0); graphDeck.setMinHeight(470); graphDeck.setPrefHeight(650);
+        boundary.centerXProperty().bind(graphDeck.widthProperty().divide(2));
+        boundary.centerYProperty().bind(graphDeck.heightProperty().divide(2));
+        boundary.radiusXProperty().bind(graphDeck.widthProperty().multiply(0.42));
+        boundary.radiusYProperty().bind(graphDeck.heightProperty().multiply(0.38));
         graph.bindSize(graphDeck.widthProperty(), graphDeck.heightProperty());
         graph.setSelectionListener(this::inspect);
-        SplitPane split = new SplitPane(graphDeck, inspector); split.setMinWidth(0); split.setDividerPositions(0.68); split.setPrefHeight(590);
+        SplitPane split = new SplitPane(graphDeck, inspector); split.setMinWidth(0); split.setDividerPositions(0.79); split.setPrefHeight(680);
 
-        timeline.setMinWidth(0); timeline.setPrefHeight(155);
+        timeline.setMinWidth(0); timeline.setPrefHeight(125);
         timeline.setCellFactory(view -> new ListCell<>() {
             @Override protected void updateItem(TimelineItem item, boolean empty) {
                 super.updateItem(item, empty);
@@ -102,12 +116,17 @@ final class MemoryGraphWorkspace extends VBox {
     }
 
     private void inspect(String nodeId) {
-        inspector.loading(nodeId.replace(':', ' '));
+        long generation = inspectionGeneration.incrementAndGet();
+        GraphRenderPlan.NodePlan preview = lastPlan == null ? null : lastPlan.nodes().get(nodeId);
+        if (preview == null) inspector.loading(nodeId.replace(':', ' '));
+        else inspector.preview(preview);
         worker.execute(() -> {
             try {
                 String encoded = java.net.URLEncoder.encode(nodeId, java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20");
                 JsonNode detail = gateway.get("/api/v1/memory-graph/nodes/" + encoded);
-                Platform.runLater(() -> inspector.show(detail));
+                Platform.runLater(() -> {
+                    if (inspectionGeneration.get() == generation) inspector.show(detail);
+                });
             } catch (Exception exception) { errors.accept(exception); }
         });
     }

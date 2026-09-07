@@ -54,7 +54,7 @@ finished. LLM readiness is deliberately non-blocking and has no broker authority
 | `StartupOverlay.java` | Immediate, phase-backed 0-100% startup presentation and failure state. |
 | `ReadinessSnapshot.java` | Pure projection of the gateway readiness contract into human-facing states. |
 | `ReadinessStrip.java` | Persistent interface, trading, market, and research-AI status display. |
-| `DecisionCore3D.java` | Native 3D force layout, color/size encoding, live-evidence pulses, selection, drag, and zoom. It consumes bounded JSON and has no database or broker dependency. |
+| `DecisionCore3D.java` | Native 3D open-ring rendering, color/size encoding, live-evidence pulses, selection, drag, and zoom. It consumes bounded JSON and has no database or broker dependency. |
 | `MemoryGraphWorkspace.java` | Read-only graph filters, node inspector, cache status, and chronological training-lineage timeline. |
 | `HudBackdrop.java` | Lightweight canvas grid and corner registration marks behind the native command deck. |
 | `JobWorkspace.java` | Scope presets, artifact discovery/browsing, multi-candidate forms, typed starts/stops, and five-second job logs. |
@@ -134,13 +134,20 @@ datasets, training experiments, and LLM reviews can be filtered independently,
 with one-day through all-history windows. Current decision, market, and risk
 nodes remain present as orientation anchors.
 
-The force layout runs on bounded response data on a Java worker, never on the
-JavaFX application thread or trading process. Selection triggers a separate
-lazy node-detail request, and `NodeInspector` renders titled sections and
-plain-language values instead of raw JSON. Content and layout fingerprints
-suppress unchanged work; `DecisionCore3D` diff-updates scene objects by ID and
-reuses positions when topology is unchanged. One animation timer pulses active
-edges.
+The deterministic layout groups models, training runs, datasets, LLM reviews,
+trades, and playbooks along a stable elliptical ring with an opening at the top;
+the current decision stays in the center while market and risk evidence occupy
+the inner band. It is calculated on a Java worker, never on the JavaFX
+application thread or trading process. Because the geometry is stable, filters
+and refreshes no longer make nodes drift or repeatedly settle.
+
+Selection immediately renders the compact node subtitle, status, and preview
+already present in the graph summary. A separate lazy request then replaces it
+with complete human-readable evidence. A selection generation guard discards a
+late response when the operator has already clicked another node. Content and
+layout fingerprints suppress unchanged work; `DecisionCore3D` diff-updates
+scene objects by ID and reuses positions when topology is unchanged. One
+animation timer pulses active edges.
 Green marks approved champions and profitable outcomes, cyan marks current
 market/decision flow, blue marks datasets and training artifacts, purple marks
 Transformer models, yellow marks candidates or uncertain evidence, red marks

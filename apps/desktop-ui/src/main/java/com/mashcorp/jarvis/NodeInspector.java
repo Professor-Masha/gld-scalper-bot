@@ -33,6 +33,22 @@ final class NodeInspector extends VBox {
         progress.setVisible(true); progress.setManaged(true); sections.getChildren().clear();
     }
 
+    void preview(GraphRenderPlan.NodePlan node) {
+        sections.getChildren().clear();
+        title.setText(node.label().toUpperCase());
+        String type = node.type().replace('_', ' ').toUpperCase();
+        String status = node.status().replace('_', ' ').toUpperCase();
+        subtitle.setText(type + "  //  " + status);
+        Label heading = new Label("AVAILABLE NOW");
+        heading.getStyleClass().add("inspector-section-title");
+        VBox fields = new VBox(8, heading);
+        addPreviewField(fields, "Context", node.subtitle());
+        addPreviewField(fields, "Summary", node.preview());
+        sections.getChildren().add(fields);
+        progress.setVisible(true);
+        progress.setManaged(true);
+    }
+
     void show(JsonNode detail) {
         progress.setVisible(false); progress.setManaged(false); sections.getChildren().clear();
         title.setText(detail.path("title").asText("MEMORY NODE").toUpperCase());
@@ -48,5 +64,15 @@ final class NodeInspector extends VBox {
             sections.getChildren().add(fields);
         });
         if (sections.getChildren().isEmpty()) sections.getChildren().add(new Label("No additional persisted evidence is available."));
+    }
+
+    private static void addPreviewField(VBox target, String nameText, String valueText) {
+        if (valueText == null || valueText.isBlank()) return;
+        Label name = new Label(nameText);
+        name.getStyleClass().add("inspector-field-name");
+        Label value = new Label(valueText);
+        value.setWrapText(true);
+        value.getStyleClass().add("inspector-field-value");
+        target.getChildren().add(new VBox(2, name, value));
     }
 }

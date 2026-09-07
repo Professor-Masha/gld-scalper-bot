@@ -4,14 +4,33 @@ import com.fasterxml.jackson.databind.JsonNode;
 import javafx.geometry.Point3D;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Random;
 
-/** Immutable graph geometry prepared away from the JavaFX application thread. */
+/** Immutable, deterministic open-ring geometry prepared away from the JavaFX application thread. */
 record GraphRenderPlan(String fingerprint, String layoutFingerprint, Map<String, NodePlan> nodes, Map<String, EdgePlan> edges, long layoutNanos) {
-    record NodePlan(String id, String label, String type, String color, double radius, Point3D position) {}
+    private static final String LAYOUT_VERSION = "open-ring-v1";
+    private static final Map<String, Double> TYPE_ANGLES = Map.of(
+            "model", -15.0,
+            "training", 35.0,
+            "dataset", 85.0,
+            "llm", 135.0,
+            "trade", 185.0,
+            "playbook", 225.0
+    );
+
+    record NodePlan(
+            String id,
+            String label,
+            String type,
+            String status,
+            String subtitle,
+            String preview,
+            String color,
+            double radius,
+            Point3D position) {}
     record EdgePlan(String id, String source, String target, boolean active, double weight) {}
 
     static GraphRenderPlan build(JsonNode graph) {
@@ -31,21 +50,22 @@ record GraphRenderPlan(String fingerprint, String layoutFingerprint, Map<String,
             if (sourceNodes.containsKey(item.path("source").asText()) && sourceNodes.containsKey(item.path("target").asText())) sourceEdges.add(item);
         });
         List<String> ids = new ArrayList<>(sourceNodes.keySet());
-        Map<String, Integer> indexes = new LinkedHashMap<>();
-        for (int index = 0; index < ids.size(); index++) indexes.put(ids.get(index), index);
-        String layoutFingerprint = graph == null ? "" : graph.path("layout_fingerprint").asText();
+        String sourceLayoutFingerprint = graph == null ? "" : graph.path("layout_fingerprint").asText();
+        String layoutFingerprint = LAYOUT_VERSION + ":" + sourceLayoutFingerprint;
         Point3D[] positions;
         if (previous != null && layoutFingerprint.equals(previous.layoutFingerprint()) && previous.nodes().keySet().containsAll(ids)) {
             positions = new Point3D[ids.size()];
             for (int index = 0; index < ids.size(); index++) positions[index] = previous.nodes().get(ids.get(index)).position();
         } else {
-            positions = forceLayout(ids, sourceEdges, indexes);
+            positions = stableOpenRingLayout(ids, sourceNodes);
         }
         Map<String, NodePlan> nodes = new LinkedHashMap<>();
         for (int index = 0; index < ids.size(); index++) {
             JsonNode item = sourceNodes.get(ids.get(index));
             nodes.put(ids.get(index), new NodePlan(ids.get(index), item.path("label").asText(ids.get(index)),
-                    item.path("type").asText("memory"), item.path("color").asText("#84939a"),
+                    item.path("type").asText("memory"), item.path("status").asText("available"),
+                    item.path("subtitle").asText(""), item.path("preview").asText(""),
+                    item.path("color").asText("#84939a"),
                     Math.max(3.0, Math.min(12.0, item.path("size").asDouble(6.0))), positions[index]));
         }
         Map<String, EdgePlan> edges = new LinkedHashMap<>();
@@ -58,46 +78,59 @@ record GraphRenderPlan(String fingerprint, String layoutFingerprint, Map<String,
                 Map.copyOf(nodes), Map.copyOf(edges), System.nanoTime() - started);
     }
 
-    private static Point3D[] forceLayout(List<String> ids, List<JsonNode> edges, Map<String, Integer> indexes) {
-        int count = ids.size();
-        Point3D[] positions = new Point3D[count];
-        Random random = new Random(57L);
-        int center = -1;
-        for (int index = 0; index < count; index++) {
-            if ("decision:current".equals(ids.get(index))) center = index;
-            double angle = Math.PI * 2 * index / Math.max(count, 1);
-            double radius = 75 + (index % 5) * 28;
-            positions[index] = new Point3D(Math.cos(angle) * radius, Math.sin(angle) * radius * 0.58, -65 + random.nextDouble() * 130);
+    private static Point3D[] stableOpenRingLayout(List<String> ids, Map<String, JsonNode> sourceNodes) {
+        Map<String, List<String>> grouped = new LinkedHashMap<>();
+        ids.stream().sorted(Comparator.naturalOrder()).forEach(id -> {
+            String type = sourceNodes.get(id).path("type").asText("memory");
+            grouped.computeIfAbsent(type, ignored -> new ArrayList<>()).add(id);
+        });
+        Map<String, Point3D> positioned = new LinkedHashMap<>();
+        for (Map.Entry<String, List<String>> group : grouped.entrySet()) {
+            String type = group.getKey();
+            List<String> members = group.getValue();
+            if ("decision".equals(type)) {
+                for (int index = 0; index < members.size(); index++) {
+                    positioned.put(members.get(index), index == 0 ? Point3D.ZERO : polar(index * 52.0, 48, 32, 0));
+                }
+                continue;
+            }
+            if ("market".equals(type) || "risk".equals(type)) {
+                double anchor = "market".equals(type) ? 205.0 : -25.0;
+                for (int index = 0; index < members.size(); index++) {
+                    positioned.put(members.get(index), polar(anchor + spread(index, members.size(), 20), 78, 48, depth(index, type)));
+                }
+                continue;
+            }
+            double anchor = TYPE_ANGLES.getOrDefault(type, 110.0);
+            int lanes = Math.min(3, Math.max(1, (int) Math.ceil(members.size() / 8.0)));
+            double groupWidth = Math.min(80.0, 28.0 + members.size() * 1.7);
+            for (int index = 0; index < members.size(); index++) {
+                int lane = index % lanes;
+                int slot = index / lanes;
+                int slots = (int) Math.ceil((members.size() - lane) / (double) lanes);
+                double angle = anchor + spread(slot, slots, groupWidth);
+                double radiusX = 100 + lane * 26;
+                double radiusY = 60 + lane * 15;
+                positioned.put(members.get(index), polar(angle, radiusX, radiusY, depth(index, type)));
+            }
         }
-        if (center >= 0) positions[center] = Point3D.ZERO;
-        for (int iteration = 0; iteration < 55; iteration++) {
-            Point3D[] forces = new Point3D[count];
-            for (int index = 0; index < count; index++) forces[index] = Point3D.ZERO;
-            for (int left = 0; left < count; left++) for (int right = left + 1; right < count; right++) {
-                Point3D delta = positions[left].subtract(positions[right]);
-                double distance = Math.max(delta.magnitude(), 8.0);
-                Point3D force = delta.normalize().multiply(1050.0 / (distance * distance));
-                forces[left] = forces[left].add(force); forces[right] = forces[right].subtract(force);
-            }
-            for (JsonNode edge : edges) {
-                Integer left = indexes.get(edge.path("source").asText()), right = indexes.get(edge.path("target").asText());
-                if (left == null || right == null) continue;
-                Point3D delta = positions[right].subtract(positions[left]);
-                double distance = Math.max(delta.magnitude(), 1.0);
-                double target = 58.0 + 8.0 / Math.max(edge.path("weight").asDouble(1.0), 0.2);
-                Point3D force = delta.normalize().multiply((distance - target) * 0.012);
-                forces[left] = forces[left].add(force); forces[right] = forces[right].subtract(force);
-            }
-            for (int index = 0; index < count; index++) {
-                if (index == center) continue;
-                Point3D next = positions[index].add(forces[index].add(positions[index].multiply(-0.0025)).multiply(0.72));
-                positions[index] = new Point3D(clamp(next.getX(), -235, 235), clamp(next.getY(), -135, 135), clamp(next.getZ(), -105, 105));
-            }
-        }
-        return positions;
+        Point3D[] result = new Point3D[ids.size()];
+        for (int index = 0; index < ids.size(); index++) result[index] = positioned.getOrDefault(ids.get(index), Point3D.ZERO);
+        return result;
     }
 
-    private static double clamp(double value, double minimum, double maximum) {
-        return Math.max(minimum, Math.min(maximum, value));
+    private static double spread(int index, int count, double widthDegrees) {
+        if (count <= 1) return 0.0;
+        return -widthDegrees / 2.0 + widthDegrees * index / (count - 1.0);
+    }
+
+    private static Point3D polar(double degrees, double radiusX, double radiusY, double z) {
+        double radians = Math.toRadians(degrees);
+        return new Point3D(Math.cos(radians) * radiusX, Math.sin(radians) * radiusY, z);
+    }
+
+    private static double depth(int index, String type) {
+        int seed = 31 * type.hashCode() + index * 17;
+        return ((Math.floorMod(seed, 9) - 4) * 8.0);
     }
 }
