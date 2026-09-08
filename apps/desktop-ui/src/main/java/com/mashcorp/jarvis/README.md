@@ -6,12 +6,12 @@ GatewayClient -> Python gateway`. No Java class has broker execution authority.
 | Class | Important state and connections |
 |---|---|
 | `Launcher` | The plain JVM entry point invokes JavaFX startup. |
-| `GatewayRuntime` | `projectRoot`, `port`, `token`, `process`, and `instanceLock` own the local gateway lifecycle. It resolves paths, starts Python, waits for health and closes only its child. |
+| `GatewayRuntime` | `projectRoot`, `port`, `token`, `process`, `gatewayLogPath`, and `instanceLock` own the local gateway lifecycle. It resolves paths, uses a unique session log when Windows locks the conventional log, starts Python, waits for health and closes only its child. |
 | `GatewayClient` | `baseUri`, `token`, `http`, and `json` implement loopback-only transport. Mutations carry idempotency/correlation metadata; errors are returned to the operator. |
 | `ClientLatencyMonitor` | Keeps bounded end-to-end client timings without retaining request bodies or credentials. |
 | `JarvisApplication` | `workspace`, labels, `latestSnapshot`, `socket`, and `eventSequence` project backend truth. Dedicated startup, telemetry, read, graph, command, and research executors keep I/O off the UI thread. |
 | `DecisionTelemetry` | Validates and freezes the latest gateway snapshot into display-safe quote, prediction, economics, evidence, episode, outcome, and performance records. |
-| `LiveDecisionWorkspace` | Owns the Overview's Live Decision, Evidence Radar and Trade Anatomy tabs. It preserves the latest frame across navigation and applies reduced-motion-aware crossfades. |
+| `LiveDecisionWorkspace` | Owns the Overview's Live Decision, Evidence Radar and Trade Anatomy tabs. Percentage-constrained grids keep all primary panels in one row, compact styles reduce density on narrow screens, and the latest frame survives reduced-motion-aware tab transitions. |
 | `DecisionPricePlot` | Keeps at most 160 timestamp-distinct midpoint observations and paints price/quote/episode markers on a lightweight canvas. |
 | `DecisionRadar` | Paints six measured or gate-backed axes. It never infers a missing model probability or writes application state. |
 | `JobWorkspace` | `action`, `scope`, `catalog`, archive selectors and input controls create bounded options for allowlisted Python jobs. The view timer tails the selected job and stops when detached. |
@@ -24,7 +24,7 @@ GatewayClient -> Python gateway`. No Java class has broker execution authority.
 | `HumanReadableFormatter` | Converts gateway keys and typed values into bounded operator labels, local timestamps, money, percentages and safe summaries. |
 | `HumanReadableView` | Reusable sectioned evidence control with an optional collapsed developer payload. |
 | `AiLabWorkspace` | Preserves provider/prompt state, runs generation checks off-thread, polls managed review jobs, and renders completion or failure automatically. |
-| `DesktopSmokeCheck` | `views`, `index` and `directory` capture read-only screens for explicit QA without activating a job. |
+| `DesktopSmokeCheck` | `views`, `index`, `compactViewCount` and `directory` capture all three operational screens at desktop and compact sizes without activating a job. |
 
 All GUI mutation belongs on the JavaFX application thread. Capture field values
 before submitting background work. Do not put secrets in logs or URL parameters.

@@ -9,7 +9,8 @@ import javafx.scene.control.Label;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.control.ToggleButton;
 import javafx.scene.control.ToggleGroup;
-import javafx.scene.layout.FlowPane;
+import javafx.scene.layout.ColumnConstraints;
+import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
@@ -45,9 +46,14 @@ public final class LiveDecisionWorkspace extends VBox {
         HBox modes = new HBox(4, liveMode, evidenceMode, tradeMode);
         modes.getStyleClass().add("decision-modes");
         viewHost.getChildren().add(live);
-        viewHost.setMinHeight(410);
+        viewHost.setMinSize(0, 0);
         VBox.setVgrow(viewHost, Priority.ALWAYS);
         getChildren().addAll(modes, viewHost);
+        widthProperty().addListener((observable, before, width) -> {
+            getStyleClass().removeAll("decision-compact", "decision-narrow");
+            if (width.doubleValue() < 930) getStyleClass().add("decision-compact");
+            if (width.doubleValue() < 720) getStyleClass().add("decision-narrow");
+        });
     }
 
     public void update(JsonNode snapshot) {
@@ -114,8 +120,7 @@ public final class LiveDecisionWorkspace extends VBox {
             getStyleClass().add("decision-view");
             setSpacing(10);
             VBox priceCard = card("GLD LIVE PRICE", quote, quoteDetail, plot);
-            priceCard.setPrefWidth(390);
-            plot.setMinHeight(225);
+            plot.setMinHeight(150);
             VBox decisionCard = card("DECISION ENGINE", currentState, marketContext,
                     section("OUTCOME PROBABILITIES"),
                     longProbability, shortProbability, abstainProbability,
@@ -127,20 +132,19 @@ public final class LiveDecisionWorkspace extends VBox {
             currentState.getStyleClass().add("flight-state");
             currentState.setWrapText(true);
             marketContext.setWrapText(true);
-            decisionCard.setPrefWidth(310);
             VBox evidenceCard = card("EVIDENCE TO ORDER CHAIN", evidenceChain);
-            evidenceCard.setPrefWidth(320);
-            FlowPane main = new FlowPane(10, 10, priceCard, decisionCard, evidenceCard);
-            main.setPrefWrapLength(1250);
+            GridPane main = grid(38, 29, 33);
+            main.addRow(0, priceCard, decisionCard, evidenceCard);
             main.getStyleClass().add("decision-flow");
-            FlowPane strip = new FlowPane(1, 1);
+            GridPane strip = grid(16.67, 16.67, 16.67, 16.67, 16.67, 16.65);
             strip.getStyleClass().add("performance-strip");
             String[] names = {"NET P/L", "WIN RATE", "PROFIT FACTOR", "DRAWDOWN", "EPISODES", "AVG HOLD"};
             for (String name : names) {
                 Label number = value("--");
                 statistics.add(number);
-                strip.getChildren().add(stat(name, number));
+                strip.add(stat(name, number), statistics.size() - 1, 0);
             }
+            VBox.setVgrow(main, Priority.ALWAYS);
             getChildren().addAll(main, strip);
         }
 
@@ -182,37 +186,42 @@ public final class LiveDecisionWorkspace extends VBox {
         private final VBox feed = new VBox(6);
         private final Label headline = value("WAITING");
         private final Label explanation = muted("Evidence has not arrived.");
-        private final Label classical = muted("Classical ML unavailable");
-        private final Label transformer = muted("Transformer unavailable");
+        private final Label marketPrice = value("--");
+        private final Label marketQuote = muted("Waiting for quote");
+        private final Label marketSession = muted("Session unavailable");
+        private final Label marketRegime = muted("Regime unavailable");
+        private final Label marketLiquidity = muted("Liquidity unavailable");
 
         EvidenceView() {
             getStyleClass().add("decision-view");
             setSpacing(10);
-            radar.setMinSize(400, 330);
+            radar.setMinSize(220, 220);
+            VBox contextCard = card("GLD MARKET CONTEXT", marketPrice, marketQuote,
+                    section("SESSION AND REGIME"), marketSession, marketRegime, marketLiquidity);
             VBox radarCard = card("MARKET PULSE", radar);
-            radarCard.setPrefWidth(520);
-            VBox feedCard = card("LIVE EVIDENCE FEED", headline, explanation, feed,
-                    section("MODEL SEPARATION"), classical, transformer);
+            VBox feedCard = card("LIVE EVIDENCE FEED", headline, explanation, feed);
             headline.getStyleClass().add("flight-state");
             explanation.setWrapText(true);
-            feedCard.setPrefWidth(520);
-            FlowPane main = new FlowPane(10, 10, radarCard, feedCard);
-            main.setPrefWrapLength(1250);
+            GridPane main = grid(22, 46, 32);
+            main.addRow(0, contextCard, radarCard, feedCard);
+            VBox.setVgrow(main, Priority.ALWAYS);
             getChildren().add(main);
         }
 
         void update(DecisionTelemetry frame) {
             radar.update(frame);
+            marketPrice.setText(frame.midpoint() > 0 ? money(frame.midpoint()) : "--");
+            marketQuote.setText(frame.bid() > 0
+                    ? String.format(Locale.US, "Bid %.2f / Ask %.2f", frame.bid(), frame.ask())
+                    : "Live quote unavailable");
+            marketSession.setText("Market: " + frame.marketState());
+            marketRegime.setText("Regime: " + frame.regime());
+            marketLiquidity.setText("Spread: " + (Double.isFinite(frame.spreadPct())
+                    ? String.format(Locale.US, "%.3f%%", frame.spreadPct() * 100) : "invalid"));
             headline.setText(frame.decision() + " / " + frame.marketState());
             headline.setStyle("-fx-text-fill:" + decisionColor(frame.decision()) + ";");
             explanation.setText(frame.summary());
             feed.getChildren().setAll(frame.evidence().stream().map(LiveDecisionWorkspace::evidenceRow).toList());
-            classical.setText("Classical ML: " + predictionText(frame.classical()));
-            transformer.setText("Transformer (" + frame.transformerRole() + "): "
-                    + predictionText(frame.transformer())
-                    + (frame.transformer().available()
-                    ? String.format(Locale.US, " / uncertainty %.1f%% / %.2f ms",
-                    frame.transformerUncertainty() * 100, frame.transformerLatencyMs()) : ""));
         }
     }
 
@@ -220,7 +229,7 @@ public final class LiveDecisionWorkspace extends VBox {
         private final DecisionPricePlot plot = new DecisionPricePlot();
         private final Label identity = value("NO ACTIVE OR COMPLETED EPISODE");
         private final Label context = muted("Trade lifecycle appears when an execution episode exists.");
-        private final FlowPane lifecycle = new FlowPane(8, 8);
+        private final HBox lifecycle = new HBox(8);
         private final VBox rationale = new VBox(7);
         private final List<Label> metrics = new ArrayList<>();
 
@@ -230,20 +239,19 @@ public final class LiveDecisionWorkspace extends VBox {
             lifecycle.getStyleClass().add("trade-lifecycle");
             VBox timeline = card("TRADE LIFECYCLE", identity, context, lifecycle);
             VBox price = card("PRICE ACTION AND ECONOMIC OUTCOME", plot);
-            price.setPrefWidth(700);
-            plot.setMinHeight(260);
+            plot.setMinHeight(180);
             VBox why = card("WHY THIS TRADE", rationale);
-            why.setPrefWidth(510);
-            FlowPane body = new FlowPane(10, 10, price, why);
-            body.setPrefWrapLength(1250);
-            FlowPane strip = new FlowPane(1, 1);
+            GridPane body = grid(64, 36);
+            body.addRow(0, price, why);
+            GridPane strip = grid(16.67, 16.67, 16.67, 16.67, 16.67, 16.65);
             strip.getStyleClass().add("performance-strip");
             String[] names = {"GROSS P/L", "NET P/L", "SPREAD COST", "SLIPPAGE", "HOLD TIME", "PROFIT GIVEN BACK"};
             for (String name : names) {
                 Label number = value("--");
                 metrics.add(number);
-                strip.getChildren().add(stat(name, number));
+                strip.add(stat(name, number), metrics.size() - 1, 0);
             }
+            VBox.setVgrow(body, Priority.ALWAYS);
             getChildren().addAll(timeline, body, strip);
         }
 
@@ -314,6 +322,8 @@ public final class LiveDecisionWorkspace extends VBox {
             Label title = new Label(names[index]);
             title.getStyleClass().add("lifecycle-title");
             stage.getChildren().addAll(sequence, title);
+            HBox.setHgrow(stage, Priority.ALWAYS);
+            stage.setMaxWidth(Double.MAX_VALUE);
             nodes.add(stage);
         }
         return nodes;
@@ -347,7 +357,25 @@ public final class LiveDecisionWorkspace extends VBox {
         VBox card = new VBox(8, heading, rule);
         card.getChildren().addAll(content);
         card.getStyleClass().add("decision-card");
+        card.setMinSize(0, 0);
+        card.setMaxSize(Double.MAX_VALUE, Double.MAX_VALUE);
         return card;
+    }
+
+    private static GridPane grid(double... widths) {
+        GridPane grid = new GridPane();
+        grid.setHgap(10);
+        grid.setVgap(10);
+        grid.setMaxSize(Double.MAX_VALUE, Double.MAX_VALUE);
+        for (double width : widths) {
+            ColumnConstraints column = new ColumnConstraints();
+            column.setPercentWidth(width);
+            column.setMinWidth(0);
+            column.setHgrow(Priority.ALWAYS);
+            column.setFillWidth(true);
+            grid.getColumnConstraints().add(column);
+        }
+        return grid;
     }
 
     private static Label section(String text) {
@@ -370,7 +398,8 @@ public final class LiveDecisionWorkspace extends VBox {
         Label caption = muted(title);
         VBox box = new VBox(3, caption, value);
         box.getStyleClass().add("performance-stat");
-        box.setPrefWidth(180);
+        box.setMinWidth(0);
+        box.setMaxWidth(Double.MAX_VALUE);
         return box;
     }
 
@@ -384,13 +413,6 @@ public final class LiveDecisionWorkspace extends VBox {
         Label label = new Label(text);
         label.getStyleClass().add("decision-muted");
         return label;
-    }
-
-    private static String predictionText(DecisionTelemetry.Prediction prediction) {
-        if (!prediction.available()) return "Unavailable";
-        return String.format(Locale.US, "Long %.1f%% / Short %.1f%% / No trade %.1f%%",
-                prediction.longProbability() * 100, prediction.shortProbability() * 100,
-                prediction.noTradeProbability() * 100);
     }
 
     private static String decisionColor(String decision) {

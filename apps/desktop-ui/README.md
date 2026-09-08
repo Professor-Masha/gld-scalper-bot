@@ -96,7 +96,11 @@ keeping market truth legible:
 All three views consume the same immutable frame. Invalid spreads and economics
 outside plausible GLD bounds render as unavailable. Canvas history is bounded,
 and switching tabs retains the latest frame without requesting the large market
-archive. The learned-state 3D graph remains under **Memory Graph**.
+archive. Each operational tab uses fixed percentage columns instead of wrapping
+cards, so the decision engine, radar and trade evidence remain in one viewport.
+Below 1050 px the navigation becomes a numbered icon-like rail with tooltips;
+below 930 px card padding and type density reduce without changing information
+order. The learned-state 3D graph remains under **Memory Graph**.
 
 ## Development
 
@@ -122,8 +126,10 @@ force a package. A failed build is not silently accepted.
 duplicate native instances. It verifies gateway health and owns only that
 gateway process, not the bot's broker safety lifecycle. Each launch writes a
 fresh `logs/dashboard/javafx_gateway.log` and preserves the prior attempt as
-`javafx_gateway.previous.log`. Startup failures include the final gateway log
-lines on the boot screen. `JARVIS_PROJECT_ROOT`
+`javafx_gateway.previous.log`. If Windows still has either file open, startup
+continues with a timestamped `javafx_gateway.<UTC>-<pid>.log`; log rotation is
+housekeeping and cannot block a healthy gateway. Startup failures include the
+final active gateway log lines on the boot screen. `JARVIS_PROJECT_ROOT`
 selects the project; `JARVIS_PYTHON` is an optional development interpreter
 override. Neither variable should contain credentials.
 

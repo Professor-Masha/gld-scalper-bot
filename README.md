@@ -488,7 +488,7 @@ Alpaca order.
 
 | View | Operational responsibility |
 |---|---|
-| Overview | Three synchronized operational views: **Live Decision** follows quote, decision, model probability, economic edge, evidence gates and session results; **Evidence Radar** compares measured rule strength, price-action/liquidity/risk gates, classical ML and Transformer evidence; **Trade Anatomy** follows one root episode from observation through final after-cost outcome. The live bot log remains below the workspace. |
+| Overview | Three synchronized single-viewport operational views: **Live Decision** follows quote, decision, model probability, economic edge, evidence gates and session results; **Evidence Radar** compares market context, measured rule strength, price-action/liquidity/risk gates, classical ML and Transformer evidence; **Trade Anatomy** follows one root episode from observation through final after-cost outcome. |
 | Market | Native GLD close-price line chart from the gateway's latest one-minute bars, refreshed every ten seconds. |
 | Performance | Equity curve, after-cost P/L, win rate, holding time, and closed root outcomes. |
 | Trades | Auditable root trading episodes rather than duplicated partial-exit tranches. |
@@ -531,6 +531,9 @@ immutable `DecisionTelemetry` projection of the latest gateway frame:
 The price canvas accumulates only timestamp-distinct live snapshots in a bounded
 in-memory window. The radar and charts perform no SQLite queries, feature
 calculation, model inference or broker work on the JavaFX thread. When the bot is
+shown on a narrow display, percentage-based grids retain the mockup's left-to-right
+information hierarchy while navigation collapses to a numbered rail with tooltips.
+Cards never wrap underneath the radar or decision engine. When the bot is
 offline or a value is invalid, the interface says `Unavailable` or `--` instead
 of inventing a score. Memory Graph remains the historical model/trade lineage
 tool under its own navigation item.

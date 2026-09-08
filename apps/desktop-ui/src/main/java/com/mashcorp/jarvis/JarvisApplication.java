@@ -72,6 +72,11 @@ public final class JarvisApplication extends Application {
     private Button paperStart;
     private Button paperStop;
     private final ToggleGroup navigationGroup = new ToggleGroup();
+    private final List<ToggleButton> navigationButtons = new ArrayList<>();
+    private final List<String> navigationLabels = new ArrayList<>();
+    private ScrollPane navigationScroll;
+    private Label navigationCaption;
+    private Label navigationDeck;
     private int navigationIndex;
     private Runnable currentRefresh = () -> {};
     private long eventSequence;
@@ -111,6 +116,7 @@ public final class JarvisApplication extends Application {
             boolean readinessVisible = width.doubleValue() >= 1260;
             readinessStrip.node().setVisible(readinessVisible);
             readinessStrip.node().setManaged(readinessVisible);
+            updateNavigationMode(width.doubleValue() < 1050);
         });
         stage.setMaximized(true);
         stage.setOnCloseRequest(event -> {
@@ -174,6 +180,7 @@ public final class JarvisApplication extends Application {
         shell.setTop(buildTopBar());
         shell.setLeft(buildNavigation());
         shell.setCenter(workspace);
+        updateNavigationMode(stage.getWidth() < 1050);
         root.getChildren().add(1, shell);
         showOverview();
         applyReadiness(resolvedReadiness);
@@ -244,7 +251,9 @@ public final class JarvisApplication extends Application {
                     this::showMarket, this::showPerformance,
                     this::showTrading, this::showIntelligence, this::showMemoryGraph, this::showTraining, this::showAiLab,
                     this::showWhitePaper, this::showControlPlane, this::showSettings,
-                    () -> { showOverview(); decisionWorkspace.showLiveDecision(); }));
+                    () -> { showOverview(); decisionWorkspace.showLiveDecision(); },
+                    () -> { showOverview(); decisionWorkspace.showEvidenceRadar(); },
+                    () -> { showOverview(); decisionWorkspace.showTradeAnatomy(); }));
         }
     }
 
@@ -284,11 +293,11 @@ public final class JarvisApplication extends Application {
         nav.getStyleClass().add("navigation");
         Label monogram = new Label("MC");
         monogram.getStyleClass().add("monogram");
-        Label caption = new Label("PAPER OPERATIONS");
-        caption.getStyleClass().add("eyebrow");
-        Label deck = new Label("COMMAND DECK / 01");
-        deck.getStyleClass().add("nav-deck-label");
-        nav.getChildren().addAll(monogram, caption, deck, new Separator());
+        navigationCaption = new Label("PAPER OPERATIONS");
+        navigationCaption.getStyleClass().add("eyebrow");
+        navigationDeck = new Label("COMMAND DECK / 01");
+        navigationDeck.getStyleClass().add("nav-deck-label");
+        nav.getChildren().addAll(monogram, navigationCaption, navigationDeck, new Separator());
         addNav(nav, "OVERVIEW", this::showOverview);
         addNav(nav, "MARKET", this::showMarket);
         addNav(nav, "PERFORMANCE", this::showPerformance);
@@ -304,10 +313,11 @@ public final class JarvisApplication extends Application {
         notification.setWrapText(true);
         notification.getStyleClass().add("nav-status");
         nav.getChildren().addAll(spacer, new Separator(), notification);
-        ScrollPane scroll = new ScrollPane(nav); scroll.setFitToWidth(true); scroll.setPrefWidth(196);
-        scroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        navigationScroll = new ScrollPane(nav); navigationScroll.setFitToWidth(true); navigationScroll.setPrefWidth(196);
+        navigationScroll.getStyleClass().add("navigation-scroll");
+        navigationScroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
         nav.setMinWidth(0); nav.setPrefWidth(180);
-        return scroll;
+        return navigationScroll;
     }
 
     private void showOverview() {
@@ -315,20 +325,20 @@ public final class JarvisApplication extends Application {
             setWorkspace(overviewPage); currentRefresh = () -> {};
             return;
         }
-        FlowPane metrics = new FlowPane(10, 10,
-                metric("GLD MID", quoteValue), metric("EQUITY", equityValue), metric("NET P/L TODAY", pnlValue),
-                metric("WIN RATE", winValue), metric("BOT STATE", botValue));
-        metrics.getStyleClass().add("metrics");
-        HBox telemetryBand = new HBox(1,
-                statusItem("DATA LINK", dataLinkValue), statusItem("LIVE STREAM", streamValue),
-                statusItem("DECISION MODEL", modelValue), statusItem("ENVIRONMENT", sessionValue));
-        telemetryBand.getStyleClass().add("telemetry-band");
-        telemetryBand.setMaxWidth(Double.MAX_VALUE);
-        telemetryBand.getChildren().forEach(child -> HBox.setHgrow(child, Priority.ALWAYS));
         decisionWorkspace.setReducedMotion(reducedMotion);
-        terminal.setEditable(false); terminal.setWrapText(false); terminal.setPrefRowCount(10);
-        overviewPage = page("SYSTEM OVERVIEW", telemetryBand, metrics,
-                panel("LIVE DECISION OPERATIONS", decisionWorkspace), panel("LIVE OPERATIONS LOG", terminal));
+        Label context = new Label("GLD / ALGORITHMIC TRADING / REAL-TIME DECISIONING");
+        context.getStyleClass().add("page-context");
+        Label heading = new Label("LIVE DECISION FLIGHT DECK");
+        heading.getStyleClass().add("page-title");
+        Region rule = new Region();
+        rule.getStyleClass().add("page-rule");
+        HBox.setHgrow(rule, Priority.ALWAYS);
+        HBox header = new HBox(16, new VBox(2, context, heading), rule);
+        header.setAlignment(Pos.CENTER_LEFT);
+        VBox operationalPage = new VBox(9, header, decisionWorkspace);
+        operationalPage.getStyleClass().addAll("page", "overview-page");
+        VBox.setVgrow(decisionWorkspace, Priority.ALWAYS);
+        overviewPage = operationalPage;
         setWorkspace(overviewPage);
         currentRefresh = () -> {};
     }
@@ -701,7 +711,30 @@ public final class JarvisApplication extends Application {
         button.setToggleGroup(navigationGroup); button.setMaxWidth(Double.MAX_VALUE); button.getStyleClass().add("nav-button");
         button.setOnAction(event -> { button.setSelected(true); action.run(); });
         if (navigationGroup.getSelectedToggle() == null) button.setSelected(true);
+        navigationButtons.add(button);
+        navigationLabels.add(text);
         nav.getChildren().add(button);
+    }
+
+    private void updateNavigationMode(boolean compact) {
+        if (navigationScroll == null) return;
+        navigationScroll.setPrefWidth(compact ? 76 : 196);
+        navigationScroll.setMinWidth(compact ? 76 : 150);
+        if (compact && !navigationScroll.getStyleClass().contains("navigation-compact")) {
+            navigationScroll.getStyleClass().add("navigation-compact");
+        } else if (!compact) {
+            navigationScroll.getStyleClass().remove("navigation-compact");
+        }
+        if (navigationCaption != null) {
+            navigationCaption.setVisible(!compact); navigationCaption.setManaged(!compact);
+            navigationDeck.setVisible(!compact); navigationDeck.setManaged(!compact);
+        }
+        for (int index = 0; index < navigationButtons.size(); index++) {
+            ToggleButton button = navigationButtons.get(index);
+            String number = String.format("%02d", index + 1);
+            button.setText(compact ? number : number + "  " + navigationLabels.get(index));
+            button.setTooltip(new Tooltip(navigationLabels.get(index)));
+        }
     }
 
     private void updateSystemState(String state) {

@@ -14,6 +14,8 @@ import java.nio.file.StandardCopyOption;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.Base64;
 
 /** Starts the Python gateway as an isolated child and never receives broker credentials. */
@@ -22,6 +24,7 @@ public final class GatewayRuntime implements AutoCloseable {
     private final String token;
     private final int port;
     private Process process;
+    private Path gatewayLogPath;
     private java.nio.channels.FileChannel lockChannel;
     private java.nio.channels.FileLock instanceLock;
 
@@ -43,10 +46,8 @@ public final class GatewayRuntime implements AutoCloseable {
                 java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.WRITE);
         instanceLock = lockChannel.tryLock();
         if (instanceLock == null) { lockChannel.close(); throw new IOException("The JavaFX dashboard is already open for this project"); }
-        Path gatewayLog = logRoot.resolve("javafx_gateway.log");
-        if (Files.exists(gatewayLog)) {
-            Files.move(gatewayLog, logRoot.resolve("javafx_gateway.previous.log"), StandardCopyOption.REPLACE_EXISTING);
-        }
+        Path gatewayLog = prepareGatewayLog(logRoot);
+        gatewayLogPath = gatewayLog;
         ProcessBuilder builder = new ProcessBuilder(
                 python.toString(), "-m", "gld_scalper.main", "dashboard",
                 "--no-browser", "--port", Integer.toString(port));
@@ -58,7 +59,8 @@ public final class GatewayRuntime implements AutoCloseable {
         process = builder.start();
         String startedAt = process.info().startInstant().orElse(Instant.now()).toString();
         Files.writeString(logRoot.resolve("javafx_gateway.pid"),
-                "{\"pid\":" + process.pid() + ",\"started_at\":\"" + startedAt + "\"}", StandardCharsets.US_ASCII);
+                "{\"pid\":" + process.pid() + ",\"started_at\":\"" + startedAt
+                        + "\",\"log\":\"" + gatewayLog.getFileName() + "\"}", StandardCharsets.US_ASCII);
         awaitHealth();
         } catch (IOException | InterruptedException exc) { close(); throw exc; }
     }
@@ -99,7 +101,9 @@ public final class GatewayRuntime implements AutoCloseable {
     }
 
     private IOException startupFailure(String message) {
-        Path log = projectRoot.resolve("logs/dashboard/javafx_gateway.log");
+        Path log = gatewayLogPath == null
+                ? projectRoot.resolve("logs/dashboard/javafx_gateway.log")
+                : gatewayLogPath;
         try {
             var lines = Files.readAllLines(log, StandardCharsets.UTF_8);
             int first = Math.max(0, lines.size() - 8);
@@ -109,6 +113,25 @@ public final class GatewayRuntime implements AutoCloseable {
             // Preserve the primary startup failure when the log cannot be read.
         }
         return new IOException(message + ". Review " + log);
+    }
+
+    /**
+     * Rotates the conventional log when Windows permits it. A stale process may
+     * still hold that file open, so log housekeeping must never block startup.
+     */
+    static Path prepareGatewayLog(Path logRoot) throws IOException {
+        Files.createDirectories(logRoot);
+        Path current = logRoot.resolve("javafx_gateway.log");
+        if (!Files.exists(current)) return current;
+        try {
+            Files.move(current, logRoot.resolve("javafx_gateway.previous.log"),
+                    StandardCopyOption.REPLACE_EXISTING);
+            return current;
+        } catch (IOException lockedOrUnavailable) {
+            String stamp = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss-SSS")
+                    .withZone(ZoneOffset.UTC).format(Instant.now());
+            return logRoot.resolve("javafx_gateway." + stamp + "-" + ProcessHandle.current().pid() + ".log");
+        }
     }
 
     private static Path locateProjectRoot() {

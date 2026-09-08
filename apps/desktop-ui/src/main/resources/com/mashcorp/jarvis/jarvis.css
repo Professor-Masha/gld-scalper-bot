@@ -104,6 +104,14 @@
     -fx-background-color: rgba(2, 9, 12, 0.97);
     -fx-border-color: transparent #123541 transparent transparent;
 }
+.navigation-scroll, .navigation-scroll > .viewport { -fx-background-color: transparent; }
+.navigation-scroll.navigation-compact .navigation {
+    -fx-pref-width: 74px;
+    -fx-min-width: 74px;
+    -fx-padding: 14 8;
+}
+.navigation-scroll.navigation-compact .monogram { -fx-font-size: 17px; -fx-padding: 9; }
+.navigation-scroll.navigation-compact .nav-button { -fx-alignment: CENTER; -fx-padding: 9 4; }
 .monogram {
     -fx-text-fill: #5cf2b5;
     -fx-font-family: "Consolas";
@@ -155,6 +163,7 @@
     -fx-padding: 20 22 34 22;
     -fx-background-color: rgba(1, 6, 9, 0.78);
 }
+.overview-page { -fx-padding: 12 14 10 14; -fx-spacing: 8; }
 .page-title {
     -fx-text-fill: #f2fcff;
     -fx-font-family: "Bahnschrift", "Segoe UI Semibold";
@@ -320,8 +329,8 @@
     -fx-border-width: 1;
     -fx-border-radius: 4;
     -fx-background-radius: 4;
-    -fx-min-width: 280;
-    -fx-min-height: 155;
+    -fx-min-width: 0;
+    -fx-min-height: 0;
 }
 .decision-card:hover { -fx-border-color: #267083; }
 .decision-card-title, .decision-section {
@@ -383,7 +392,7 @@
 .trade-lifecycle { -fx-padding: 6 0 2 0; }
 .lifecycle-stage {
     -fx-padding: 8 12;
-    -fx-min-width: 132;
+    -fx-min-width: 0;
     -fx-background-color: #041014;
     -fx-border-color: #193943;
     -fx-border-radius: 3;
@@ -393,6 +402,18 @@
 .lifecycle-stage.stage-current { -fx-border-color: #ffbf69; -fx-background-color: #1b1609; }
 .lifecycle-sequence { -fx-text-fill: #4fbdd0; -fx-font-family: "Consolas"; -fx-font-size: 9px; }
 .lifecycle-title { -fx-text-fill: #d9f4f7; -fx-font-family: "Consolas"; -fx-font-size: 10px; -fx-font-weight: 800; }
+
+.decision-compact .decision-card { -fx-padding: 6; -fx-spacing: 5; }
+.decision-compact .decision-card-title,
+.decision-compact .decision-section { -fx-font-size: 9px; }
+.decision-compact .decision-muted,
+.decision-compact .evidence-detail { -fx-font-size: 8px; }
+.decision-compact .flight-state { -fx-font-size: 16px; }
+.decision-compact .evidence-row { -fx-padding: 3 4; }
+.decision-compact .performance-stat { -fx-padding: 6 7; }
+.decision-compact .lifecycle-stage { -fx-padding: 6 5; }
+.decision-compact .lifecycle-title { -fx-font-size: 8px; }
+.decision-narrow .decision-mode-button { -fx-padding: 7 8; -fx-font-size: 8px; }
 
 .memory-workspace { -fx-background-color: transparent; }
 .memory-filters {

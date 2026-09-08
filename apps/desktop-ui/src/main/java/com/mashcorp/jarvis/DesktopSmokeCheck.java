@@ -20,10 +20,12 @@ final class DesktopSmokeCheck {
     private final List<Runnable> views;
     private int index;
     private int readinessChecks;
+    private final int compactViewCount;
     private final FrameTimeMonitor frameTimes = new FrameTimeMonitor();
 
     private DesktopSmokeCheck(Stage stage, Path directory, BooleanSupplier telemetryReady, List<Runnable> views) {
         this.stage = stage; this.directory = directory; this.telemetryReady = telemetryReady; this.views = views;
+        compactViewCount = Math.min(3, views.size());
     }
 
     static void run(Stage stage, Path directory, BooleanSupplier telemetryReady, List<Runnable> views) {
@@ -52,7 +54,7 @@ final class DesktopSmokeCheck {
             catch (Exception exc) { exc.printStackTrace(); }
             Platform.exit(); return;
         }
-        if (index == views.size() - 1) { stage.setWidth(900); stage.setHeight(700); }
+        if (index == views.size() - compactViewCount) { stage.setWidth(900); stage.setHeight(700); }
         views.get(index).run();
         PauseTransition wait = new PauseTransition(Duration.seconds(3));
         wait.setOnFinished(event -> {
