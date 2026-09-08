@@ -290,6 +290,110 @@
 .scroll-bar .thumb:hover { -fx-background-color: #287689; }
 .tooltip { -fx-background-color: #08171c; -fx-text-fill: #e5f8fb; -fx-border-color: #246274; -fx-background-radius: 4; -fx-border-radius: 4; }
 
+.decision-workspace { -fx-background-color: transparent; }
+.decision-modes {
+    -fx-padding: 3;
+    -fx-background-color: #02090c;
+    -fx-border-color: #17434f;
+    -fx-border-radius: 4;
+    -fx-background-radius: 4;
+    -fx-alignment: CENTER_LEFT;
+}
+.decision-mode-button {
+    -fx-padding: 8 15;
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-text-fill: #688b94;
+    -fx-font-family: "Consolas";
+    -fx-font-size: 10px;
+    -fx-font-weight: 800;
+    -fx-cursor: hand;
+}
+.decision-mode-button:hover { -fx-text-fill: #dffbff; -fx-background-color: #06171c; }
+.decision-mode-button:selected { -fx-text-fill: #5cf2b5; -fx-background-color: #09231c; -fx-border-color: transparent transparent #5cf2b5 transparent; }
+.decision-view { -fx-padding: 0; }
+.decision-flow { -fx-alignment: TOP_LEFT; }
+.decision-card {
+    -fx-padding: 12;
+    -fx-background-color: #020a0d;
+    -fx-border-color: #174652;
+    -fx-border-width: 1;
+    -fx-border-radius: 4;
+    -fx-background-radius: 4;
+    -fx-min-width: 280;
+    -fx-min-height: 155;
+}
+.decision-card:hover { -fx-border-color: #267083; }
+.decision-card-title, .decision-section {
+    -fx-text-fill: #54d8eb;
+    -fx-font-family: "Consolas";
+    -fx-font-weight: 800;
+    -fx-font-size: 11px;
+}
+.decision-section { -fx-padding: 8 0 2 0; -fx-font-size: 9px; }
+.decision-value {
+    -fx-text-fill: #f2fcff;
+    -fx-font-family: "Consolas";
+    -fx-font-size: 13px;
+    -fx-font-weight: 800;
+}
+.decision-muted {
+    -fx-text-fill: #7898a0;
+    -fx-font-family: "Consolas";
+    -fx-font-size: 10px;
+}
+.flight-state {
+    -fx-text-fill: #ffbf69;
+    -fx-font-family: "Bahnschrift", "Segoe UI Semibold";
+    -fx-font-size: 21px;
+    -fx-font-weight: 800;
+}
+.decision-price-plot, .decision-radar {
+    -fx-background-color: #02090c;
+    -fx-border-color: #102f38;
+    -fx-border-radius: 3;
+    -fx-background-radius: 3;
+}
+.decision-probability { -fx-pref-height: 8; }
+.decision-probability > .track { -fx-background-color: #0d2228; -fx-background-radius: 2; }
+.decision-probability > .bar { -fx-background-insets: 0; -fx-background-radius: 2; }
+.decision-probability.positive > .bar { -fx-background-color: #5cf2b5; }
+.decision-probability.negative > .bar { -fx-background-color: #ff5470; }
+.decision-probability.neutral > .bar { -fx-background-color: #3f7cff; }
+.decision-metric-row { -fx-padding: 4 0; -fx-border-color: transparent transparent #0f2931 transparent; }
+.evidence-row {
+    -fx-padding: 6 8;
+    -fx-background-color: #041015;
+    -fx-border-color: #12343e;
+    -fx-border-radius: 3;
+    -fx-background-radius: 3;
+}
+.evidence-name { -fx-text-fill: #a6eff7; -fx-font-family: "Consolas"; -fx-font-size: 9px; -fx-font-weight: 800; }
+.evidence-detail { -fx-text-fill: #75949c; -fx-font-family: "Bahnschrift", "Segoe UI"; -fx-font-size: 10px; }
+.performance-strip {
+    -fx-background-color: #02090c;
+    -fx-border-color: #17434f;
+    -fx-border-radius: 4;
+    -fx-background-radius: 4;
+}
+.performance-stat {
+    -fx-padding: 9 13;
+    -fx-border-color: transparent #102d35 transparent transparent;
+}
+.trade-lifecycle { -fx-padding: 6 0 2 0; }
+.lifecycle-stage {
+    -fx-padding: 8 12;
+    -fx-min-width: 132;
+    -fx-background-color: #041014;
+    -fx-border-color: #193943;
+    -fx-border-radius: 3;
+    -fx-background-radius: 3;
+}
+.lifecycle-stage.stage-complete { -fx-border-color: #2b9677; -fx-background-color: #061a16; }
+.lifecycle-stage.stage-current { -fx-border-color: #ffbf69; -fx-background-color: #1b1609; }
+.lifecycle-sequence { -fx-text-fill: #4fbdd0; -fx-font-family: "Consolas"; -fx-font-size: 9px; }
+.lifecycle-title { -fx-text-fill: #d9f4f7; -fx-font-family: "Consolas"; -fx-font-size: 10px; -fx-font-weight: 800; }
+
 .memory-workspace { -fx-background-color: transparent; }
 .memory-filters {
     -fx-padding: 9 12;

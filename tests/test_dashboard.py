@@ -160,8 +160,16 @@ def test_telemetry_reads_performance_without_writing(tmp_path: Path) -> None:
     database.init_db()
     database.conn.execute(
         """INSERT INTO trade_outcomes(symbol,direction,entry_time,exit_time,gross_pnl,
-                   net_pnl_after_costs,holding_seconds,win_loss)
-           VALUES ('GLD','LONG',datetime('now'),datetime('now'),12,9,42,'WIN')"""
+                   net_pnl_after_costs,holding_seconds,win_loss,spread_cost,slippage_cost,
+                   estimated_fees,estimated_live_cost)
+           VALUES ('GLD','LONG',datetime('now'),datetime('now'),12,9,42,'WIN',1.0,0.5,0.25,1.25)"""
+    )
+    database.conn.execute(
+        """INSERT INTO execution_episodes(episode_id,symbol,direction,source,strategy_path,playbook,
+                   status,planned_qty,submitted_qty,filled_qty,remaining_qty,entry_avg_price,
+                   opened_at,details_json,updated_at)
+           VALUES ('episode-dashboard','GLD','LONG','minute','minute','proper_breakout',
+                   'active',10,10,10,10,218.1,datetime('now'),'{"stop_price":217.8}',datetime('now'))"""
     )
     database.conn.commit()
     database.close()
@@ -172,6 +180,10 @@ def test_telemetry_reads_performance_without_writing(tmp_path: Path) -> None:
     assert snapshot["performance"]["trades"] == 1
     assert snapshot["performance"]["net_pnl"] == 9
     assert snapshot["performance"]["win_rate"] == 1
+    assert snapshot["performance"]["profit_factor"] is None
+    assert snapshot["performance"]["spread_cost"] == pytest.approx(1)
+    assert snapshot["latest_outcome"]["net_pnl_after_costs"] == pytest.approx(9)
+    assert snapshot["active_episodes"][0]["details_json"]["stop_price"] == pytest.approx(217.8)
 
 
 def test_telemetry_exposes_model_validation_evidence(tmp_path: Path) -> None:

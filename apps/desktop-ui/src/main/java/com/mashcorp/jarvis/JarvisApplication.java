@@ -52,10 +52,6 @@ public final class JarvisApplication extends Application {
     private final Label pnlValue = metricValue("--");
     private final Label winValue = metricValue("--");
     private final Label botValue = metricValue("OFFLINE");
-    private final Label decisionValue = new Label("NO DATA");
-    private final Label decisionRuleStrength = statusValue("Rule strength --");
-    private final Label decisionMlEvidence = statusValue("ML probability --");
-    private final Label decisionReason = new Label("Waiting for the first backend decision.");
     private final Label dataLinkValue = statusValue("CONNECTING");
     private final Label streamValue = statusValue("WAITING");
     private final Label modelValue = statusValue("DISCOVERING");
@@ -63,8 +59,7 @@ public final class JarvisApplication extends Application {
     private final ReadinessStrip readinessStrip = new ReadinessStrip();
     private final StartupOverlay startupOverlay = new StartupOverlay();
     private final TextArea terminal = new TextArea();
-    private final DecisionCore3D core3D = new DecisionCore3D();
-    private final NodeInspector overviewInspector = new NodeInspector();
+    private final LiveDecisionWorkspace decisionWorkspace = new LiveDecisionWorkspace();
     private final LineChart<Number, Number> marketChart = lineChart("Minute", "GLD");
     private GatewayRuntime runtime;
     private GatewayClient gateway;
@@ -87,8 +82,6 @@ public final class JarvisApplication extends Application {
     private Node aiPage;
     private final java.util.prefs.Preferences preferences = java.util.prefs.Preferences.userNodeForPackage(JarvisApplication.class);
     private boolean reducedMotion = preferences.getBoolean("reducedMotion", false);
-    private volatile String overviewGraphFingerprint = "";
-    private volatile GraphRenderPlan overviewGraphPlan;
     private volatile boolean startupComplete;
     private volatile boolean tradingAllowed;
     private volatile ReadinessSnapshot readinessSnapshot = new ReadinessSnapshot(
@@ -147,12 +140,9 @@ public final class JarvisApplication extends Application {
             JsonNode providers = providerCatalogOrFallback(readiness);
             ReadinessSnapshot resolvedReadiness = ReadinessSnapshot.from(readiness, providers);
             startupOverlay.update(70, "ML registry and research configuration discovered");
-            GraphRenderPlan graphPlan = loadInitialGraphPlan();
-            startupOverlay.update(88, graphPlan == null
-                    ? "Decision memory deferred; interface remains available"
-                    : "Decision memory summary cached");
+            startupOverlay.update(88, "Live decision workspace prepared");
 
-            runOnFxAndWait(() -> initializeShell(stage, root, snapshot, resolvedReadiness, graphPlan));
+            runOnFxAndWait(() -> initializeShell(stage, root, snapshot, resolvedReadiness));
             startupOverlay.update(96, "Telemetry listener initialized");
             startupComplete = true;
             gateway.recordOperation("startup_to_usable", (System.nanoTime() - startupStarted) / 1_000_000.0);
@@ -170,8 +160,7 @@ public final class JarvisApplication extends Application {
             Stage stage,
             StackPane root,
             JsonNode snapshot,
-            ReadinessSnapshot resolvedReadiness,
-            GraphRenderPlan graphPlan) {
+            ReadinessSnapshot resolvedReadiness) {
         writeClientPid();
         BorderPane shell = new BorderPane();
         shell.getStyleClass().add("app-shell");
@@ -180,11 +169,6 @@ public final class JarvisApplication extends Application {
         shell.setCenter(workspace);
         root.getChildren().add(1, shell);
         showOverview();
-        if (graphPlan != null) {
-            core3D.applyPlan(graphPlan);
-            overviewGraphFingerprint = graphPlan.fingerprint();
-            overviewGraphPlan = graphPlan;
-        }
         applyReadiness(resolvedReadiness);
         applySnapshot(snapshot);
         startTelemetry();
@@ -201,15 +185,6 @@ public final class JarvisApplication extends Application {
         }
     }
 
-    private GraphRenderPlan loadInitialGraphPlan() {
-        try {
-            JsonNode graph = gateway.get("/api/v1/memory-graph/summary?types=decision,market,model,playbook,risk&window=1d");
-            return GraphRenderPlan.build(graph, null);
-        } catch (Exception ignored) {
-            return null;
-        }
-    }
-
     private void scheduleInterfaceTasks() {
         scheduler.scheduleWithFixedDelay(() -> Platform.runLater(() -> currentRefresh.run()), 10, 10, TimeUnit.SECONDS);
         scheduler.scheduleWithFixedDelay(() -> readWorkers.execute(this::refreshReadiness), 30, 30, TimeUnit.SECONDS);
@@ -219,12 +194,17 @@ public final class JarvisApplication extends Application {
     }
 
     private void beginSmokeCheck(Stage stage) {
-        String smokeDirectory = System.getenv("JARVIS_SMOKE_DIR");
+        String smokeDirectory = System.getProperty("jarvis.smoke.dir");
+        if (smokeDirectory == null || smokeDirectory.isBlank()) smokeDirectory = System.getenv("JARVIS_SMOKE_DIR");
         if (smokeDirectory != null && !smokeDirectory.isBlank()) {
             DesktopSmokeCheck.run(stage, java.nio.file.Path.of(smokeDirectory), () -> latestSnapshot != null, List.of(
-                    this::showOverview, this::showOverview, this::showMarket, this::showPerformance,
+                    () -> { showOverview(); decisionWorkspace.showLiveDecision(); },
+                    () -> { showOverview(); decisionWorkspace.showEvidenceRadar(); },
+                    () -> { showOverview(); decisionWorkspace.showTradeAnatomy(); },
+                    this::showMarket, this::showPerformance,
                     this::showTrading, this::showIntelligence, this::showMemoryGraph, this::showTraining, this::showAiLab,
-                    this::showWhitePaper, this::showControlPlane, this::showSettings, this::showOverview));
+                    this::showWhitePaper, this::showControlPlane, this::showSettings,
+                    () -> { showOverview(); decisionWorkspace.showLiveDecision(); }));
         }
     }
 
@@ -292,8 +272,7 @@ public final class JarvisApplication extends Application {
 
     private void showOverview() {
         if (overviewPage != null) {
-            setWorkspace(overviewPage); currentRefresh = this::refreshOverviewGraph;
-            if (startupComplete) refreshOverviewGraph();
+            setWorkspace(overviewPage); currentRefresh = () -> {};
             return;
         }
         FlowPane metrics = new FlowPane(10, 10,
@@ -306,24 +285,12 @@ public final class JarvisApplication extends Application {
         telemetryBand.getStyleClass().add("telemetry-band");
         telemetryBand.setMaxWidth(Double.MAX_VALUE);
         telemetryBand.getChildren().forEach(child -> HBox.setHgrow(child, Priority.ALWAYS));
-        VBox corePanel = panel("DECISION CORE // NATIVE 3D", core3D.node());
-        corePanel.setMinHeight(360);
-        corePanel.setPrefHeight(360); corePanel.setMaxHeight(360); corePanel.setMinWidth(180);
-        core3D.bindSize(corePanel.widthProperty().subtract(28), corePanel.heightProperty().subtract(54));
-        VBox decision = panel("LATEST DECISION", decisionValue, decisionRuleStrength, decisionMlEvidence, decisionReason, overviewInspector);
-        decisionValue.getStyleClass().add("decision");
-        decisionReason.setWrapText(true);
-        HBox center = new HBox(12, corePanel, decision);
-        HBox.setHgrow(corePanel, Priority.ALWAYS);
-        corePanel.setMaxWidth(Double.MAX_VALUE);
-        decision.setPrefWidth(380);
-        decision.setMinWidth(180);
+        decisionWorkspace.setReducedMotion(reducedMotion);
         terminal.setEditable(false); terminal.setWrapText(false); terminal.setPrefRowCount(10);
-        overviewPage = page("SYSTEM OVERVIEW", telemetryBand, metrics, center, panel("LIVE OPERATIONS LOG", terminal));
-        core3D.setSelectionListener(this::inspectOverviewNode);
+        overviewPage = page("SYSTEM OVERVIEW", telemetryBand, metrics,
+                panel("LIVE DECISION OPERATIONS", decisionWorkspace), panel("LIVE OPERATIONS LOG", terminal));
         setWorkspace(overviewPage);
-        currentRefresh = this::refreshOverviewGraph;
-        if (startupComplete) refreshOverviewGraph();
+        currentRefresh = () -> {};
     }
 
     private void showMarket() {
@@ -376,31 +343,6 @@ public final class JarvisApplication extends Application {
         }
         setWorkspace(memoryPage);
         currentRefresh = memoryWorkspace::refresh;
-    }
-
-    private void refreshOverviewGraph() {
-        graphWorker.execute(() -> {
-            try {
-                JsonNode graph = gateway.get("/api/v1/memory-graph/summary?types=decision,market,model,playbook,risk&window=1d");
-                String fingerprint = graph.path("topology_fingerprint").asText();
-                GraphRenderPlan plan = fingerprint.equals(overviewGraphFingerprint) ? null : GraphRenderPlan.build(graph, overviewGraphPlan);
-                Platform.runLater(() -> {
-                    if (plan != null) { core3D.applyPlan(plan); overviewGraphFingerprint = plan.fingerprint(); overviewGraphPlan = plan; }
-                    core3D.selectNode("decision:current");
-                });
-            } catch (Exception exc) { showError(exc); }
-        });
-    }
-
-    private void inspectOverviewNode(String nodeId) {
-        overviewInspector.loading(nodeId.replace(':', ' '));
-        graphWorker.execute(() -> {
-            try {
-                String encoded = java.net.URLEncoder.encode(nodeId, StandardCharsets.UTF_8).replace("+", "%20");
-                JsonNode detail = gateway.get("/api/v1/memory-graph/nodes/" + encoded);
-                Platform.runLater(() -> overviewInspector.show(detail));
-            } catch (Exception exc) { showError(exc); }
-        });
     }
 
     private void showTraining() {
@@ -461,7 +403,7 @@ public final class JarvisApplication extends Application {
         warning.setWrapText(true);
         CheckBox reduceMotion = new CheckBox("Reduce interface motion"); reduceMotion.setSelected(reducedMotion);
         reduceMotion.setOnAction(event -> {
-            reducedMotion = reduceMotion.isSelected(); preferences.putBoolean("reducedMotion", reducedMotion); core3D.setReducedMotion(reducedMotion);
+            reducedMotion = reduceMotion.isSelected(); preferences.putBoolean("reducedMotion", reducedMotion); decisionWorkspace.setReducedMotion(reducedMotion);
         });
         Button save = actionButton("SAVE SECURE SETTINGS", "primary", () -> {
             var request = Map.of("alpaca_api_key", alpacaKey.getText(), "alpaca_secret_key", alpacaSecret.getText(), "alpaca_data_feed", feed.getValue());
@@ -579,25 +521,8 @@ public final class JarvisApplication extends Application {
                 : readinessSnapshot.tradingState());
         String state = snapshot.path("control_plane").path("state").asText("UNKNOWN");
         updateSystemState(state);
-        core3D.setState(state);
         JsonNode signal = snapshot.path("signal");
-        decisionValue.setText(signal.path("decision").asText("NO DATA"));
-        double ruleStrength = number(signal, "directional_rule_strength");
-        String ruleLabel = signal.path("confidence_label").asText("Directional rule strength");
-        decisionRuleStrength.setText(String.format("%s %.1f%%", ruleLabel, ruleStrength * 100.0));
-        JsonNode classical = snapshot.path("model_prediction");
-        if (signal.path("ml_inference_skipped").asBoolean(false)) {
-            decisionMlEvidence.setText("ML skipped: " + compact(signal.path("ml_inference_skip_reason").asText("market-data gate"), 44));
-        } else if (!classical.isMissingNode() && !classical.isNull()) {
-            decisionMlEvidence.setText(String.format("ML P(L/S/N) %.1f%% / %.1f%% / %.1f%%",
-                    number(classical, "probability_long") * 100.0,
-                    number(classical, "probability_short") * 100.0,
-                    number(classical, "probability_no_trade") * 100.0));
-        } else {
-            decisionMlEvidence.setText("ML probability unavailable");
-        }
-        JsonNode explanation = signal.path("explanation");
-        decisionReason.setText(explanation.path("summary").asText(signal.path("reason").asText("Waiting for the first backend decision.")));
+        decisionWorkspace.update(snapshot);
         dataLinkValue.setText(snapshot.path("database_available").asBoolean() ? "SYNCHRONIZED" : "UNAVAILABLE");
         streamValue.setText(signal.path("stream_connected").asBoolean() ? "CONNECTED" : "OFFLINE");
         String model = signal.path("model_version").asText("");
@@ -644,7 +569,6 @@ public final class JarvisApplication extends Application {
         Platform.runLater(() -> {
             notification.setText("TELEMETRY DEGRADED\n" + error.getMessage());
             updateSystemState("DEGRADED");
-            core3D.setState("DEGRADED");
             paperStart.setDisable(true);
             readinessStrip.setTrading("BLOCKED");
             readinessStrip.setMarket("DEGRADED");

@@ -4,7 +4,7 @@ This package provides the local Python control gateway used by the native JavaFX
 
 ## Current Workstations
 
-- **Overview:** native SQLite/Alpaca GLD candlesticks, volume, account telemetry, open episodes, responsive Signal Matrix, and logs.
+- **Overview:** a native three-view live decision flight deck. Live Decision shows quote, model, economics, evidence gates and session results; Evidence Radar compares measured/gated decision dimensions; Trade Anatomy follows one root episode through its after-cost outcome. Logs remain available below the workspace.
 - **Market:** local one-minute bars with one-, three-, and five-session ranges. The unreliable embedded TradingView widget was removed.
 - **Analytics:** after-cost root-episode metrics, cumulative P/L, outcome donut, direction/playbook bars, and exit-reason analysis.
 - **Training:** scope-aware dataset presets, discovered `.seq` archives, single or bounded multi-candidate Transformer training, and classical ML controls.
@@ -20,6 +20,12 @@ This package provides the local Python control gateway used by the native JavaFX
 ## Class Boundaries
 
 `DashboardService` validates actions. `ControlPlane` serializes typed commands and enforces idempotency and a local command-rate bound. `AuditLedger` writes redacted SHA-256-linked evidence. `contracts.py` owns API/event schemas and version identifiers. `ProcessManager` owns child jobs. `TelemetryRepository` performs read-only SQLite queries. `TransformerCatalog` supplies presets and complete archives. `PerformanceAnalytics` builds chart-ready summaries. `JobResultRepository` parses structured job output. `LLMProviderService` manages secret-safe provider selection and verifies actual text generation rather than treating a model-list response as proof of inference. `WhitePaperRepository` exposes the versioned local document. The native client is documented in `apps/desktop-ui/README.md`; fallback browser classes are documented in `static/js/README.md`.
+
+`TelemetryRepository.snapshot()` supplies the flight deck with account performance,
+validated quote/decision fields, active root-episode metadata, and the latest
+closed outcome. Gross profit, gross loss and execution-cost totals are reported
+separately so JavaFX can show after-cost performance without recomputing trading
+truth. The query path remains read-only.
 
 `TelemetryRepository.model_validation()` powers `/api/model-validation` and `/api/v1/models/validation`. It flattens immutable registry evidence for the JavaFX analytics view while retaining the complete structured payload for audit. The route is read-only and degrades to an empty collection when an older database has no model rows.
 

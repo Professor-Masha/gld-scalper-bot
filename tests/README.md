@@ -5,6 +5,9 @@ project-contained paths, allowlisted process commands, read-only performance
 telemetry, and the local dashboard route surface. Memory-graph coverage verifies
 strict read-only metadata, bounded nodes, TTL cache reuse despite SQLite file
 changes, model/trade relationships, and the versioned route alias.
+The JavaFX `DecisionTelemetryTest` separately verifies that the new Overview
+flight deck receives exact model/economic values, preserves missing evidence as
+unavailable, and identifies active execution episodes without broker access.
 
 Unit and integration-style regression tests for safety, strategy, persistence, and learning.
 

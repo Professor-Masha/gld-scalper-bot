@@ -24,10 +24,20 @@ class TelemetryRepository:
             performance = self._one(connection, """SELECT COUNT(*) AS trades,
                 COALESCE(SUM(net_pnl_after_costs),0) AS net_pnl, COALESCE(SUM(gross_pnl),0) AS gross_pnl,
                 COALESCE(SUM(CASE WHEN net_pnl_after_costs>0 THEN 1 ELSE 0 END),0) AS wins,
+                COALESCE(SUM(CASE WHEN net_pnl_after_costs>0 THEN net_pnl_after_costs ELSE 0 END),0) AS gross_profit,
+                ABS(COALESCE(SUM(CASE WHEN net_pnl_after_costs<0 THEN net_pnl_after_costs ELSE 0 END),0)) AS gross_loss,
+                COALESCE(SUM(spread_cost),0) AS spread_cost,
+                COALESCE(SUM(slippage_cost),0) AS slippage_cost,
+                COALESCE(SUM(estimated_fees),0) AS estimated_fees,
+                COALESCE(SUM(estimated_live_cost),0) AS estimated_live_cost,
                 COALESCE(AVG(holding_seconds),0) AS avg_holding_seconds
                 FROM trade_outcomes WHERE COALESCE(exit_time,entry_time)>=datetime('now','start of day')""") or {}
             trades = int(performance.get("trades") or 0)
             performance["win_rate"] = float(performance.get("wins") or 0) / trades if trades else 0.0
+            gross_loss = float(performance.get("gross_loss") or 0.0)
+            performance["profit_factor"] = (
+                float(performance.get("gross_profit") or 0.0) / gross_loss if gross_loss > 0 else None
+            )
             signal = self._one(connection, "SELECT * FROM signals WHERE symbol='GLD' ORDER BY timestamp DESC,id DESC LIMIT 1")
             model_prediction = self._one(connection, "SELECT * FROM model_predictions WHERE symbol='GLD' ORDER BY timestamp DESC,id DESC LIMIT 1")
             if signal:
@@ -54,9 +64,16 @@ class TelemetryRepository:
                 "macro": self._one(connection, "SELECT * FROM macro_context ORDER BY timestamp DESC,id DESC LIMIT 1"),
                 "safety": self._one(connection, "SELECT * FROM execution_safety_events ORDER BY timestamp DESC,id DESC LIMIT 1"),
                 "performance": performance,
-                "active_episodes": self._all(connection, """SELECT episode_id,direction,strategy_path,playbook,status,
-                    filled_qty,remaining_qty,entry_avg_price,realized_pnl,opened_at,updated_at
+                "active_episodes": self._all(connection, """SELECT episode_id,direction,source,strategy_path,playbook,status,
+                    planned_qty,submitted_qty,filled_qty,remaining_qty,entry_avg_price,realized_pnl,
+                    opened_at,updated_at,details_json
                     FROM execution_episodes WHERE closed_at IS NULL ORDER BY opened_at DESC LIMIT 20"""),
+                "latest_outcome": self._one(connection, """SELECT trade_id,direction,strategy_path,playbook,
+                    entry_time,exit_time,entry_price,exit_price,qty,gross_pnl,net_pnl_after_costs,pnl_pct,
+                    holding_seconds,exit_reason,win_loss,confidence,regime,spread_cost,slippage_cost,
+                    estimated_fees,estimated_live_cost,profit_given_back,max_favorable_excursion,
+                    max_adverse_excursion FROM trade_outcomes
+                    ORDER BY COALESCE(exit_time,entry_time) DESC LIMIT 1"""),
                 "counts": {name: self._count(connection, table) for name, table in {
                     "signals":"signals", "orders":"orders", "fills":"fills", "outcomes":"trade_outcomes", "models":"model_versions"
                 }.items()},

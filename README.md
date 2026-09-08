@@ -475,12 +475,13 @@ the normal shutdown sequence can complete.
 The JavaFX dashboard is an operator shell, not a replacement execution engine. Start
 controls launch the existing allowlisted CLI command in a child process. Paper
 orders still pass through the synchronized order coordinator, execution safety,
-reconciliation, and broker clients. Native charts and the JavaFX 3D decision
-core are visual analysis only and cannot submit an Alpaca order.
+reconciliation, and broker clients. Native charts, the live decision flight deck,
+and the JavaFX 3D memory graph are visual analysis only and cannot submit an
+Alpaca order.
 
 | View | Operational responsibility |
 |---|---|
-| Overview | GLD quote, account equity, daily P/L, latest decision, open episodes, quick commands, and live bot log. |
+| Overview | Three synchronized operational views: **Live Decision** follows quote, decision, model probability, economic edge, evidence gates and session results; **Evidence Radar** compares measured rule strength, price-action/liquidity/risk gates, classical ML and Transformer evidence; **Trade Anatomy** follows one root episode from observation through final after-cost outcome. The live bot log remains below the workspace. |
 | Market | Native GLD close-price line chart from the gateway's latest one-minute bars, refreshed every ten seconds. |
 | Performance | Equity curve, after-cost P/L, win rate, holding time, and closed root outcomes. |
 | Trades | Auditable root trading episodes rather than duplicated partial-exit tranches. |
@@ -488,7 +489,7 @@ core are visual analysis only and cannot submit an Alpaca order.
 | Memory Graph | Read-only Obsidian-style 3D map of current evidence, model lineage, datasets, playbooks, trades, training experiments, LLM reviews, and safety memory. Includes filters, node inspector, and a chronological lineage timeline. |
 | Training | Classical candidate, continual loop, Transformer dataset/candidate, and backtest controls. |
 | AI Lab | Select and generation-test Ollama or Kimi, inspect local FinGPT source readiness, run hourly or daily FinGPT research pipelines, start focused offline reviews, and retrieve each job's completed result independently. |
-| 3D Core | Hardware-accelerated JavaFX `SubScene` whose nucleus, stable open-ring learned-state nodes, orbital particles, color, and speed follow backend evidence. It visualizes state and has no decision authority. |
+| Decision visualization | The Overview flight deck uses bounded JavaFX canvases and cards for current trading evidence. The separate Memory Graph uses a hardware-accelerated JavaFX `SubScene` for learned-state lineage. Both are read-only and have no decision authority. |
 | Backtest Lab | Run chronological simulations and inspect return, drawdown, win rate, profit factor, direction, and trade economics in charts. |
 | White Paper | Read the versioned technical, mathematical, risk, training, security, and governance specification in the application. |
 | Control Plane | Backend-derived state, health/readiness checks, managed-job information, and tamper-evident operator audit. Job-specific live logs and cancellation are in Training & Research Jobs. |
@@ -505,6 +506,27 @@ ownership and [`src/gld_scalper/dashboard/README.md`](src/gld_scalper/dashboard/
 for the backend security and process-lifecycle contract. The old static browser
 client remains tracked as a fallback and API-development harness; the Windows
 Desktop shortcut no longer launches it.
+
+#### Live Decision Flight Deck
+
+The Overview no longer uses a decorative 3D cluster. Its three tabs share one
+immutable `DecisionTelemetry` projection of the latest gateway frame:
+
+1. **Live Decision** answers what the bot sees now, what it decided, what each
+   predictive family reported, whether expected return exceeds plausible cost,
+   and which gate would stop an order.
+2. **Evidence Radar** compares six independently labeled dimensions. Missing
+   model output remains unavailable; it is never synthesized from rule strength.
+   Pass, warning and block axes come from explicit evidence-gate states.
+3. **Trade Anatomy** follows a root execution episode, its lifecycle, entry/current/
+   exit prices, gross and net P/L, costs, MFE, MAE, profit giveback and close reason.
+
+The price canvas accumulates only timestamp-distinct live snapshots in a bounded
+in-memory window. The radar and charts perform no SQLite queries, feature
+calculation, model inference or broker work on the JavaFX thread. When the bot is
+offline or a value is invalid, the interface says `Unavailable` or `--` instead
+of inventing a score. Memory Graph remains the historical model/trade lineage
+tool under its own navigation item.
 
 #### Decision-Core Memory Graph
 

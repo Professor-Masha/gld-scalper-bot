@@ -10,6 +10,10 @@ GatewayClient -> Python gateway`. No Java class has broker execution authority.
 | `GatewayClient` | `baseUri`, `token`, `http`, and `json` implement loopback-only transport. Mutations carry idempotency/correlation metadata; errors are returned to the operator. |
 | `ClientLatencyMonitor` | Keeps bounded end-to-end client timings without retaining request bodies or credentials. |
 | `JarvisApplication` | `workspace`, labels, `latestSnapshot`, `socket`, and `eventSequence` project backend truth. Dedicated startup, telemetry, read, graph, command, and research executors keep I/O off the UI thread. |
+| `DecisionTelemetry` | Validates and freezes the latest gateway snapshot into display-safe quote, prediction, economics, evidence, episode, outcome, and performance records. |
+| `LiveDecisionWorkspace` | Owns the Overview's Live Decision, Evidence Radar and Trade Anatomy tabs. It preserves the latest frame across navigation and applies reduced-motion-aware crossfades. |
+| `DecisionPricePlot` | Keeps at most 160 timestamp-distinct midpoint observations and paints price/quote/episode markers on a lightweight canvas. |
+| `DecisionRadar` | Paints six measured or gate-backed axes. It never infers a missing model probability or writes application state. |
 | `JobWorkspace` | `action`, `scope`, `catalog`, archive selectors and input controls create bounded options for allowlisted Python jobs. The view timer tails the selected job and stops when detached. |
 | `AnalyticsWorkspace` | `mode` separates actual paper outcomes from simulated backtest results; `metrics` and `plots` render gateway-provided evidence. It does not recompute trading labels. |
 | `GraphRenderPlan` | Converts bounded summary JSON into deterministic open-ring positions away from the JavaFX thread. Types occupy stable arcs, the latest decision is centered, and market/risk evidence uses the inner band. |
@@ -25,3 +29,9 @@ GatewayClient -> Python gateway`. No Java class has broker execution authority.
 All GUI mutation belongs on the JavaFX application thread. Capture field values
 before submitting background work. Do not put secrets in logs or URL parameters.
 Update the folder and root manuals when adding a route, form or job option.
+
+The Overview pipeline is `GatewayClient event -> JarvisApplication snapshot ->
+DecisionTelemetry.from -> LiveDecisionWorkspace.update`. This path formats
+already-computed evidence only. Python remains responsible for data alignment,
+features, inference, risk, reconciliation and broker execution. Memory Graph has
+its own lazy summary/detail pipeline and does not share the live canvas history.

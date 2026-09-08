@@ -15,9 +15,10 @@ submit broker orders, or implement risk rules.
    `X-Dashboard-Token`, and consumes versioned `/api/v1/events` envelopes.
 5. `JarvisApplication` renders operations, market, performance, trading,
    intelligence, training, AI, control-plane, and settings workspaces.
-6. `DecisionCore3D` visualizes backend state and the bounded memory graph with a
-   hardware-accelerated JavaFX `SubScene`. It is a display component and cannot
-   influence a trade.
+6. `LiveDecisionWorkspace` projects the current telemetry frame into live
+   decision, evidence-radar, and trade-anatomy views. `DecisionCore3D` is retained
+   only for the separate bounded Memory Graph. Both are display components and
+   cannot influence a trade.
 
 ## Staged Startup And Readiness
 
@@ -51,6 +52,10 @@ finished. LLM readiness is deliberately non-blocking and has no broker authority
 | `GatewayClient.java` | REST/WebSocket transport and authenticated commands. |
 | `ClientLatencyMonitor.java` | Bounded JavaFX end-to-end request, WebSocket-connect, and startup-to-usable percentiles. |
 | `JarvisApplication.java` | Native window, navigation, tables, charts, forms, and state projection. |
+| `DecisionTelemetry.java` | Immutable, validated projection of one gateway frame into quote, decision, model, evidence, episode, outcome, and after-cost performance fields. |
+| `LiveDecisionWorkspace.java` | Responsive three-view Overview flight deck with crossfades and retained live state. |
+| `DecisionPricePlot.java` | Bounded timestamp-distinct live midpoint/episode canvas; it performs no data acquisition or order work. |
+| `DecisionRadar.java` | Six-axis measured evidence view for rule strength, price action, liquidity, classical ML, Transformer, and risk. |
 | `StartupOverlay.java` | Immediate, phase-backed 0-100% startup presentation and failure state. |
 | `ReadinessSnapshot.java` | Pure projection of the gateway readiness contract into human-facing states. |
 | `ReadinessStrip.java` | Persistent interface, trading, market, and research-AI status display. |
@@ -63,7 +68,28 @@ finished. LLM readiness is deliberately non-blocking and has no broker authority
 The **Model validation** analytics mode reads `/api/v1/models/validation`. It compares model scopes using after-cost holdout and walk-forward return, selective accuracy, expected calibration error, abstention, trade count, profit factor, and bootstrap return intervals. It is read-only and cannot promote a model.
 | `DesktopSmokeCheck.java` | Explicit opt-in, read-only visual checks; captures each view and exits without firing controls. |
 | `GatewayClientTest.java` | Loopback contract tests with a fake HTTP server, never Alpaca. |
+| `DecisionTelemetryTest.java` | Verifies exact telemetry projection, missing-model behavior, market-state extraction, and active episode evidence. |
 | `jarvis.css` | Restrained black/cyan/green command-center visual system. |
+
+## Overview Flight Deck
+
+The default workspace follows the visual language of an operations console while
+keeping market truth legible:
+
+- **Live Decision** shows the current GLD midpoint, bounded live trace, decision,
+  calibrated model probabilities, rule strength, expected return, plausible
+  execution cost, net edge, uncertainty, evidence-to-order gates and session
+  performance.
+- **Evidence Radar** shows six directly measured values or explicit gate states.
+  It does not convert a bullish rules score into a pretend ML probability.
+- **Trade Anatomy** follows one root episode through observed, confirmed,
+  submitted, filled, managing and exit stages, then shows after-cost economics
+  and the recorded close reason.
+
+All three views consume the same immutable frame. Invalid spreads and economics
+outside plausible GLD bounds render as unavailable. Canvas history is bounded,
+and switching tabs retains the latest frame without requesting the large market
+archive. The learned-state 3D graph remains under **Memory Graph**.
 
 ## Development
 
