@@ -6,6 +6,16 @@ Copyright (c) 2026 @Mashcorp. All rights reserved. Mashcorp and @Mashcorp are cl
 
 GLD Scalper Bot is a paper-trading algorithm for the `GLD` ETF using Alpaca's paper trading API. It watches live market data, stores that data in SQLite, evaluates its full strategy once per minute, and also evaluates quote/trade microstructure on a sub-second event path. It submits protected paper bracket orders and turns completed outcomes into training evidence.
 
+### Broker-Aware Market Gate
+
+`run-paper` asks Alpaca's market clock before starting the live market-data stream and before every decision cycle. `MARKET_CLOSED` means the broker explicitly reports a closed US equity session. `DATA_UNAVAILABLE` means the clock cannot be verified or required GLD bar, quote, trade, stream-freshness, or timestamp-alignment evidence is unsafe. `poor_liquidity` remains a strategy regime used only after an open, fresh and aligned market snapshot reaches feature generation. These states must not be interpreted interchangeably.
+
+While the market is closed, the process remains available for reconciliation and scheduled maintenance but does not acquire live strategy data, build a feature snapshot, or invoke classical/Transformer inference. Identical off-hours decisions are reduced to a state-change record and a periodic health heartbeat controlled by `MARKET_CLOCK_HEARTBEAT_SECONDS`. When Alpaca reports open, the stream is created, warmed up, and quote/trade/bar freshness and alignment are verified before evaluation resumes.
+
+The dashboard labels deterministic evidence as **Bullish rule strength** or **Bearish rule strength**. It is not a win probability. Classical ML displays `P(LONG)`, `P(SHORT)`, and `P(NO_TRADE)` separately, while Transformer evidence retains its own model name, role, uncertainty and status. If freshness hard-blocks a decision, both model paths report that inference was skipped.
+
+Transformer datasets and live inference accept only numeric/boolean features plus a small allowlist of controlled categorical one-hot fields. Exact timestamps, free text, URLs, headlines, raw JSON, errors, order identifiers and similar uncontrolled inputs are rejected. Existing Transformer artifacts containing blocked columns must be rebuilt before reuse. Model-projected trading costs outside `0..MODEL_MAX_EXPECTED_COST_PCT` are invalid and force abstention.
+
 Normal paper mode is intentionally conservative. The optional controlled paper-learning profile samples a limited number of small, near-valid probes. Both modes still refuse stale or disconnected data, failed broker reconciliation, mixed-direction GLD exposure, and unexpected open orders.
 
 This bot is paper trading only. It is not financial advice, and paper trading results do not guarantee live trading results. Alpaca paper trading is a simulation, not a perfect copy of live market execution.

@@ -203,7 +203,15 @@ class DashboardService:
             "allowlisted_commands": True,
         }
         ready = all(checks.values())
-        session = market_session(utc_now(), extended_hours=True)
+        telemetry = self._telemetry_snapshot() if database_available else {}
+        signal = telemetry.get("signal") if isinstance(telemetry.get("signal"), dict) else {}
+        persisted_state = str(signal.get("market_state") or "").upper()
+        if persisted_state in {"MARKET_OPEN", "MARKET_CLOSED", "DATA_UNAVAILABLE", "POOR_LIQUIDITY"}:
+            session = persisted_state
+            clock_source = "broker_persisted"
+        else:
+            session = market_session(utc_now(), extended_hours=True).upper()
+            clock_source = "local_calendar_fallback"
         providers = self.llm_providers.catalog()
         active_provider = str(providers.get("active_provider") or "none")
         result = {
@@ -218,7 +226,10 @@ class DashboardService:
             },
             "market": {
                 "session": session,
-                "regular_open": session == "regular",
+                "regular_open": session in {"MARKET_OPEN", "REGULAR"},
+                "reason": signal.get("market_state_reason"),
+                "next_open": signal.get("next_market_open"),
+                "clock_source": clock_source,
                 "data_stream_required_for_orders": True,
             },
             "llm": {

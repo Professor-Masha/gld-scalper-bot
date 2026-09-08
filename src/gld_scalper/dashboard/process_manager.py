@@ -156,7 +156,10 @@ class ProcessManager:
         with self._lock:
             record = self._records.get(name)
             if record:
-                record.state = "completed" if return_code == 0 else "failed"
+                if record.state == "stopping":
+                    record.state = "stopped"
+                else:
+                    record.state = "completed" if return_code == 0 else "failed"
                 record.return_code = return_code
             handle = self._handles.pop(name, None)
             if handle:

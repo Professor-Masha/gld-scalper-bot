@@ -16,6 +16,8 @@ record ReadinessSnapshot(
                 .asText(tradingAllowed ? "AVAILABLE" : "BLOCKED").toUpperCase();
         String market = readiness.path("market").path("session").asText("unknown").toUpperCase();
         if ("REGULAR".equals(market)) market = "OPEN";
+        if ("MARKET_OPEN".equals(market)) market = "OPEN";
+        if ("MARKET_CLOSED".equals(market)) market = "CLOSED";
 
         String activeProvider = providers.path("active_provider").asText("none");
         String llm = "none".equalsIgnoreCase(activeProvider)

@@ -40,6 +40,14 @@ from .gold_event_impact import build_gold_event_impact
 from .llm_analysis import LLMAnalysisService, require_offline_llm_enabled
 from .kimi_tier0 import kimi_tier0_status
 from .macro_context import MacroContextBuilder, MacroContextScheduler, macro_context_to_features, pretty_macro_context
+from .market_state import (
+    DATA_UNAVAILABLE,
+    MARKET_CLOSED,
+    MarketGateResult,
+    MarketStateHeartbeat,
+    inspect_market_clock,
+    inspect_market_snapshot,
+)
 from .microstructure import build_microstructure_features
 from .ml.archive_dataset import build_archive_training_records, save_archive_training_artifact
 from .ml.continual_training import ContinualTrainingRunner
@@ -908,33 +916,52 @@ def run_paper_command(args: argparse.Namespace) -> None:
             if position_runtime is not None:
                 position_runtime.enqueue_event(event_type, payload, received_at)
 
-        stream_runtime = LiveDataStreamRuntime(settings, event_sink=route_live_event)
-        stream_runtime.start()
-        execution_safety.set_stream_health_provider(stream_runtime.health)
-        db.log_event("INFO", __name__, "stream_runtime_started", "Live Alpaca stream runtime started", {})
-        logger.info(
-            "waiting up to %s seconds for live stream warmup",
-            settings.stream_startup_grace_seconds,
-            extra={"event_type": "stream_warmup"},
-        )
-        warmup_deadline = time.monotonic() + settings.stream_startup_grace_seconds
-        while time.monotonic() < warmup_deadline:
-            health = stream_runtime.health(utc_now())
-            if health["websocket_connected"]:
-                logger.info(
-                    "live stream warmup complete live_data_received=%s last_message=%s",
-                    health["websocket_connected"],
-                    health["stream_last_message_at"],
-                    extra={"event_type": "stream_warmup_complete"},
-                )
-                break
-            time.sleep(1)
+        def start_live_stream() -> LiveDataStreamRuntime:
+            runtime = LiveDataStreamRuntime(settings, event_sink=route_live_event)
+            runtime.start()
+            execution_safety.set_stream_health_provider(runtime.health)
+            db.log_event("INFO", __name__, "stream_runtime_started", "Live Alpaca stream runtime started", {})
+            logger.info(
+                "waiting up to %s seconds for live stream warmup",
+                settings.stream_startup_grace_seconds,
+                extra={"event_type": "stream_warmup"},
+            )
+            warmup_deadline = time.monotonic() + settings.stream_startup_grace_seconds
+            while time.monotonic() < warmup_deadline:
+                health = runtime.health(utc_now())
+                if health["websocket_connected"]:
+                    logger.info(
+                        "live stream warmup complete live_data_received=%s last_message=%s",
+                        health["websocket_connected"],
+                        health["stream_last_message_at"],
+                        extra={"event_type": "stream_warmup_complete"},
+                    )
+                    break
+                time.sleep(1)
+            return runtime
+
+        try:
+            startup_market_gate = inspect_market_clock(trading_client.get_clock(), now=utc_now())
+        except Exception as exc:
+            startup_market_gate = inspect_market_clock(None, now=utc_now())
+            logger.warning("live stream startup deferred: market clock unavailable: %s", exc)
+        if startup_market_gate.market_open:
+            stream_runtime = start_live_stream()
+        else:
+            db.log_event(
+                "INFO",
+                __name__,
+                "stream_runtime_deferred",
+                "Live Alpaca stream startup deferred until the broker market clock reports open",
+                startup_market_gate.as_features(),
+            )
     else:
         db.log_event("WARNING", __name__, "stream_runtime_disabled", "Live Alpaca stream runtime disabled", {})
     retraining_scheduler = None if args.no_retraining else SafeRetrainingScheduler(settings)
     last_drift_check_at = None
     loops = 1 if args.once else None
     completed = 0
+    market_state_heartbeat = MarketStateHeartbeat(settings.market_clock_heartbeat_seconds)
 
     try:
         while True:
@@ -1092,42 +1119,50 @@ def run_paper_command(args: argparse.Namespace) -> None:
 
             # Maintenance and network collection can take several seconds. Decisions must use a fresh clock.
             now = utc_now()
-            bars = db.fetch_latest_bars(settings.bot_symbol, settings.trade_timeframe, limit=200)
-            if not bars:
-                logger.warning("no trade: no market data available", extra={"event_type": "no_trade"})
-                db.insert_no_trade(
-                    {
-                        "timestamp": now,
-                        "symbol": settings.bot_symbol,
-                        "reason": "no market data available",
-                        "feature_snapshot_json": {},
-                    }
+            try:
+                market_clock = trading_client.get_clock()
+            except Exception as exc:
+                logger.exception("Alpaca market clock check failed: %s", exc, extra={"event_type": "market_clock_failed"})
+                market_gate = inspect_market_clock(None, now=now)
+            else:
+                market_gate = inspect_market_clock(market_clock, now=now)
+            if not market_gate.market_open:
+                if stream_runtime is not None:
+                    stream_runtime.stop()
+                    stream_runtime = None
+                    db.log_event(
+                        "INFO",
+                        __name__,
+                        "stream_runtime_market_close",
+                        "Live Alpaca stream stopped because the broker market clock reports closed",
+                        market_gate.as_features(),
+                    )
+                execution_safety.state.freeze(
+                    "market_closed" if market_gate.state == MARKET_CLOSED else "market_clock_unavailable"
                 )
+                _publish_market_gate(
+                    db,
+                    settings.bot_symbol,
+                    market_gate,
+                    market_state_heartbeat,
+                    fast_scalp_runtime=fast_scalp_runtime,
+                    position_runtime=position_runtime,
+                )
+                completed += 1
+                if loops and completed >= loops:
+                    break
                 time.sleep(seconds_until_next_minute())
                 continue
-            ema_cross_bars = (
-                db.fetch_latest_bars(
-                    settings.bot_symbol,
-                    settings.trade_timeframe,
-                    limit=settings.ema_cross_history_minutes,
-                )
-                if settings.enable_ema_cross_strategy
-                else bars
-            )
+            execution_safety.state.unfreeze("market_closed")
+            execution_safety.state.unfreeze("market_clock_unavailable")
+            if stream_runtime is None and settings.enable_live_stream and not args.no_stream:
+                stream_runtime = start_live_stream()
 
+            bars = db.fetch_latest_bars(settings.bot_symbol, settings.trade_timeframe, limit=200)
             quote = db.get_latest_quote(settings.bot_symbol)
-            recent_quotes = db.fetch_recent_quotes(settings.bot_symbol, since=now - timedelta(seconds=60), limit=200)
             trade = db.get_latest_trade(settings.bot_symbol)
-            recent_trades = db.fetch_recent_trades(settings.bot_symbol, since=now - timedelta(minutes=5), limit=500)
-            features = build_feature_snapshot(bars_1m=bars, quote=quote, now=now)
-            features.update(build_archive_compatible_features(bars))
-            if trade and trade.get("timestamp") is not None:
-                features["latest_trade_timestamp"] = trade["timestamp"]
-                features["latest_trade_price"] = trade.get("price")
-                features["trade_age_seconds"] = (ensure_utc(now) - ensure_utc(trade["timestamp"])).total_seconds()
             if stream_runtime is not None:
                 stream_health = stream_runtime.health(now)
-                features.update(stream_health)
                 db.insert_stream_diagnostic({"timestamp": now, **stream_health})
             else:
                 stream_health = (
@@ -1150,8 +1185,55 @@ def run_paper_command(args: argparse.Namespace) -> None:
                         "stream_last_error": "live stream disabled",
                     }
                 )
-                features.update(stream_health)
                 db.insert_stream_diagnostic({"timestamp": now, **stream_health})
+            data_gate = inspect_market_snapshot(
+                now=now,
+                bars=bars,
+                quote=quote,
+                trade=trade,
+                stream_health=stream_health,
+                bar_max_age_seconds=settings.bar_stale_seconds,
+                quote_max_age_seconds=settings.minute_entry_max_quote_age_seconds,
+                trade_max_age_seconds=settings.minute_entry_max_trade_age_seconds,
+                alignment_tolerance_seconds=settings.market_data_alignment_tolerance_seconds,
+            )
+            if not data_gate.evaluation_allowed:
+                execution_safety.state.freeze("market_data_unavailable")
+                _publish_market_gate(
+                    db,
+                    settings.bot_symbol,
+                    data_gate,
+                    market_state_heartbeat,
+                    fast_scalp_runtime=fast_scalp_runtime,
+                    position_runtime=position_runtime,
+                )
+                completed += 1
+                if loops and completed >= loops:
+                    break
+                time.sleep(seconds_until_next_minute())
+                continue
+            execution_safety.state.unfreeze("market_data_unavailable")
+
+            ema_cross_bars = (
+                db.fetch_latest_bars(
+                    settings.bot_symbol,
+                    settings.trade_timeframe,
+                    limit=settings.ema_cross_history_minutes,
+                )
+                if settings.enable_ema_cross_strategy
+                else bars
+            )
+            recent_quotes = db.fetch_recent_quotes(settings.bot_symbol, since=now - timedelta(seconds=60), limit=200)
+            recent_trades = db.fetch_recent_trades(settings.bot_symbol, since=now - timedelta(minutes=5), limit=500)
+            features = build_feature_snapshot(bars_1m=bars, quote=quote, now=now)
+            features.update(build_archive_compatible_features(bars))
+            features.update(market_gate.as_features())
+            features.update(data_gate.as_features())
+            features.update(stream_health)
+            if trade and trade.get("timestamp") is not None:
+                features["latest_trade_timestamp"] = trade["timestamp"]
+                features["latest_trade_price"] = trade.get("price")
+                features["trade_age_seconds"] = (ensure_utc(now) - ensure_utc(trade["timestamp"])).total_seconds()
             features.update(analyze_price_action(bars))
             features.update(
                 build_microstructure_features(
@@ -1792,7 +1874,7 @@ def run_paper_command(args: argparse.Namespace) -> None:
             time.sleep(seconds_until_next_minute())
     except KeyboardInterrupt:
         db.log_event("INFO", __name__, "shutdown", "Paper bot interrupted by user", {})
-        raise
+        logger.info("paper bot stop requested by user", extra={"event_type": "shutdown_requested"})
     finally:
         execution_safety.state.freeze("process_shutdown")
         if broker_order_stream is not None:
@@ -1842,6 +1924,77 @@ def run_paper_command(args: argparse.Namespace) -> None:
         latency_tracker.stop()
 
     return
+
+
+def _publish_market_gate(
+    database: Database,
+    symbol: str,
+    result: MarketGateResult,
+    heartbeat: MarketStateHeartbeat,
+    *,
+    fast_scalp_runtime: FastScalpRuntime | None,
+    position_runtime: DynamicPositionRuntime | None,
+) -> None:
+    features = {
+        **result.as_features(),
+        "strategy_path": "market_gate",
+        "directional_rule_strength": 0.0,
+        "ml_inference_skipped": True,
+        "transformer_inference_skipped": True,
+        "ml_inference_skip_reason": result.state,
+        "transformer_inference_skip_reason": result.state,
+        "ml_probability_long": None,
+        "ml_probability_short": None,
+        "ml_probability_no_trade": None,
+    }
+    if fast_scalp_runtime is not None:
+        fast_scalp_runtime.update_context(features)
+    if position_runtime is not None:
+        position_runtime.update_context(features)
+    if not heartbeat.should_emit(result):
+        return
+    event_type = "market_closed" if result.state == MARKET_CLOSED else "market_data_unavailable"
+    logger.warning(
+        "%s: %s ML and Transformer inference skipped",
+        result.state,
+        result.reason,
+        extra={"event_type": event_type},
+    )
+    database.log_event(
+        "INFO" if result.state == MARKET_CLOSED else "WARNING",
+        __name__,
+        event_type,
+        result.reason,
+        features,
+    )
+    database.insert_signal(
+        {
+            "timestamp": result.checked_at,
+            "symbol": symbol,
+            "bullish_score": 0.0,
+            "bearish_score": 0.0,
+            "no_trade_score": 100.0,
+            "regime": result.state,
+            "decision": "NO_TRADE",
+            "confidence": 0.0,
+            "reason": result.reason,
+            "feature_snapshot_json": features,
+            "model_version": None,
+        }
+    )
+    database.insert_no_trade(
+        {
+            "timestamp": result.checked_at,
+            "symbol": symbol,
+            "reason": result.reason,
+            "bullish_score": 0.0,
+            "bearish_score": 0.0,
+            "regime": result.state,
+            "spread_pct": None,
+            "risk_block_reason": result.state,
+            "feature_snapshot_json": features,
+        }
+    )
 
 
 def _journal_feature_fields(features: dict) -> dict[str, object]:

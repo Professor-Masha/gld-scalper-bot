@@ -705,14 +705,19 @@ class ExecutionSafetySupervisor:
 
     def _apply_session_clock(self, snapshot: SafetySnapshot) -> None:
         remaining = snapshot.minutes_to_close
-        if snapshot.market_open and remaining is not None:
+        if not snapshot.market_open:
+            self.state.freeze("market_closed")
+            return
+        self.state.unfreeze("market_closed")
+        if remaining is not None:
             if remaining <= self.settings.execution_entry_freeze_minutes_before_close:
                 self.state.freeze("session_close_window")
             if remaining <= self.settings.execution_session_flatten_minutes_before_close and not self._session_flatten_started:
                 self._session_flatten_started = self.flatten_symbol("session_close", release_freeze=False)
-        elif remaining is not None and remaining > self.settings.execution_entry_freeze_minutes_before_close:
+            elif remaining > self.settings.execution_entry_freeze_minutes_before_close:
+                self.state.unfreeze("session_close_window")
+        if remaining is not None and remaining > self.settings.execution_entry_freeze_minutes_before_close:
             self._session_flatten_started = False
-            self.state.unfreeze("session_close_window")
 
     def _check_stream(self, snapshot: SafetySnapshot) -> None:
         if not snapshot.market_open or self._stream_health_provider is None:

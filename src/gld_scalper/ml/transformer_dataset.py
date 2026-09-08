@@ -18,8 +18,8 @@ import numpy as np
 from ..config import Settings
 from ..database import Database
 from ..utils.time_utils import ensure_utc
-from .dataset_builder import _flatten_features
 from .transformer_model import ENTRY_CLASSES, EXIT_CLASSES, HORIZONS_MINUTES
+from .transformer_features import flatten_transformer_features, transformer_feature_allowed
 
 
 NY = ZoneInfo("America/New_York")
@@ -309,8 +309,8 @@ def _decision_timeline(
         bucket_epoch = int(timestamp.timestamp()) // bucket_seconds * bucket_seconds
         bucket = str(bucket_epoch)
         raw_features = _safe_json(row.get("feature_snapshot_json"))
-        features = _flatten_features(raw_features)
-        features.update(_flatten_features({key: row.get(key) for key in optional if key not in {"model_version"}}))
+        features = flatten_transformer_features(raw_features)
+        features.update(flatten_transformer_features({key: row.get(key) for key in optional if key not in {"model_version"}}))
         features.update(_clock_features(timestamp))
         outcome = outcome_map.get(int(row["id"]))
         baseline = [
@@ -420,7 +420,7 @@ def _raw_minute_timeline(
         cost = settings.outcome_label_slippage_pct + settings.economic_breakeven_safety_buffer_pct
         label = _direction_label(future_returns[2], cost, settings.outcome_label_min_edge_pct)
         timeline.timestamps.append(timestamp)
-        timeline.features.append(_flatten_features(feature))
+        timeline.features.append(flatten_transformer_features(feature))
         timeline.labels.append(label)
         timeline.returns.append(future_returns)
         timeline.costs.append(cost)
@@ -560,7 +560,7 @@ def _raw_fast_timeline(
             }
             mids.append(mid)
             timeline.timestamps.append(timestamp)
-            timeline.features.append(_flatten_features(feature))
+            timeline.features.append(flatten_transformer_features(feature))
             timeline.labels.append(None)
             timeline.returns.append([math.nan] * len(HORIZONS_MINUTES))
             timeline.costs.append(spread_pct + settings.outcome_label_slippage_pct)
@@ -696,7 +696,7 @@ def _news_timeline(database: Database, settings: Settings, start: datetime, end:
         if index >= len(timeline.timestamps):
             continue
         values = dict(raw)
-        timeline.features[index].update(_flatten_features({f"news_{key}": value for key, value in values.items() if key != "timestamp"}))
+        timeline.features[index].update(flatten_transformer_features({f"news_{key}": value for key, value in values.items() if key != "timestamp"}))
         timeline.eligible[index] = timeline.labels[index] in ENTRY_CLASSES
         timeline.regimes[index] = f"news:{values.get('event_type') or values.get('category') or 'unknown'}"
     timeline.source = "historical_news_events"
@@ -729,8 +729,8 @@ def _exit_timeline(database: Database, settings: Settings, start: datetime, end:
             label = "reduce"
         else:
             label = "hold"
-        feature = _flatten_features({key: value for key, value in row.items() if key not in {"id", "timestamp", "trade_id", "created_at"}})
-        feature.update(_flatten_features(_safe_json(row.get("details_json"))))
+        feature = flatten_transformer_features({key: value for key, value in row.items() if key not in {"id", "timestamp", "trade_id", "created_at"}})
+        feature.update(flatten_transformer_features(_safe_json(row.get("details_json"))))
         feature.update(_clock_features(timestamp))
         timeline.timestamps.append(timestamp)
         timeline.features.append(feature)
@@ -876,7 +876,7 @@ def _select_feature_columns(rows: Iterable[dict[str, float]], *, max_features: i
         row_count += 1
         counts.update(key for key, value in row.items() if math.isfinite(_finite(value, math.nan)))
     minimum = max(1, int(row_count * 0.01))
-    candidates = [key for key, count in counts.items() if count >= minimum]
+    candidates = [key for key, count in counts.items() if count >= minimum and transformer_feature_allowed(key)]
     candidates.sort(
         key=lambda key: (
             -int(any(term in key.lower() for term in FEATURE_PRIORITY_TERMS)),

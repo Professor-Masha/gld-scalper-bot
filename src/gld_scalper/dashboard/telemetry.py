@@ -28,12 +28,28 @@ class TelemetryRepository:
                 FROM trade_outcomes WHERE COALESCE(exit_time,entry_time)>=datetime('now','start of day')""") or {}
             trades = int(performance.get("trades") or 0)
             performance["win_rate"] = float(performance.get("wins") or 0) / trades if trades else 0.0
+            signal = self._one(connection, "SELECT * FROM signals WHERE symbol='GLD' ORDER BY timestamp DESC,id DESC LIMIT 1")
+            model_prediction = self._one(connection, "SELECT * FROM model_predictions WHERE symbol='GLD' ORDER BY timestamp DESC,id DESC LIMIT 1")
+            if signal:
+                feature_snapshot = signal.get("feature_snapshot_json")
+                feature_snapshot = feature_snapshot if isinstance(feature_snapshot, dict) else {}
+                signal["directional_rule_strength"] = max(
+                    float(signal.get("bullish_score") or 0.0),
+                    float(signal.get("bearish_score") or 0.0),
+                ) / 100.0
+                signal["confidence_label"] = "Bullish rule strength" if float(signal.get("bullish_score") or 0.0) >= float(signal.get("bearish_score") or 0.0) else "Bearish rule strength"
+                signal["market_state"] = feature_snapshot.get("market_state") or signal.get("regime")
+                signal["market_state_reason"] = feature_snapshot.get("market_state_reason")
+                signal["next_market_open"] = feature_snapshot.get("market_next_open")
+                signal["ml_inference_skipped"] = bool(feature_snapshot.get("ml_inference_skipped"))
+                signal["ml_inference_skip_reason"] = feature_snapshot.get("ml_inference_skip_reason")
             return {
                 "database_available": True, "database": str(self.database_path),
                 "server_time": datetime.now(timezone.utc).isoformat(),
                 "account": self._one(connection, "SELECT * FROM account_snapshots ORDER BY timestamp DESC,id DESC LIMIT 1"),
                 "quote": self._one(connection, "SELECT * FROM quotes WHERE symbol='GLD' ORDER BY timestamp DESC,id DESC LIMIT 1"),
-                "signal": self._one(connection, "SELECT * FROM signals WHERE symbol='GLD' ORDER BY timestamp DESC,id DESC LIMIT 1"),
+                "signal": signal,
+                "model_prediction": model_prediction,
                 "transformer": self._one(connection, "SELECT * FROM transformer_predictions ORDER BY timestamp DESC,id DESC LIMIT 1"),
                 "macro": self._one(connection, "SELECT * FROM macro_context ORDER BY timestamp DESC,id DESC LIMIT 1"),
                 "safety": self._one(connection, "SELECT * FROM execution_safety_events ORDER BY timestamp DESC,id DESC LIMIT 1"),
@@ -71,7 +87,9 @@ class TelemetryRepository:
             ORDER BY COALESCE(exit_time,entry_time) DESC LIMIT ?""", (max(1,min(limit,5000)),))
 
     def decisions(self, limit: int = 100) -> list[dict[str, Any]]:
-        return self._query("""SELECT timestamp,decision,confidence,bullish_score,bearish_score,no_trade_score,
+        return self._query("""SELECT timestamp,decision,confidence,
+            MAX(COALESCE(bullish_score,0),COALESCE(bearish_score,0))/100.0 AS directional_rule_strength,
+            bullish_score,bearish_score,no_trade_score,
             regime,reason,model_version FROM signals ORDER BY timestamp DESC,id DESC LIMIT ?""", (max(1,min(limit,500)),))
 
     def models(self) -> list[dict[str, Any]]:

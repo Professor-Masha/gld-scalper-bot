@@ -17,7 +17,9 @@ import numpy as np
 
 from ..config import Settings
 from ..database import Database
+from ..market_state import model_inference_block_reason, plausible_expected_cost
 from ..utils.time_utils import ensure_utc
+from .transformer_features import flatten_transformer_features, rejected_transformer_columns
 from .transformer_dataset import transformer_registry_scope
 from .transformer_model import HORIZONS_MINUTES, require_torch
 
@@ -135,6 +137,18 @@ class AsyncTransformerShadowRuntime:
         fallback_model_version: str | None = None,
     ) -> TransformerShadowPrediction:
         scope = _normalize_scope(scope)
+        blocked = model_inference_block_reason(features)
+        if blocked:
+            return TransformerShadowPrediction(
+                scope=scope,
+                status="skipped",
+                timestamp=ensure_utc(timestamp),
+                predicted_direction="no_trade",
+                class_probabilities={"long_good": 0.0, "short_good": 0.0, "no_trade": 1.0},
+                uncertainty=1.0,
+                reason=blocked,
+                authority_mode=self.settings.transformer_trading_mode,
+            )
         request = _InferenceRequest(
             scope=scope,
             timestamp=ensure_utc(timestamp),
@@ -233,7 +247,7 @@ class AsyncTransformerShadowRuntime:
             database.close()
 
     def _process(self, database: Database, torch: Any, request: _InferenceRequest) -> None:
-        flat = _flatten_features(request.features)
+        flat = flatten_transformer_features(request.features)
         history = self._history[request.scope]
         history.append((request.timestamp, flat))
         loaded = self._load_model(database, torch, request.scope)
@@ -250,6 +264,22 @@ class AsyncTransformerShadowRuntime:
 
         manifest = loaded.manifest
         columns = list(manifest["feature_columns"])
+        rejected_columns = rejected_transformer_columns(columns)
+        if rejected_columns:
+            prediction = TransformerShadowPrediction(
+                scope=request.scope,
+                status="incompatible_features",
+                timestamp=request.timestamp,
+                model_version=loaded.version,
+                predicted_direction="no_trade",
+                uncertainty=1.0,
+                reason=f"Transformer manifest contains blocked features: {', '.join(rejected_columns[:5])}",
+                authority_mode=self.settings.transformer_trading_mode,
+                model_role=loaded.role,
+            )
+            with self._lock:
+                self._latest[request.scope] = prediction
+            return
         sequence_length = int(manifest["config"]["sequence_length"])
         mean = np.asarray(manifest["mean"], dtype=np.float32)
         std = np.asarray(manifest["std"], dtype=np.float32)
@@ -297,14 +327,23 @@ class AsyncTransformerShadowRuntime:
         horizon = 1 if request.scope == "fast_microstructure" else 5
         horizon_index = list(HORIZONS_MINUTES).index(horizon)
         direction = 1.0 if predicted == "long_good" else -1.0 if predicted == "short_good" else 0.0
+        expected_cost = float(cost.reshape(-1)[0].cpu())
+        cost_valid = plausible_expected_cost(expected_cost, self.settings.model_max_expected_cost_pct)
         expected_net_edge = (
             direction * float(return_values[horizon_index])
-            - float(cost.reshape(-1)[0].cpu())
+            - expected_cost
             - float(abstention.get("uncertainty_multiplier", 0.0) or 0.0)
             * float(np.sqrt(variance_values[horizon_index]))
         )
         if expected_net_edge <= float(abstention.get("minimum_expected_edge", 0.0) or 0.0):
             predicted = "no_trade" if "no_trade" in classes else "hold"
+        reason = None
+        if not cost_valid:
+            predicted = "no_trade" if "no_trade" in classes else "hold"
+            reason = (
+                f"expected cost {expected_cost:.6f} is outside the plausible range "
+                f"0..{self.settings.model_max_expected_cost_pct:.6f}"
+            )
         uncertainty = max(float(entropy), min(1.0, float(np.sqrt(variance_values).mean()) / 0.01))
         prediction = TransformerShadowPrediction(
             scope=request.scope,
@@ -314,13 +353,14 @@ class AsyncTransformerShadowRuntime:
             predicted_direction=predicted,
             class_probabilities=class_probabilities,
             expected_returns={horizon: float(return_values[index]) for index, horizon in enumerate(HORIZONS_MINUTES)},
-            expected_cost=float(cost.reshape(-1)[0].cpu()),
+            expected_cost=expected_cost,
             expected_net_edge=expected_net_edge,
             uncertainty=uncertainty,
             inference_latency_ms=latency_ms,
             cache_age_seconds=0.0,
             authority_mode=self.settings.transformer_trading_mode,
             model_role=loaded.role,
+            reason=reason,
         )
         with self._lock:
             self._latest[request.scope] = prediction
@@ -412,29 +452,6 @@ def _normalize_scope(scope: str) -> str:
     if value not in SUPPORTED_SCOPES:
         raise ValueError(f"Unsupported Transformer scope: {scope}")
     return value
-
-
-def _flatten_features(values: Mapping[str, Any], prefix: str = "") -> dict[str, float]:
-    result: dict[str, float] = {}
-    for raw_key, raw_value in values.items():
-        key = f"{prefix}_{raw_key}" if prefix else str(raw_key)
-        if isinstance(raw_value, Mapping):
-            result.update(_flatten_features(raw_value, key))
-        elif isinstance(raw_value, bool):
-            result[key] = float(raw_value)
-        elif isinstance(raw_value, (int, float)):
-            value = float(raw_value)
-            if math.isfinite(value):
-                result[key] = value
-        elif isinstance(raw_value, str) and raw_value:
-            try:
-                parsed = json.loads(raw_value)
-            except (ValueError, TypeError):
-                result[f"{key}__{raw_value.strip().lower()}"] = 1.0
-            else:
-                if isinstance(parsed, Mapping):
-                    result.update(_flatten_features(parsed, key))
-    return result
 
 
 def _session_key(timestamp: datetime) -> str:

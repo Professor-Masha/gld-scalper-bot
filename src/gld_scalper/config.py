@@ -123,6 +123,8 @@ class Settings:
     stream_startup_grace_seconds: int = 20
     bar_stale_seconds: int = 180
     quote_stale_seconds: int = 30
+    market_clock_heartbeat_seconds: int = 900
+    market_data_alignment_tolerance_seconds: float = 120.0
     enable_fast_scalp: bool = True
     enable_fast_scalp_order_submission: bool = True
     fast_scalp_interval_ms: int = 250
@@ -173,6 +175,7 @@ class Settings:
     ml_min_probability_margin: float = 0.08
     ml_max_missing_feature_fraction: float = 0.25
     ml_max_outlier_feature_fraction: float = 0.15
+    model_max_expected_cost_pct: float = 0.005
     enable_transformer_shadow: bool = True
     transformer_trading_mode: str = "shadow"
     transformer_queue_size: int = 64
@@ -595,8 +598,12 @@ class Settings:
             self.minute_entry_max_quote_age_seconds,
             self.minute_entry_max_trade_age_seconds,
             self.performance_snapshot_interval_seconds,
+            self.market_clock_heartbeat_seconds,
+            self.market_data_alignment_tolerance_seconds,
         ) <= 0:
             raise RuntimeError("Entry freshness and performance snapshot intervals must be positive.")
+        if not 0.0 < self.model_max_expected_cost_pct <= 0.05:
+            raise RuntimeError("MODEL_MAX_EXPECTED_COST_PCT must be between zero and 5%.")
         if not 0.0 <= self.fast_scalp_min_spread_stability <= 1.0 or not 0.0 <= self.minute_entry_min_spread_stability <= 1.0:
             raise RuntimeError("Spread-stability thresholds must be between 0 and 1.")
         if min(
@@ -830,6 +837,8 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         stream_startup_grace_seconds=_int_env("STREAM_STARTUP_GRACE_SECONDS", 20),
         bar_stale_seconds=_int_env("BAR_STALE_SECONDS", 180),
         quote_stale_seconds=_int_env("QUOTE_STALE_SECONDS", 30),
+        market_clock_heartbeat_seconds=_int_env("MARKET_CLOCK_HEARTBEAT_SECONDS", 900),
+        market_data_alignment_tolerance_seconds=_float_env("MARKET_DATA_ALIGNMENT_TOLERANCE_SECONDS", 120.0),
         enable_fast_scalp=_bool_env("ENABLE_FAST_SCALP", True),
         enable_fast_scalp_order_submission=_bool_env("ENABLE_FAST_SCALP_ORDER_SUBMISSION", True),
         fast_scalp_interval_ms=_int_env("FAST_SCALP_INTERVAL_MS", 250),
@@ -880,6 +889,7 @@ def load_settings(env_file: str | Path | None = None) -> Settings:
         ml_min_probability_margin=_float_env("ML_MIN_PROBABILITY_MARGIN", 0.08),
         ml_max_missing_feature_fraction=_float_env("ML_MAX_MISSING_FEATURE_FRACTION", 0.25),
         ml_max_outlier_feature_fraction=_float_env("ML_MAX_OUTLIER_FEATURE_FRACTION", 0.15),
+        model_max_expected_cost_pct=_float_env("MODEL_MAX_EXPECTED_COST_PCT", 0.005),
         enable_transformer_shadow=_bool_env("ENABLE_TRANSFORMER_SHADOW", True),
         transformer_trading_mode=os.getenv("TRANSFORMER_TRADING_MODE", "shadow").strip().lower(),
         transformer_queue_size=_int_env("TRANSFORMER_QUEUE_SIZE", 64),

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from ..database import Database
+from ..market_state import model_inference_block_reason, plausible_expected_cost
 from ..models import MLPrediction
 from .dataset_builder import _flatten_features
 from .decision_policy import expected_edge_decision
@@ -94,6 +95,17 @@ class Predictor:
         }
 
     def predict(self, features: dict[str, Any]) -> MLPrediction:
+        blocked = model_inference_block_reason(features)
+        if blocked:
+            return MLPrediction(
+                self._model_version,
+                "no_trade",
+                0.0,
+                0.0,
+                1.0,
+                confidence=1.0,
+                rejection_reason=blocked,
+            )
         requested_scope = model_scope_from_features(features)
         explicit_payload = self._payload if self._payload is not None and self._model_version and not self._cache else None
         if explicit_payload is None:
@@ -145,6 +157,12 @@ class Predictor:
         ) + max(float(flat.get("expected_slippage_pct", 0.0) or 0.0), 0.0) + max(
             float(flat.get("estimated_fee_pct", 0.0) or 0.0), 0.0
         )
+        cost_valid = plausible_expected_cost(expected_cost, self.database.settings.model_max_expected_cost_pct)
+        if not cost_valid:
+            rejection_reasons.append(
+                f"expected cost {expected_cost:.6f} is outside the plausible range "
+                f"0..{self.database.settings.model_max_expected_cost_pct:.6f}"
+            )
         calibration = self._payload.get("calibration") or {}
         uncertainty = max(float(calibration.get("expected_calibration_error", 0.0) or 0.0) * 0.001, 0.0)
         edge = expected_edge_decision(
@@ -164,6 +182,8 @@ class Predictor:
             minimum_margin=minimum_margin,
         )
         predicted = {"LONG": "long_good", "SHORT": "short_good"}.get(edge.action, "no_trade")
+        if not cost_valid:
+            predicted = "no_trade"
         if not edge.accepted:
             rejection_reasons.append(edge.reason)
         return MLPrediction(

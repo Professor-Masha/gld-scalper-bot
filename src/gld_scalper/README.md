@@ -42,6 +42,7 @@ Return to the [project manual](../../README.md).
 | [`llm_provider.py`](../../src/gld_scalper/llm_provider.py) | Ollama and Kimi JSON clients plus the disabled-provider implementation. |
 | [`macro_context.py`](../../src/gld_scalper/macro_context.py) | Python module exposing `MacroContextScheduler`, `MacroContextBuilder`, `macro_context_to_features`, `pretty_macro_context`. |
 | [`main.py`](../../src/gld_scalper/main.py) | Command-line composition root that wires settings, databases, clients, services, and commands. |
+| [`market_state.py`](../../src/gld_scalper/market_state.py) | Broker-clock, live-input freshness/alignment, model-inference, plausible-cost, and off-hours heartbeat gates. |
 | [`microstructure.py`](../../src/gld_scalper/microstructure.py) | Python module exposing `build_microstructure_features`. |
 | [`models.py`](../../src/gld_scalper/models.py) | Python module exposing `utc_now`, `MarketSignal`, `MLPrediction`, `RiskState`. |
 | [`no_trade_learning.py`](../../src/gld_scalper/no_trade_learning.py) | Python module exposing `MissedOpportunityAnalyzer`. |

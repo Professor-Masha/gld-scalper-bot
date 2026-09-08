@@ -7,6 +7,11 @@ AVOID_REGIMES = {"sideways_chop", "poor_liquidity", "high_volatility", "low_vola
 
 
 def detect_regime(features: dict[str, Any]) -> str:
+    market_state = str(features.get("market_state") or "").upper()
+    if market_state in {"MARKET_CLOSED", "DATA_UNAVAILABLE"}:
+        return market_state
+    if features.get("market_data_aligned") is False:
+        return "DATA_UNAVAILABLE"
     close = _f(features.get("close", features.get("latest_price")))
     ema_9 = _f(features.get("ema_9"))
     ema_21 = _f(features.get("ema_21"))

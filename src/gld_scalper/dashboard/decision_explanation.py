@@ -4,6 +4,9 @@ from typing import Any
 
 
 _RULES: tuple[tuple[str, str, str, str], ...] = (
+    ("market is closed", "MARKET_CLOSED", "Market clock", "The broker reports that the US market is closed. No strategy evaluation or order is permitted."),
+    ("market clock unavailable", "MARKET_CLOCK_UNAVAILABLE", "Market clock", "The broker market clock could not be verified, so trading remains blocked."),
+    ("timestamps are not aligned", "DATA_MISALIGNED", "Data safety", "Quotes, trades and bars do not describe the same market moment."),
     ("quote/trade age", "DATA_STALE", "Data safety", "The latest GLD quote or trade is older than the permitted limit."),
     ("stale", "DATA_STALE", "Data safety", "Live market data is too old to trust."),
     ("disconnect", "STREAM_DISCONNECTED", "Data safety", "The live market stream is disconnected."),
@@ -57,6 +60,10 @@ def explain_decision(decision: dict[str, Any]) -> dict[str, Any]:
     return {
         "action": action,
         "confidence": confidence,
+        "directional_rule_strength": _number(decision.get("directional_rule_strength")),
+        "directional_rule_strength_label": str(decision.get("confidence_label") or "Directional rule strength"),
+        "ml_inference_skipped": bool(decision.get("ml_inference_skipped")),
+        "ml_inference_skip_reason": decision.get("ml_inference_skip_reason"),
         "headline": headline,
         "summary": summary,
         "primary_code": primary["code"] if primary else None,

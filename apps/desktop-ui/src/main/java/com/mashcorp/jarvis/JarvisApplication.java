@@ -53,6 +53,8 @@ public final class JarvisApplication extends Application {
     private final Label winValue = metricValue("--");
     private final Label botValue = metricValue("OFFLINE");
     private final Label decisionValue = new Label("NO DATA");
+    private final Label decisionRuleStrength = statusValue("Rule strength --");
+    private final Label decisionMlEvidence = statusValue("ML probability --");
     private final Label decisionReason = new Label("Waiting for the first backend decision.");
     private final Label dataLinkValue = statusValue("CONNECTING");
     private final Label streamValue = statusValue("WAITING");
@@ -308,7 +310,7 @@ public final class JarvisApplication extends Application {
         corePanel.setMinHeight(360);
         corePanel.setPrefHeight(360); corePanel.setMaxHeight(360); corePanel.setMinWidth(180);
         core3D.bindSize(corePanel.widthProperty().subtract(28), corePanel.heightProperty().subtract(54));
-        VBox decision = panel("LATEST DECISION", decisionValue, decisionReason, overviewInspector);
+        VBox decision = panel("LATEST DECISION", decisionValue, decisionRuleStrength, decisionMlEvidence, decisionReason, overviewInspector);
         decisionValue.getStyleClass().add("decision");
         decisionReason.setWrapText(true);
         HBox center = new HBox(12, corePanel, decision);
@@ -354,7 +356,7 @@ public final class JarvisApplication extends Application {
     }
 
     private void showIntelligence() {
-        TableView<RowData> decisions = table("Time", "timestamp", "Decision", "decision", "Confidence", "confidence", "Regime", "regime", "Model", "model_version");
+        TableView<RowData> decisions = table("Time", "timestamp", "Decision", "decision", "Rule strength", "directional_rule_strength", "Regime", "regime", "Model", "model_version");
         TableView<RowData> models = table("Version", "model_version", "Type", "model_type", "Scope", "model_scope", "Status", "status", "Created", "created_at");
         setWorkspace(page("DECISION INTELLIGENCE", panel("RECENT SIGNALS", decisions), panel("MODEL REGISTRY", models)));
         currentRefresh = () -> readWorkers.execute(() -> {
@@ -580,13 +582,27 @@ public final class JarvisApplication extends Application {
         core3D.setState(state);
         JsonNode signal = snapshot.path("signal");
         decisionValue.setText(signal.path("decision").asText("NO DATA"));
+        double ruleStrength = number(signal, "directional_rule_strength");
+        String ruleLabel = signal.path("confidence_label").asText("Directional rule strength");
+        decisionRuleStrength.setText(String.format("%s %.1f%%", ruleLabel, ruleStrength * 100.0));
+        JsonNode classical = snapshot.path("model_prediction");
+        if (signal.path("ml_inference_skipped").asBoolean(false)) {
+            decisionMlEvidence.setText("ML skipped: " + compact(signal.path("ml_inference_skip_reason").asText("market-data gate"), 44));
+        } else if (!classical.isMissingNode() && !classical.isNull()) {
+            decisionMlEvidence.setText(String.format("ML P(L/S/N) %.1f%% / %.1f%% / %.1f%%",
+                    number(classical, "probability_long") * 100.0,
+                    number(classical, "probability_short") * 100.0,
+                    number(classical, "probability_no_trade") * 100.0));
+        } else {
+            decisionMlEvidence.setText("ML probability unavailable");
+        }
         JsonNode explanation = signal.path("explanation");
         decisionReason.setText(explanation.path("summary").asText(signal.path("reason").asText("Waiting for the first backend decision.")));
         dataLinkValue.setText(snapshot.path("database_available").asBoolean() ? "SYNCHRONIZED" : "UNAVAILABLE");
         streamValue.setText(signal.path("stream_connected").asBoolean() ? "CONNECTED" : "OFFLINE");
         String model = signal.path("model_version").asText("");
         modelValue.setText(model.isBlank() ? "RULES + SHADOW" : compact(model, 22));
-        sessionValue.setText(snapshot.path("control_plane").path("environment").asText("paper").toUpperCase());
+        sessionValue.setText(signal.path("market_state").asText("UNKNOWN").replace('_', ' '));
         if (snapshot.has("log_tail")) {
             List<String> lines = new ArrayList<>(); snapshot.path("log_tail").forEach(line -> lines.add(line.asText()));
             terminal.setText(String.join("\n", lines)); terminal.positionCaret(terminal.getLength());

@@ -37,6 +37,7 @@ Return to the [project manual](../../../README.md).
 | [`transformer_evaluation.py`](../../../src/gld_scalper/ml/transformer_evaluation.py) | Python module exposing `evaluate_transformer_paper_models`. |
 | [`transformer_model.py`](../../../src/gld_scalper/ml/transformer_model.py) | Small causal encoder-only time-series Transformer definitions and prediction heads. |
 | [`transformer_runtime.py`](../../../src/gld_scalper/ml/transformer_runtime.py) | Python module exposing `TransformerShadowPrediction`, `AsyncTransformerShadowRuntime`. |
+| [`transformer_features.py`](../../../src/gld_scalper/ml/transformer_features.py) | Numeric and controlled-categorical feature allowlist shared by dataset construction and live Transformer inference. |
 | [`transformer_trainer.py`](../../../src/gld_scalper/ml/transformer_trainer.py) | Python module exposing `TransformerTrainingOptions`, `train_transformer_candidate`. |
 | [`walk_forward.py`](../../../src/gld_scalper/ml/walk_forward.py) | Python module exposing `run_walk_forward_validation`, `save_walk_forward_experiment`. |
 
@@ -125,6 +126,8 @@ The ML package has four separate responsibilities: prepare causal evidence,
 fit candidates, evaluate/promote immutable versions, and serve fast inference.
 Keeping them separate prevents test metrics from leaking into training and
 prevents live inference from silently refitting itself.
+
+Both classical and Transformer inference must receive `MARKET_OPEN`, a connected non-stale stream, and an aligned bar/quote/trade snapshot. A failed data gate returns `NO_TRADE` without running model code. Transformer artifacts containing exact timestamps or uncontrolled text are marked incompatible; rebuild the sequence archive with the current allowlist. Expected spread, slippage and fee estimates above `MODEL_MAX_EXPECTED_COST_PCT` are treated as invalid inputs rather than profitable or high-confidence evidence.
 
 ### Classical Model Data Flow
 

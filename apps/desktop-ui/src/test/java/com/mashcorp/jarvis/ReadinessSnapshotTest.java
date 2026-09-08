@@ -33,4 +33,12 @@ class ReadinessSnapshotTest {
         assertEquals("DISABLED", snapshot.llmState());
         assertFalse(snapshot.tradingAllowed());
     }
+
+    @Test void mapsBrokerAwareMarketStatesForHumans() throws Exception {
+        var readiness = json.readTree("""
+                {"ready":true,"trading":{"state":"available"},"market":{"session":"MARKET_CLOSED"}}
+                """);
+        ReadinessSnapshot snapshot = ReadinessSnapshot.from(readiness, json.readTree("{}"));
+        assertEquals("CLOSED", snapshot.marketState());
+    }
 }

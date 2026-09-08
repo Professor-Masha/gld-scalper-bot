@@ -439,9 +439,26 @@ def test_dashboard_control_status_is_backend_derived(tmp_path: Path) -> None:
     assert readiness["checks"]["paper_mode"] is True
     assert readiness["interface"] == {"ready": True, "state": "ready"}
     assert readiness["trading"]["authority"] == "python-risk-engine"
-    assert readiness["market"]["session"] in {"premarket", "regular", "afterhours", "closed"}
+    assert readiness["market"]["session"] in {"PREMARKET", "REGULAR", "AFTERHOURS", "CLOSED", "MARKET_OPEN", "MARKET_CLOSED", "DATA_UNAVAILABLE", "POOR_LIQUIDITY"}
     assert readiness["llm"]["blocking"] is False
     assert readiness["llm"]["broker_authority"] is False
+
+
+def test_market_closed_decision_has_human_readable_clock_explanation() -> None:
+    result = explain_decision({
+        "decision": "NO_TRADE",
+        "reason": "market is closed; market is closed",
+        "directional_rule_strength": 0.82,
+        "confidence_label": "Bullish rule strength",
+        "ml_inference_skipped": True,
+        "ml_inference_skip_reason": "MARKET_CLOSED",
+    })
+
+    assert result["primary_code"] == "MARKET_CLOSED"
+    assert result["directional_rule_strength"] == 0.82
+    assert result["directional_rule_strength_label"] == "Bullish rule strength"
+    assert result["ml_inference_skipped"] is True
+    assert len(result["groups"][0]["items"]) == 1
 
 
 def test_dashboard_includes_volatility_research_workspace() -> None:

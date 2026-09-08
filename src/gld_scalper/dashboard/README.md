@@ -39,9 +39,11 @@ and HTTP status counts. Middleware also adds `X-Dashboard-Response-Ms` and
 `DashboardService.readiness()` also returns separate `interface`, `trading`,
 `market`, and `llm` sections. The trading section remains derived from database,
 configuration, audit-ledger, paper-mode, and command-allowlist checks. Market
-session is a time-zone-aware informational state. LLM configuration is
+session comes from the latest broker-aware state persisted by the trading engine, with a local-calendar fallback only before broker evidence exists. `MARKET_CLOSED`, `DATA_UNAVAILABLE`, and `poor_liquidity` remain visibly distinct. LLM configuration is
 non-blocking and explicitly carries `broker_authority=false`; it is not a
 generation-health claim.
+
+The Signal Matrix never labels rule score as model confidence. It shows directional rule strength separately from the latest classical `P(LONG)`, `P(SHORT)`, and `P(NO_TRADE)` values. When the market/data gate skips inference, model probabilities are displayed as unavailable and the human-readable reason explains the gate. A dashboard-requested interrupt finishes as `stopped`; `failed` is reserved for unrequested nonzero process exits.
 
 `TelemetryRepository.latency_summary()` powers `/api/v1/performance/latency`
 and reports stage percentiles from `execution_latency_events` without joining
