@@ -432,6 +432,13 @@ separately reports interface readiness, the backend paper-trading gate, market
 session, and configured research LLM; a closed market or cold Ollama model does
 not falsely make the interface itself appear broken.
 
+Gateway health is the only hard network dependency for composing the operator
+shell. The initial readiness and telemetry reads use bounded timeouts. If disk
+contention or a temporary SQLite lock delays either read, JavaFX opens in a
+degraded state, keeps **Start Paper** disabled, and retries through the normal
+background readiness and telemetry channels. A transient read can therefore no
+longer strand the application on a `Startup blocked: request timed out` screen.
+
 Bootstrap the private project-local Java 21 and Maven toolchain once:
 
 ```powershell

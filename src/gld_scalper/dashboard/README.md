@@ -86,7 +86,7 @@ The server binds only to `127.0.0.1`, `localhost`, or `::1`. State-changing requ
 
 1. `GatewayRuntime` starts `gld-scalper dashboard` on an unused loopback port with an in-memory one-session token.
 2. Gateway lifespan startup publishes the health endpoint immediately, then warms the bounded provider and Transformer catalogs on a daemon thread. Overview and Memory Graph data remain lazy because their SQLite queries can be expensive on a large paper database.
-3. JavaFX waits for `/api/v1/system/health`, then consumes versioned REST and WebSocket contracts.
+3. JavaFX waits for `/api/v1/system/health`, then consumes versioned REST and WebSocket contracts. The readiness route uses a lightweight latest-signal query rather than constructing the full telemetry snapshot. Initial read timeouts open a safe degraded shell and recover in the background; they do not authorize trading.
 4. `/api/v1/events` sends a versioned, traced, sequenced SQLite snapshot and log tail every two seconds.
 5. A start control creates a typed command with an idempotency key.
 6. `ControlPlane` serializes the operation, records the request, and maps it to a fixed CLI argument list.

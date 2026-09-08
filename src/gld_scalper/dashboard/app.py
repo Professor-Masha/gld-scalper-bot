@@ -214,8 +214,7 @@ class DashboardService:
             "allowlisted_commands": True,
         }
         ready = all(checks.values())
-        telemetry = self._telemetry_snapshot() if database_available else {}
-        signal = telemetry.get("signal") if isinstance(telemetry.get("signal"), dict) else {}
+        signal = self.telemetry.readiness_signal() if database_available else {}
         persisted_state = str(signal.get("market_state") or "").upper()
         if persisted_state in {"MARKET_OPEN", "MARKET_CLOSED", "DATA_UNAVAILABLE", "POOR_LIQUIDITY"}:
             session = persisted_state

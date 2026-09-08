@@ -42,6 +42,13 @@ The Python `/api/v1/system/readiness` response is authoritative for the trading
 gate. JavaFX cannot enable **Start Paper** merely because its own rendering has
 finished. LLM readiness is deliberately non-blocking and has no broker authority.
 
+Only failure to start the loopback gateway or compose the JavaFX shell blocks
+startup. Initial readiness, snapshot, and provider reads have independent
+bounded timeouts. A delayed read produces a safe fallback frame, leaves trading
+disabled, writes a concise diagnostic to `logs/dashboard/javafx_launcher.log`,
+and schedules an early background retry. WebSocket telemetry and the periodic
+readiness task replace the fallback as soon as the gateway responds.
+
 ## Files
 
 | File | Responsibility |

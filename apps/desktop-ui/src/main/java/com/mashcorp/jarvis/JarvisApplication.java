@@ -133,10 +133,17 @@ public final class JarvisApplication extends Application {
             gateway = new GatewayClient(runtime.baseUri(), runtime.token());
             startupOverlay.update(25, "Local gateway healthy");
 
-            JsonNode readiness = gateway.get("/api/v1/system/readiness");
-            startupOverlay.update(40, "Database, configuration, and audit ledger checked");
-            JsonNode snapshot = gateway.get("/api/snapshot");
-            startupOverlay.update(55, "Account and bot status loaded");
+            JsonNode readiness = startupRead(
+                    "/api/v1/system/readiness",
+                    degradedReadiness("Initial readiness check is still warming"),
+                    8);
+            startupOverlay.update(40, readiness.path("ready").asBoolean(false)
+                    ? "Database, configuration, and audit ledger checked"
+                    : "Gateway ready; safety checks will retry in the background");
+            JsonNode snapshot = startupRead("/api/snapshot", emptyStartupSnapshot(), 8);
+            startupOverlay.update(55, snapshot.path("database_available").asBoolean(false)
+                    ? "Account and bot status loaded"
+                    : "Interface ready; telemetry will reconnect in the background");
             JsonNode providers = providerCatalogOrFallback(readiness);
             ReadinessSnapshot resolvedReadiness = ReadinessSnapshot.from(readiness, providers);
             startupOverlay.update(70, "ML registry and research configuration discovered");
@@ -177,7 +184,7 @@ public final class JarvisApplication extends Application {
 
     private JsonNode providerCatalogOrFallback(JsonNode readiness) {
         try {
-            return gateway.get("/api/llm/providers");
+            return gateway.get("/api/llm/providers", java.time.Duration.ofSeconds(3));
         } catch (Exception ignored) {
             var fallback = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
             fallback.put("active_provider", readiness.path("llm").path("provider").asText("none"));
@@ -185,7 +192,40 @@ public final class JarvisApplication extends Application {
         }
     }
 
+    private JsonNode startupRead(String path, JsonNode fallback, int timeoutSeconds) {
+        try {
+            return gateway.get(path, java.time.Duration.ofSeconds(timeoutSeconds));
+        } catch (Exception exc) {
+            System.err.println("Startup read degraded for " + path + ": " + safeMessage(exc));
+            return fallback;
+        }
+    }
+
+    private static JsonNode degradedReadiness(String detail) {
+        var root = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
+        root.put("ready", false);
+        root.putObject("interface").put("ready", true).put("state", "ready");
+        root.putObject("trading").put("ready", false).put("state", "warming");
+        root.putObject("market").put("session", "unknown");
+        root.putObject("llm").put("provider", "none").put("blocking", false);
+        root.put("configuration_error", detail);
+        return root;
+    }
+
+    private static JsonNode emptyStartupSnapshot() {
+        var root = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
+        root.put("database_available", false);
+        root.put("startup_state", "telemetry_warming");
+        return root;
+    }
+
+    private static String safeMessage(Exception error) {
+        String message = error.getMessage();
+        return message == null || message.isBlank() ? error.getClass().getSimpleName() : message;
+    }
+
     private void scheduleInterfaceTasks() {
+        scheduler.schedule(() -> readWorkers.execute(this::refreshReadiness), 3, TimeUnit.SECONDS);
         scheduler.scheduleWithFixedDelay(() -> Platform.runLater(() -> currentRefresh.run()), 10, 10, TimeUnit.SECONDS);
         scheduler.scheduleWithFixedDelay(() -> readWorkers.execute(this::refreshReadiness), 30, 30, TimeUnit.SECONDS);
         scheduler.scheduleAtFixedRate(() -> Platform.runLater(() ->

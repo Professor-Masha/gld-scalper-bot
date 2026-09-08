@@ -35,11 +35,18 @@ public final class GatewayClient {
     }
 
     public JsonNode get(String path) throws Exception {
+        return get(path, Duration.ofSeconds(12));
+    }
+
+    public JsonNode get(String path, Duration timeout) throws Exception {
+        if (timeout == null || timeout.isZero() || timeout.isNegative()) {
+            throw new IllegalArgumentException("A positive request timeout is required");
+        }
         long started = System.nanoTime();
         int status = 599;
         try {
             HttpResponse<String> response = http.send(
-                    HttpRequest.newBuilder(baseUri.resolve(path)).timeout(Duration.ofSeconds(12)).GET().build(),
+                    HttpRequest.newBuilder(baseUri.resolve(path)).timeout(timeout).GET().build(),
                     HttpResponse.BodyHandlers.ofString());
             status = response.statusCode();
             return parse(response, path);

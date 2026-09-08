@@ -95,6 +95,31 @@ class TelemetryRepository:
             if connection is not None:
                 connection.close()
 
+    def readiness_signal(self) -> dict[str, Any]:
+        """Return only the latest market gate fields needed during interface boot."""
+        if not self.database_path.exists():
+            return {}
+        connection: sqlite3.Connection | None = None
+        try:
+            connection = self._connect()
+            signal = self._one(
+                connection,
+                """SELECT regime,feature_snapshot_json FROM signals
+                   WHERE symbol='GLD' ORDER BY id DESC LIMIT 1""",
+            ) or {}
+        except sqlite3.OperationalError:
+            return {}
+        finally:
+            if connection is not None:
+                connection.close()
+        features = signal.get("feature_snapshot_json")
+        features = features if isinstance(features, dict) else {}
+        return {
+            "market_state": features.get("market_state") or signal.get("regime"),
+            "market_state_reason": features.get("market_state_reason"),
+            "next_market_open": features.get("market_next_open"),
+        }
+
     def trades(self, limit: int = 100) -> list[dict[str, Any]]:
         return self._query("""SELECT trade_id,direction,strategy_path,playbook,entry_time,exit_time,entry_price,
             exit_price,qty,gross_pnl,net_pnl_after_costs,pnl_pct,holding_seconds,exit_reason,win_loss,

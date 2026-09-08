@@ -370,6 +370,27 @@ def test_dashboard_health_does_not_wait_for_cache_warmup(tmp_path: Path) -> None
             release.set()
 
 
+def test_readiness_uses_lightweight_signal_instead_of_full_snapshot(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text("", encoding="utf-8")
+    service = DashboardService(tmp_path)
+    market = {
+        "market_state": "MARKET_CLOSED",
+        "market_state_reason": "regular session ended",
+        "next_market_open": "2026-09-09T13:30:00+00:00",
+    }
+
+    with (
+        patch.object(service, "_telemetry_available", return_value=(True, True, None)),
+        patch.object(TelemetryRepository, "readiness_signal", return_value=market),
+        patch.object(service, "_telemetry_snapshot", side_effect=AssertionError("full snapshot must not run")),
+    ):
+        readiness = service.readiness()
+
+    assert readiness["ready"] is True
+    assert readiness["market"]["session"] == "MARKET_CLOSED"
+    assert readiness["market"]["reason"] == "regular session ended"
+
+
 def test_dashboard_accepts_desktop_session_token_from_process_environment(tmp_path: Path) -> None:
     (tmp_path / ".env").write_text("", encoding="utf-8")
     token = "desktop-session-token-with-more-than-32-characters"

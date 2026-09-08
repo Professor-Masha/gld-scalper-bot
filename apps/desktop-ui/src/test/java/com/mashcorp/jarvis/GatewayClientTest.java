@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -22,6 +23,24 @@ class GatewayClientTest {
         assertTrue(client.parseObject("").isObject());
         assertEquals(8, client.parseObject("{\"epochs\":8}").path("epochs").asInt());
         assertThrows(IllegalArgumentException.class, () -> client.parseObject("[]"));
+    }
+
+    @Test void supportsShortBoundedTimeoutsForRecoverableStartupReads() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/slow", exchange -> {
+            try { Thread.sleep(180); }
+            catch (InterruptedException exc) { Thread.currentThread().interrupt(); }
+            try { exchange.sendResponseHeaders(204, -1); }
+            finally { exchange.close(); }
+        });
+        server.start();
+        try {
+            var client = new GatewayClient(URI.create("http://127.0.0.1:" + server.getAddress().getPort()), TOKEN);
+            assertThrows(java.net.http.HttpTimeoutException.class,
+                    () -> client.get("/slow", Duration.ofMillis(35)));
+            assertThrows(IllegalArgumentException.class,
+                    () -> client.get("/slow", Duration.ZERO));
+        } finally { server.stop(0); }
     }
 
     @Test void authenticatesTypedCommandsWithoutRealBrokerCalls() throws Exception {
