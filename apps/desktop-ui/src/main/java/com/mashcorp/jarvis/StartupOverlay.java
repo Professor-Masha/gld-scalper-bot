@@ -24,6 +24,9 @@ final class StartupOverlay extends StackPane {
         contract.getStyleClass().add("startup-contract");
         percentage.getStyleClass().add("startup-percentage");
         phase.getStyleClass().add("startup-phase");
+        phase.setWrapText(true);
+        phase.setMaxWidth(760);
+        phase.setAlignment(Pos.CENTER);
         progress.getStyleClass().add("startup-progress");
         progress.setPrefWidth(520);
         VBox content = new VBox(13, monogram, title, contract, progress, percentage, phase);

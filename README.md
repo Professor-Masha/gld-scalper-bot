@@ -580,8 +580,9 @@ about internet, exchange or broker latency. Fill timing can only be validated
 during an open paper session.
 
 Interface responsiveness is measured separately from trading latency. The
-gateway prewarms bounded catalogs and graph summaries during its lifespan
-startup, records normalized route p50/p95/p99 at
+gateway publishes liveness immediately, warms only bounded provider and
+Transformer catalogs in the background, and loads graph summaries lazily so a
+large SQLite database cannot block desktop startup. It records normalized route p50/p95/p99 at
 `/api/v1/system/interface-latency`, and adds `Server-Timing` to each response.
 JavaFX separates startup, telemetry, graph, ordinary reads, commands, and LLM
 research into dedicated queues; telemetry fallback cannot accumulate duplicate
@@ -624,9 +625,9 @@ archives or participates in signal, risk, or broker execution.
    a running bot. It only closes its own local gateway.
 
 The native launcher uses a precompiled classpath and a 384 MB Java heap cap;
-total JVM/native-memory use can exceed that heap value. It does not invoke Maven
-on ordinary launches. After source changes, rebuild using
-`scripts\launch_javafx_dashboard.ps1 -Rebuild`. JavaFX package tests live under
+total JVM/native-memory use can exceed that heap value. It invokes Maven only
+when compiled classes are missing, Java source or `pom.xml` is newer, or
+`-Rebuild` is supplied. JavaFX package tests live under
 `apps/desktop-ui/src/test`; Python gateway tests live in `tests/test_dashboard.py`.
 See [`docs/architecture/JARVIS_CONTROL_PLANE.md`](docs/architecture/JARVIS_CONTROL_PLANE.md)
 for the Parts I-VII infrastructure mapping, implemented `/api/v1` contract,

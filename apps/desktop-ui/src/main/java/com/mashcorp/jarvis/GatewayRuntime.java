@@ -10,6 +10,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
@@ -42,12 +43,16 @@ public final class GatewayRuntime implements AutoCloseable {
                 java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.WRITE);
         instanceLock = lockChannel.tryLock();
         if (instanceLock == null) { lockChannel.close(); throw new IOException("The JavaFX dashboard is already open for this project"); }
+        Path gatewayLog = logRoot.resolve("javafx_gateway.log");
+        if (Files.exists(gatewayLog)) {
+            Files.move(gatewayLog, logRoot.resolve("javafx_gateway.previous.log"), StandardCopyOption.REPLACE_EXISTING);
+        }
         ProcessBuilder builder = new ProcessBuilder(
                 python.toString(), "-m", "gld_scalper.main", "dashboard",
                 "--no-browser", "--port", Integer.toString(port));
         builder.directory(projectRoot.toFile());
         builder.environment().put("DASHBOARD_SESSION_TOKEN", token);
-        builder.redirectOutput(ProcessBuilder.Redirect.appendTo(logRoot.resolve("javafx_gateway.log").toFile()));
+        builder.redirectOutput(ProcessBuilder.Redirect.to(gatewayLog.toFile()));
         builder.redirectErrorStream(true);
         try {
         process = builder.start();
@@ -71,23 +76,39 @@ public final class GatewayRuntime implements AutoCloseable {
     }
 
     private void awaitHealth() throws IOException, InterruptedException {
-        HttpClient client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).connectTimeout(Duration.ofSeconds(2)).build();
+        HttpClient client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).connectTimeout(Duration.ofSeconds(1)).build();
         URI health = baseUri().resolve("/api/v1/system/health");
-        for (int attempt = 0; attempt < 120; attempt++) {
+        long deadline = System.nanoTime() + Duration.ofSeconds(60).toNanos();
+        String lastFailure = "local socket has not accepted a connection";
+        while (System.nanoTime() < deadline) {
             if (process != null && !process.isAlive()) {
-                throw new IOException("Python dashboard gateway exited during startup. Review logs/dashboard/javafx_gateway.log");
+                throw startupFailure("Python dashboard gateway exited during startup with code " + process.exitValue());
             }
             try {
                 HttpResponse<String> response = client.send(
-                        HttpRequest.newBuilder(health).timeout(Duration.ofSeconds(2)).GET().build(),
+                        HttpRequest.newBuilder(health).timeout(Duration.ofSeconds(1)).GET().build(),
                         HttpResponse.BodyHandlers.ofString());
                 if (response.statusCode() == 200) return;
-            } catch (IOException ignored) {
-                // Uvicorn may still be binding the local socket.
+                lastFailure = "health endpoint returned HTTP " + response.statusCode();
+            } catch (IOException exc) {
+                lastFailure = exc.getClass().getSimpleName() + ": " + String.valueOf(exc.getMessage());
             }
-            Thread.sleep(250);
+            Thread.sleep(200);
         }
-        throw new IOException("Python dashboard gateway did not become healthy during startup; review logs/dashboard/javafx_gateway.log");
+        throw startupFailure("Python dashboard gateway did not become healthy within 60 seconds (" + lastFailure + ")");
+    }
+
+    private IOException startupFailure(String message) {
+        Path log = projectRoot.resolve("logs/dashboard/javafx_gateway.log");
+        try {
+            var lines = Files.readAllLines(log, StandardCharsets.UTF_8);
+            int first = Math.max(0, lines.size() - 8);
+            String tail = String.join(" | ", lines.subList(first, lines.size()));
+            if (!tail.isBlank()) return new IOException(message + ". Gateway log: " + tail);
+        } catch (IOException ignored) {
+            // Preserve the primary startup failure when the log cannot be read.
+        }
+        return new IOException(message + ". Review " + log);
     }
 
     private static Path locateProjectRoot() {

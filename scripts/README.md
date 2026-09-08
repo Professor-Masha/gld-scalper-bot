@@ -35,7 +35,7 @@ same implementation.
 | Script | Connection to Python |
 |---|---|
 | `bootstrap_javafx.ps1` | Keeps Java and Maven under ignored `.tools`, then resolves pinned JavaFX modules with Maven. |
-| `launch_javafx_dashboard.ps1` | Sets the private toolchain environment and runs the precompiled native client directly with a 384 MB Java heap cap; `-Rebuild` invokes Maven. |
+| `launch_javafx_dashboard.ps1` | Sets the private toolchain environment and runs the native client with a 384 MB Java heap cap. It invokes Maven when the compiled launcher is missing, when Java source or `pom.xml` is newer, or when `-Rebuild` is supplied. |
 | `launch_dashboard.ps1` | Preserves old calls while delegating directly to JavaFX. |
 | `stop_dashboard.ps1` | Checks recorded PID/start-time/process-name tuples before stopping JavaFX and its gateway; it does not replace bot safety shutdown. |
 | `install_dashboard_shortcut.ps1` | Uses Windows Script Host to create a Desktop `.lnk` for the native JavaFX launcher without exposing a console window. |

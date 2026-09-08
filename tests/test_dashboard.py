@@ -329,8 +329,33 @@ def test_dashboard_startup_warms_caches_and_exposes_response_timing(tmp_path: Pa
     assert health.status_code == 200
     assert float(health.headers["X-Dashboard-Response-Ms"]) >= 0
     assert health.headers["Server-Timing"].startswith("dashboard;dur=")
-    assert health.json()["cache_warmup"]["status"] in {"ready", "degraded"}
+    assert health.json()["cache_warmup"]["status"] in {"warming", "ready", "degraded"}
     assert latency["sample_count"] >= 1
+
+
+def test_dashboard_health_does_not_wait_for_cache_warmup(tmp_path: Path) -> None:
+    import threading
+    import time
+    from fastapi.testclient import TestClient
+
+    release = threading.Event()
+
+    def slow_warmup(service: DashboardService) -> dict[str, object]:
+        release.wait(timeout=2)
+        service.cache_warmup = {"status": "ready", "steps": {}}
+        return service.cache_warmup
+
+    (tmp_path / ".env").write_text("", encoding="utf-8")
+    with patch.object(DashboardService, "warm_caches", slow_warmup):
+        app = create_dashboard_app(tmp_path)
+        started = time.perf_counter()
+        with TestClient(app) as client:
+            response = client.get("/api/v1/system/health")
+            elapsed = time.perf_counter() - started
+            assert response.status_code == 200
+            assert response.json()["cache_warmup"]["status"] == "warming"
+            assert elapsed < 1.0
+            release.set()
 
 
 def test_dashboard_accepts_desktop_session_token_from_process_environment(tmp_path: Path) -> None:

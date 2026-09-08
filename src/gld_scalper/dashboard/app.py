@@ -10,7 +10,7 @@ import webbrowser
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
-from threading import Timer
+from threading import Lock, Thread, Timer
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -90,6 +90,21 @@ class DashboardService:
         )
         self.interface_latency = RequestLatencyMonitor()
         self.cache_warmup: dict[str, Any] = {"status": "pending", "steps": {}}
+        self._cache_warmup_lock = Lock()
+        self._cache_warmup_thread: Thread | None = None
+
+    def start_cache_warmup(self) -> None:
+        """Warm optional catalogs after liveness is available to the desktop."""
+        with self._cache_warmup_lock:
+            if self._cache_warmup_thread is not None and self._cache_warmup_thread.is_alive():
+                return
+            self.cache_warmup = {"status": "warming", "steps": {}}
+            self._cache_warmup_thread = Thread(
+                target=self.warm_caches,
+                name="dashboard-cache-warmup",
+                daemon=True,
+            )
+            self._cache_warmup_thread.start()
 
     def warm_caches(self) -> dict[str, Any]:
         started = time.perf_counter()
@@ -103,10 +118,6 @@ class DashboardService:
         try:
             run("provider_catalog", self.llm_providers.catalog)
             run("transformer_catalog", self.catalog.payload)
-            run("overview_graph", lambda: self.memory_graph.graph(
-                types={"decision", "market", "model", "playbook", "risk"}, window="1d"
-            ))
-            run("memory_workspace", lambda: self.memory_graph.graph(window="30d"))
             self.cache_warmup = {
                 "status": "ready",
                 "steps": steps,
@@ -436,7 +447,7 @@ def create_dashboard_app(project_root: Path = PROJECT_ROOT) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        await asyncio.to_thread(service.warm_caches)
+        service.start_cache_warmup()
         yield
 
     app = FastAPI(

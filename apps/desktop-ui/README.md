@@ -81,12 +81,16 @@ $env:JAVA_HOME = (Resolve-Path .tools\jdk-21).Path
 `target/classes` contains compiled application classes; `target/lib` contains
 resolved runtime dependencies. Both are ignored. The Maven launcher remains a
 developer option, but the operator shortcut uses the direct JVM launcher with
-a 384 MB heap cap. Rebuild after source changes using the command above or the
-launcher `-Rebuild` switch. A failed build is not silently accepted.
+a 384 MB heap cap. The launcher rebuilds automatically when Java source or
+`pom.xml` is newer than the compiled launcher; `-Rebuild` remains available to
+force a package. A failed build is not silently accepted.
 
 `GatewayRuntime` holds an exclusive file lock in `logs/dashboard` to prevent
 duplicate native instances. It verifies gateway health and owns only that
-gateway process, not the bot's broker safety lifecycle. `JARVIS_PROJECT_ROOT`
+gateway process, not the bot's broker safety lifecycle. Each launch writes a
+fresh `logs/dashboard/javafx_gateway.log` and preserves the prior attempt as
+`javafx_gateway.previous.log`. Startup failures include the final gateway log
+lines on the boot screen. `JARVIS_PROJECT_ROOT`
 selects the project; `JARVIS_PYTHON` is an optional development interpreter
 override. Neither variable should contain credentials.
 
@@ -106,8 +110,10 @@ before REST fallback, avoiding duplicate cold snapshots against large retained
 paper databases. Workspace request failures remain local notifications; only a
 telemetry transport failure can mark the command center degraded.
 
-The Python gateway prewarms provider, Transformer-catalog, Overview-graph, and
-30-day Memory Graph caches before reporting startup complete. Every HTTP
+The Python gateway reports liveness before optional cache work begins. It warms
+the small provider and Transformer catalogs in the background, while Overview
+and Memory Graph data load lazily so a large SQLite archive cannot block boot.
+Every HTTP
 response includes `X-Dashboard-Response-Ms` and `Server-Timing`; the bounded
 gateway aggregate is available at `/api/v1/system/interface-latency`. JavaFX
 separately measures full client-observed latency, including transport and queue

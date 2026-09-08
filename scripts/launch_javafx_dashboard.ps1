@@ -8,6 +8,7 @@ $Java = Join-Path $JdkRoot "bin\java.exe"
 $Maven = Join-Path $MavenRoot "bin\mvn.cmd"
 $Pom = Join-Path $ProjectRoot "apps\desktop-ui\pom.xml"
 $Classes = Join-Path $ProjectRoot "apps\desktop-ui\target\classes"
+$LauncherClass = Join-Path $Classes "com\mashcorp\jarvis\Launcher.class"
 $Libraries = Join-Path $ProjectRoot "apps\desktop-ui\target\lib"
 $LogRoot = Join-Path $ProjectRoot "logs\dashboard"
 $LaunchLog = Join-Path $LogRoot "javafx_launcher.log"
@@ -27,7 +28,14 @@ try {
     $env:JAVA_HOME = $JdkRoot
     $env:JARVIS_PROJECT_ROOT = $ProjectRoot
     $env:Path = "$(Join-Path $JdkRoot 'bin');$(Join-Path $MavenRoot 'bin');$env:Path"
-    if ($Rebuild -or -not (Test-Path -LiteralPath (Join-Path $Classes "com\mashcorp\jarvis\Launcher.class"))) {
+    $NeedsBuild = $Rebuild -or -not (Test-Path -LiteralPath $LauncherClass)
+    if (-not $NeedsBuild) {
+        $CompiledAt = (Get-Item -LiteralPath $LauncherClass).LastWriteTimeUtc
+        $LatestInput = Get-ChildItem -LiteralPath (Join-Path $ProjectRoot "apps\desktop-ui\src"),$Pom -Recurse -File |
+            Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+        $NeedsBuild = $null -ne $LatestInput -and $LatestInput.LastWriteTimeUtc -gt $CompiledAt
+    }
+    if ($NeedsBuild) {
         & $Maven -q -f $Pom -DskipTests package *>&1 | Tee-Object -FilePath $LaunchLog -Append
         if ($LASTEXITCODE -ne 0) { throw "JavaFX build failed. Review $LaunchLog" }
     }
