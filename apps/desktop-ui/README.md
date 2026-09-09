@@ -67,7 +67,7 @@ rotation. Repeated scrolling therefore cannot enlarge the graph indefinitely.
 | `DecisionTelemetry.java` | Immutable, validated projection of one gateway frame into quote, decision, model, evidence, episode, outcome, and after-cost performance fields. |
 | `LiveDecisionWorkspace.java` | Responsive three-view Overview flight deck with crossfades and retained live state. |
 | `DecisionPricePlot.java` | Bounded timestamp-distinct live midpoint/episode canvas; it performs no data acquisition or order work. |
-| `DecisionRadar.java` | Six-axis measured evidence view for rule strength, price action, liquidity, classical ML, Transformer, and risk. |
+| `DecisionRadar.java` | Responsive six-axis measured evidence view with concentric 20-100 scale rings, connected edge callouts, per-axis color coding, and a central decision state. |
 | `StartupOverlay.java` | Immediate, phase-backed 0-100% startup presentation and failure state. |
 | `ReadinessSnapshot.java` | Pure projection of the gateway readiness contract into human-facing states. |
 | `ReadinessStrip.java` | Persistent interface, trading, market, and research-AI status display. |

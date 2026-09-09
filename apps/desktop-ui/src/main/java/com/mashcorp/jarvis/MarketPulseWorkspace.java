@@ -95,7 +95,10 @@ final class MarketPulseWorkspace extends VBox {
         VBox.setVgrow(decisionCard, Priority.ALWAYS);
 
         radar.setMinSize(240, 240);
-        VBox radarCard = card("DECISION RADAR", radar);
+        VBox radarCard = new VBox(radar);
+        radarCard.getStyleClass().addAll("pulse-card", "radar-card");
+        radarCard.setMinSize(0, 0);
+        radarCard.setMaxSize(Double.MAX_VALUE, Double.MAX_VALUE);
         VBox.setVgrow(radar, Priority.ALWAYS);
 
         renderEventTable();

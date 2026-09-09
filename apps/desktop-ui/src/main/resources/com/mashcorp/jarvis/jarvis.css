@@ -417,12 +417,13 @@
     -fx-font-size: 24px;
     -fx-font-weight: 800;
 }
-.decision-price-plot, .decision-radar {
+.decision-price-plot {
     -fx-background-color: #02090c;
     -fx-border-color: #102f38;
     -fx-border-radius: 3;
     -fx-background-radius: 3;
 }
+.decision-radar { -fx-background-color: transparent; -fx-border-color: transparent; }
 .probability-row { -fx-min-height: 27px; }
 .probability-name { -fx-text-fill: #d7edf2; -fx-font-weight: 800; }
 .decision-probability { -fx-pref-height: 19px; -fx-min-height: 19px; }
@@ -570,6 +571,7 @@
     -fx-min-width: 0;
     -fx-min-height: 0;
 }
+.radar-card { -fx-padding: 3; }
 .pulse-title, .pulse-section, .pulse-chart-title {
     -fx-text-fill: #54d8eb;
     -fx-font-family: "Consolas";
@@ -605,6 +607,7 @@
 .decision-compact .pulse-header { -fx-padding: 4 7; }
 .decision-compact .pulse-header .pulse-title { -fx-font-size: 14px; }
 .decision-compact .pulse-card, .decision-compact .pulse-chart { -fx-padding: 5; }
+.decision-compact .radar-card { -fx-padding: 2; }
 .decision-compact .pulse-text, .decision-compact .pulse-field-name,
 .decision-compact .pulse-field-value, .decision-compact .event-cell { -fx-font-size: 7px; }
 .decision-compact .pulse-value { -fx-font-size: 16px; }
