@@ -19,4 +19,18 @@ final class MarketPulseWorkspaceTest {
         assertEquals("Blocked", MarketPulseWorkspace.riskSummary(BLOCKED, PASS));
         assertEquals("Approved", MarketPulseWorkspace.riskSummary(PASS, PASS));
     }
+
+    @Test
+    void decisionIconTracksTheActionAndDirection() {
+        assertEquals(MarketPulseWorkspace.DecisionIconKind.NO_TRADE,
+                MarketPulseWorkspace.decisionIconKind("NO_TRADE"));
+        assertEquals(MarketPulseWorkspace.DecisionIconKind.LONG,
+                MarketPulseWorkspace.decisionIconKind("buy"));
+        assertEquals(MarketPulseWorkspace.DecisionIconKind.SHORT,
+                MarketPulseWorkspace.decisionIconKind("SHORT"));
+        assertEquals(MarketPulseWorkspace.DecisionIconKind.TRADE,
+                MarketPulseWorkspace.decisionIconKind("trade"));
+        assertEquals(MarketPulseWorkspace.DecisionIconKind.NONE,
+                MarketPulseWorkspace.decisionIconKind("NO DATA"));
+    }
 }

@@ -602,8 +602,16 @@
 .pulse-decision-value { -fx-font-size: 18px; }
 .pulse-decision-reason { -fx-text-fill: #b8dde4; }
 .pulse-decision-status { -fx-min-height: 45px; }
-.no-trade-icon { -fx-padding: 0 2 0 0; }
-.pulse-left-rail { -fx-min-width: 0; -fx-min-height: 0; }
+.decision-icon { -fx-padding: 0 2 0 0; }
+.pulse-left-scroll,
+.pulse-left-scroll > .viewport { -fx-background-color: transparent; }
+.pulse-left-scroll { -fx-padding: 0; -fx-background-insets: 0; -fx-border-color: transparent; }
+.pulse-left-scroll > .corner { -fx-background-color: #020a0d; }
+.pulse-left-scroll .scroll-bar:vertical { -fx-pref-width: 5px; }
+.pulse-left-scroll .scroll-bar:vertical .thumb { -fx-background-color: #176274; -fx-background-radius: 2px; }
+.pulse-left-scroll .scroll-bar:vertical .increment-button,
+.pulse-left-scroll .scroll-bar:vertical .decrement-button { -fx-padding: 0; }
+.pulse-left-rail { -fx-min-width: 0; -fx-min-height: 400px; }
 .pulse-left-rail .pulse-field-name, .pulse-left-rail .pulse-field-value { -fx-padding: 1 0; }
 .market-decision-card .pulse-section { -fx-padding: 2 0 0 0; }
 .pulse-field-name, .pulse-field-value { -fx-padding: 2 0; -fx-border-color: transparent transparent #0e2b33 transparent; }
@@ -654,7 +662,8 @@
 .decision-compact .pulse-decision-value { -fx-font-size: 12px; }
 .decision-compact .pulse-decision-reason { -fx-font-size: 7px; }
 .decision-compact .pulse-decision-status { -fx-min-height: 35px; }
-.decision-compact .no-trade-icon { -fx-scale-x: 0.72; -fx-scale-y: 0.72; }
+.decision-compact .decision-icon { -fx-scale-x: 0.72; -fx-scale-y: 0.72; }
+.decision-compact .pulse-left-rail { -fx-min-height: 330px; }
 .decision-compact .pulse-section { -fx-padding: 2 0 0 0; -fx-font-size: 7px; }
 .decision-compact .pulse-field-name,
 .decision-compact .pulse-field-value { -fx-padding: 1 0; }

@@ -29,7 +29,7 @@ final class DesktopSmokeCheck {
     }
 
     static void run(Stage stage, Path directory, BooleanSupplier telemetryReady, List<Runnable> views) {
-        stage.setMaximized(false); stage.setWidth(1366); stage.setHeight(900);
+        stage.setMaximized(false); stage.setWidth(1914); stage.setHeight(1058);
         DesktopSmokeCheck check = new DesktopSmokeCheck(stage, directory, telemetryReady, views);
         check.frameTimes.start(); check.awaitTelemetry();
     }
@@ -54,7 +54,7 @@ final class DesktopSmokeCheck {
             catch (Exception exc) { exc.printStackTrace(); }
             Platform.exit(); return;
         }
-        if (index == views.size() - compactViewCount) { stage.setWidth(900); stage.setHeight(700); }
+        if (index == views.size() - compactViewCount) { stage.setWidth(850); stage.setHeight(600); }
         views.get(index).run();
         PauseTransition wait = new PauseTransition(Duration.seconds(3));
         wait.setOnFinished(event -> {

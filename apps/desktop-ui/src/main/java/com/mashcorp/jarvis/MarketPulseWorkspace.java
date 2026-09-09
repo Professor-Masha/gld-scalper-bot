@@ -4,6 +4,7 @@ import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.control.Label;
 import javafx.scene.control.OverrunStyle;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.layout.ColumnConstraints;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
@@ -51,6 +52,10 @@ final class MarketPulseWorkspace extends VBox {
     private final Label decision = value("NO DATA");
     private final Label decisionReason = text("Waiting for live evidence");
     private final Node noTradeIcon = noTradeIcon();
+    private final Node longTradeIcon = tradeIcon(-45, "#5cf2b5", "long-trade-icon");
+    private final Node shortTradeIcon = tradeIcon(45, "#ff6b5f", "short-trade-icon");
+    private final Node tradeIcon = tradeIcon(0, "#2de1ff", "trade-icon");
+    private final StackPane decisionIcon = decisionIcon();
     private final GridPane reasonGrid = tableGrid(47, 53);
     private final GridPane eventTable = tableGrid(24, 18, 48, 10);
     private final Deque<PulseEvent> events = new ArrayDeque<>();
@@ -122,27 +127,34 @@ final class MarketPulseWorkspace extends VBox {
         decisionReason.setTextOverrun(OverrunStyle.ELLIPSIS);
         decisionReason.getStyleClass().add("pulse-decision-reason");
         VBox decisionCopy = new VBox(1, decision, decisionReason);
-        HBox decisionStatus = new HBox(10, noTradeIcon, decisionCopy);
+        HBox decisionStatus = new HBox(10, decisionIcon, decisionCopy);
         decisionStatus.setAlignment(Pos.CENTER_LEFT);
         decisionStatus.getStyleClass().add("pulse-decision-status");
         VBox decisionCard = card("DECISION STATUS", decisionStatus, section("REASON BREAKDOWN"), reasonGrid);
         decisionCard.getStyleClass().add("market-decision-card");
 
-        GridPane leftRail = new GridPane();
-        leftRail.setVgap(8);
-        leftRail.getStyleClass().add("pulse-left-rail");
+        GridPane leftRailContent = new GridPane();
+        leftRailContent.setVgap(8);
+        leftRailContent.getStyleClass().add("pulse-left-rail");
         ColumnConstraints railColumn = new ColumnConstraints();
         railColumn.setPercentWidth(100);
         railColumn.setHgrow(Priority.ALWAYS);
-        leftRail.getColumnConstraints().add(railColumn);
-        leftRail.getRowConstraints().addAll(row(31), row(25), row(44));
-        leftRail.add(quoteCard, 0, 0);
-        leftRail.add(contextCard, 0, 1);
-        leftRail.add(decisionCard, 0, 2);
+        leftRailContent.getColumnConstraints().add(railColumn);
+        leftRailContent.getRowConstraints().addAll(row(31), row(25), row(44));
+        leftRailContent.add(quoteCard, 0, 0);
+        leftRailContent.add(contextCard, 0, 1);
+        leftRailContent.add(decisionCard, 0, 2);
         for (Node card : new Node[] {quoteCard, contextCard, decisionCard}) {
             GridPane.setHgrow(card, Priority.ALWAYS);
             GridPane.setVgrow(card, Priority.ALWAYS);
         }
+        ScrollPane leftRail = new ScrollPane(leftRailContent);
+        leftRail.setFitToWidth(true);
+        leftRail.setFitToHeight(true);
+        leftRail.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        leftRail.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        leftRail.setPannable(true);
+        leftRail.getStyleClass().add("pulse-left-scroll");
 
         radar.setMinSize(240, 240);
         VBox radarCard = new VBox(radar);
@@ -156,6 +168,14 @@ final class MarketPulseWorkspace extends VBox {
 
         GridPane main = grid(21, 41, 38);
         main.addRow(0, leftRail, radarCard, feedCard);
+        RowConstraints mainRow = new RowConstraints();
+        mainRow.setMinHeight(0);
+        mainRow.setMaxHeight(Double.MAX_VALUE);
+        mainRow.setVgrow(Priority.ALWAYS);
+        main.getRowConstraints().add(mainRow);
+        for (Node panel : new Node[] {leftRail, radarCard, feedCard}) {
+            GridPane.setVgrow(panel, Priority.ALWAYS);
+        }
         VBox.setVgrow(main, Priority.ALWAYS);
 
         GridPane charts = grid(25, 25, 25, 25);
@@ -215,9 +235,7 @@ final class MarketPulseWorkspace extends VBox {
         decision.setText(frame.decision().toUpperCase(Locale.ROOT));
         decision.setStyle("-fx-text-fill:" + decisionColor(frame.decision()) + ";");
         decisionReason.setText(statusReason(frame));
-        boolean noTrade = frame.decision().toUpperCase(Locale.ROOT).contains("NO TRADE");
-        noTradeIcon.setVisible(noTrade);
-        noTradeIcon.setManaged(noTrade);
+        showDecisionIcon(decisionIconKind(frame.decision()));
         renderReasons(frame);
         radar.update(frame);
         recordEvents(frame);
@@ -363,6 +381,35 @@ final class MarketPulseWorkspace extends VBox {
         return row;
     }
 
+    private StackPane decisionIcon() {
+        StackPane icon = new StackPane(noTradeIcon, longTradeIcon, shortTradeIcon, tradeIcon);
+        icon.setMinSize(42, 42);
+        icon.setPrefSize(42, 42);
+        icon.setMaxSize(42, 42);
+        icon.getStyleClass().add("decision-icon");
+        showDecisionIcon(icon, DecisionIconKind.NONE);
+        return icon;
+    }
+
+    private void showDecisionIcon(DecisionIconKind kind) {
+        showDecisionIcon(decisionIcon, kind);
+    }
+
+    private void showDecisionIcon(StackPane icon, DecisionIconKind kind) {
+        setMarkVisible(noTradeIcon, kind == DecisionIconKind.NO_TRADE);
+        setMarkVisible(longTradeIcon, kind == DecisionIconKind.LONG);
+        setMarkVisible(shortTradeIcon, kind == DecisionIconKind.SHORT);
+        setMarkVisible(tradeIcon, kind == DecisionIconKind.TRADE);
+        boolean visible = kind != DecisionIconKind.NONE;
+        icon.setVisible(visible);
+        icon.setManaged(visible);
+    }
+
+    private static void setMarkVisible(Node mark, boolean visible) {
+        mark.setVisible(visible);
+        mark.setManaged(visible);
+    }
+
     private static Node noTradeIcon() {
         Circle ring = new Circle(17, Color.TRANSPARENT);
         ring.setStroke(Color.web("#ff5a67"));
@@ -372,12 +419,30 @@ final class MarketPulseWorkspace extends VBox {
         slash.setStrokeWidth(3.5);
         slash.setStrokeLineCap(javafx.scene.shape.StrokeLineCap.ROUND);
         javafx.scene.Group mark = new javafx.scene.Group(ring, slash);
-        StackPane icon = new StackPane(mark);
-        icon.setMinSize(42, 42);
-        icon.setPrefSize(42, 42);
-        icon.setMaxSize(42, 42);
-        icon.getStyleClass().add("no-trade-icon");
-        return icon;
+        mark.getStyleClass().add("no-trade-icon");
+        return mark;
+    }
+
+    private static Node tradeIcon(double rotation, String color, String styleClass) {
+        Color stroke = Color.web(color);
+        Circle ring = new Circle(17, Color.TRANSPARENT);
+        ring.setStroke(stroke);
+        ring.setStrokeWidth(2.5);
+        Line shaft = iconLine(-9, 0, 9, 0, stroke);
+        Line upperHead = iconLine(3, -6, 9, 0, stroke);
+        Line lowerHead = iconLine(3, 6, 9, 0, stroke);
+        javafx.scene.Group mark = new javafx.scene.Group(ring, shaft, upperHead, lowerHead);
+        mark.setRotate(rotation);
+        mark.getStyleClass().add(styleClass);
+        return mark;
+    }
+
+    private static Line iconLine(double startX, double startY, double endX, double endY, Color color) {
+        Line line = new Line(startX, startY, endX, endY);
+        line.setStroke(color);
+        line.setStrokeWidth(3);
+        line.setStrokeLineCap(javafx.scene.shape.StrokeLineCap.ROUND);
+        return line;
     }
 
     private static Label title(String value) {
@@ -456,6 +521,15 @@ final class MarketPulseWorkspace extends VBox {
                 && risk == DecisionTelemetry.EvidenceState.PASS ? "Approved" : "Review";
     }
 
+    static DecisionIconKind decisionIconKind(String value) {
+        String decision = value == null ? "" : value.toUpperCase(Locale.ROOT).replace('_', ' ');
+        if (decision.contains("NO TRADE") || decision.contains("ABSTAIN")) return DecisionIconKind.NO_TRADE;
+        if (decision.contains("LONG") || decision.contains("BUY")) return DecisionIconKind.LONG;
+        if (decision.contains("SHORT") || decision.contains("SELL")) return DecisionIconKind.SHORT;
+        if (decision.contains("TRADE")) return DecisionIconKind.TRADE;
+        return DecisionIconKind.NONE;
+    }
+
     private static String probability(DecisionTelemetry.Prediction model) {
         if (!model.available()) return "Unavailable";
         return String.format(Locale.US, "Long %.0f%% / Short %.0f%% / Abstain %.0f%%",
@@ -493,6 +567,8 @@ final class MarketPulseWorkspace extends VBox {
         if (decision.contains("NO TRADE")) return "#ff5a67";
         return "#ffbf69";
     }
+
+    enum DecisionIconKind { NO_TRADE, LONG, SHORT, TRADE, NONE }
 
     private record PulseEvent(String timestamp, String type, String detail, String latency, String style) { }
 }
