@@ -93,6 +93,10 @@ keeping market truth legible:
   execution cost, net edge, uncertainty, and session performance. Its evidence
   gates appear on one connected market-data-to-execution rail with glowing,
   state-colored nodes, human-readable gate names, details, and observation time.
+  The Decision Engine follows the operating mockup's hierarchy: a framed current
+  state, full-width probability bars, separated after-cost economics, a readable
+  uncertainty verdict, and a bounded setup callout. Every value still comes from
+  the current immutable telemetry frame.
 - **Evidence Radar** shows six directly measured values or explicit gate states.
   Its Market Pulse composition follows the operating mockup: a live header with
   update health, stacked GLD/context/decision modules, a circular six-axis radar

@@ -523,7 +523,9 @@ immutable `DecisionTelemetry` projection of the latest gateway frame:
    predictive family reported, whether expected return exceeds plausible cost,
    and which gate would stop an order. The evidence-to-order chain is a single
    connected vertical lifecycle: each measured gate is a state-colored node
-   with its human-readable status, detail, and snapshot time.
+   with its human-readable status, detail, and snapshot time. Its Decision Engine
+   separates current state, outcome probabilities, after-cost edge, uncertainty,
+   and the concise setup explanation without manufacturing unavailable values.
 2. **Evidence Radar** compares six independently labeled dimensions. Missing
    model output remains unavailable; it is never synthesized from rule strength.
    Pass, warning and block axes come from explicit evidence-gate states.

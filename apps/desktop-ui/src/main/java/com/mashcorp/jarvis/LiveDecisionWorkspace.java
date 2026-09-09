@@ -105,10 +105,10 @@ public final class LiveDecisionWorkspace extends VBox {
         private final Label quoteDetail = muted("Waiting for GLD quote");
         private final Label currentState = new Label("NO DATA");
         private final Label marketContext = muted("Waiting for decision evidence");
+        private final Label setupSummary = muted("SETUP: WAITING FOR LIVE EVIDENCE");
         private final ProbabilityRow longProbability = new ProbabilityRow("LONG", "positive");
         private final ProbabilityRow shortProbability = new ProbabilityRow("SHORT", "negative");
         private final ProbabilityRow abstainProbability = new ProbabilityRow("NO TRADE", "neutral");
-        private final Label ruleStrength = value("--");
         private final Label expectedReturn = value("--");
         private final Label expectedCost = value("--");
         private final Label netEdge = value("--");
@@ -121,17 +121,27 @@ public final class LiveDecisionWorkspace extends VBox {
             setSpacing(10);
             VBox priceCard = card("GLD LIVE PRICE", quote, quoteDetail, plot);
             plot.setMinHeight(150);
-            VBox decisionCard = card("DECISION ENGINE", currentState, marketContext,
+            Label stateCaption = muted("CURRENT STATE");
+            stateCaption.getStyleClass().add("decision-state-caption");
+            VBox stateCard = new VBox(3, stateCaption, currentState, marketContext);
+            stateCard.getStyleClass().add("decision-state-card");
+            HBox netEdgeRow = metricRow("NET EDGE", netEdge);
+            netEdgeRow.getStyleClass().add("decision-net-row");
+            HBox setupCallout = setupCallout(setupSummary);
+            VBox decisionCard = card("DECISION ENGINE", stateCard,
                     section("OUTCOME PROBABILITIES"),
                     longProbability, shortProbability, abstainProbability,
-                    metricRow("RULE STRENGTH", ruleStrength),
-                    metricRow("EXPECTED RETURN", expectedReturn),
-                    metricRow("ESTIMATED COST", expectedCost),
-                    metricRow("NET EXPECTED EDGE", netEdge),
-                    metricRow("UNCERTAINTY", uncertainty));
+                    divider(),
+                    metricRow("EXPECTED EDGE (PER TRADE)", expectedReturn),
+                    metricRow("EST. COSTS (SPREAD + FEES)", expectedCost),
+                    netEdgeRow,
+                    metricRow("UNCERTAINTY", uncertainty),
+                    setupCallout);
+            decisionCard.getStyleClass().add("decision-engine-card");
             currentState.getStyleClass().add("flight-state");
             currentState.setWrapText(true);
             marketContext.setWrapText(true);
+            setupSummary.setWrapText(true);
             VBox evidenceCard = card("EVIDENCE  ->  ORDER CHAIN", evidenceChain);
             GridPane main = grid(38, 29, 33);
             main.addRow(0, priceCard, decisionCard, evidenceCard);
@@ -155,20 +165,21 @@ public final class LiveDecisionWorkspace extends VBox {
                     ? String.format(Locale.US, "Bid %.2f / Ask %.2f / Spread %.3f%%",
                     frame.bid(), frame.ask(), frame.spreadPct() * 100)
                     : frame.bid() > 0 ? "Quote spread is outside plausible GLD bounds" : "Live quote unavailable");
-            currentState.setText(frame.decision());
+            currentState.setText(frame.decision().toUpperCase(Locale.ROOT));
             currentState.setStyle("-fx-text-fill:" + decisionColor(frame.decision()) + ";");
-            marketContext.setText(frame.marketState() + " / " + frame.regime());
+            marketContext.setText(stateContext(frame.marketState(), frame.regime()));
+            setupSummary.setText(setupText(frame.summary()));
             DecisionTelemetry.Prediction model = frame.classical();
             longProbability.update(model.available() ? model.longProbability() : -1);
             shortProbability.update(model.available() ? model.shortProbability() : -1);
             abstainProbability.update(model.available() ? model.noTradeProbability() : -1);
-            ruleStrength.setText(percent(frame.ruleStrength()));
             expectedReturn.setText(signedPercent(frame.expectedReturn()));
             expectedCost.setText(!Double.isFinite(frame.expectedCost()) || frame.expectedCost() == 0
                     ? "--" : "-" + percent(Math.abs(frame.expectedCost())));
             netEdge.setText(signedPercent(frame.expectedNetEdge()));
             netEdge.setStyle("-fx-text-fill:" + signedColor(frame.expectedNetEdge()) + ";");
-            uncertainty.setText(frame.transformer().available() ? percent(frame.transformerUncertainty()) : "Unavailable");
+            uncertainty.setText(uncertaintyVerdict(frame.transformer().available(), frame.transformerUncertainty()));
+            uncertainty.setStyle("-fx-text-fill:" + uncertaintyColor(frame.transformer().available(), frame.transformerUncertainty()) + ";");
             evidenceChain.update(frame.evidence(), frame.quoteTimestamp());
             DecisionTelemetry.Performance p = frame.performance();
             statistics.get(0).setText(money(p.netPnl()));
@@ -354,6 +365,26 @@ public final class LiveDecisionWorkspace extends VBox {
         return label;
     }
 
+    private static Region divider() {
+        Region divider = new Region();
+        divider.getStyleClass().add("decision-engine-divider");
+        return divider;
+    }
+
+    private static HBox setupCallout(Label summary) {
+        Region accent = new Region();
+        accent.getStyleClass().add("decision-setup-accent");
+        accent.setMinWidth(3);
+        accent.setPrefWidth(3);
+        accent.setMaxWidth(3);
+        accent.setMaxHeight(Double.MAX_VALUE);
+        HBox callout = new HBox(10, accent, summary);
+        callout.setAlignment(Pos.CENTER_LEFT);
+        callout.getStyleClass().add("decision-setup-callout");
+        HBox.setHgrow(summary, Priority.ALWAYS);
+        return callout;
+    }
+
     private static HBox metricRow(String name, Label value) {
         Label label = muted(name);
         Region spacer = new Region();
@@ -404,6 +435,36 @@ public final class LiveDecisionWorkspace extends VBox {
         return !Double.isFinite(value) || value == 0 ? "--" : String.format(Locale.US, "%+.3f%%", value * 100);
     }
 
+    static String uncertaintyVerdict(boolean available, double uncertainty) {
+        if (!available || !Double.isFinite(uncertainty)) return "UNAVAILABLE";
+        if (uncertainty <= 0.33) return "LOW";
+        if (uncertainty <= 0.66) return "MEDIUM";
+        return "HIGH";
+    }
+
+    private static String uncertaintyColor(boolean available, double uncertainty) {
+        if (!available || !Double.isFinite(uncertainty)) return "#7898a0";
+        if (uncertainty <= 0.33) return "#5cf2b5";
+        if (uncertainty <= 0.66) return "#ffbf3f";
+        return "#ff5470";
+    }
+
+    static String setupText(String summary) {
+        if (summary == null || summary.isBlank()) return "SETUP: WAITING FOR LIVE EVIDENCE";
+        String concise = compact(summary.replaceAll("\\s+", " ").trim(), 118).toUpperCase(Locale.ROOT);
+        int split = concise.indexOf("; ");
+        if (split > 0) concise = concise.substring(0, split) + "\n" + concise.substring(split + 2);
+        return concise.startsWith("SETUP:") ? concise : "SETUP: " + concise;
+    }
+
+    static String stateContext(String marketState, String regime) {
+        String market = marketState == null ? "" : marketState.trim();
+        String mode = regime == null ? "" : regime.trim();
+        if (market.equalsIgnoreCase(mode)) mode = "";
+        String result = market.isBlank() ? mode : mode.isBlank() ? market : market + " - " + mode;
+        return result.isBlank() ? "WAITING FOR DECISION EVIDENCE" : result.toUpperCase(Locale.ROOT);
+    }
+
     private static String money(double value) {
         return String.format(Locale.US, "$%,.2f", value);
     }
@@ -449,13 +510,16 @@ public final class LiveDecisionWorkspace extends VBox {
 
         ProbabilityRow(String title, String style) {
             Label label = muted(title);
-            label.setMinWidth(68);
+            label.getStyleClass().add("probability-name");
+            label.setMinWidth(60);
             bar.setMaxWidth(Double.MAX_VALUE);
             bar.getStyleClass().addAll("decision-probability", style);
             HBox.setHgrow(bar, Priority.ALWAYS);
-            result.setMinWidth(52);
+            result.getStyleClass().addAll("probability-value", style);
+            result.setMinWidth(48);
             setAlignment(Pos.CENTER_LEFT);
             setSpacing(8);
+            getStyleClass().add("probability-row");
             getChildren().addAll(label, bar, result);
         }
 

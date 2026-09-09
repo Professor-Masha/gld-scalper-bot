@@ -351,10 +351,27 @@
     -fx-font-family: "Consolas";
     -fx-font-size: 10px;
 }
+.decision-engine-card { -fx-spacing: 8; }
+.decision-state-card {
+    -fx-padding: 8 10;
+    -fx-background-color: #031116;
+    -fx-border-color: #174652;
+    -fx-border-radius: 4;
+    -fx-background-radius: 4;
+    -fx-min-height: 82px;
+}
+.decision-state-caption {
+    -fx-text-fill: #76bbca;
+    -fx-font-size: 10px;
+}
+.decision-state-card .decision-muted {
+    -fx-text-fill: #63aeca;
+    -fx-font-size: 9px;
+}
 .flight-state {
-    -fx-text-fill: #ffbf69;
+    -fx-text-fill: #2de1ff;
     -fx-font-family: "Bahnschrift", "Segoe UI Semibold";
-    -fx-font-size: 21px;
+    -fx-font-size: 24px;
     -fx-font-weight: 800;
 }
 .decision-price-plot, .decision-radar {
@@ -363,13 +380,47 @@
     -fx-border-radius: 3;
     -fx-background-radius: 3;
 }
-.decision-probability { -fx-pref-height: 8; }
-.decision-probability > .track { -fx-background-color: #0d2228; -fx-background-radius: 2; }
-.decision-probability > .bar { -fx-background-insets: 0; -fx-background-radius: 2; }
+.probability-row { -fx-min-height: 27px; }
+.probability-name { -fx-text-fill: #d7edf2; -fx-font-weight: 800; }
+.decision-probability { -fx-pref-height: 19px; -fx-min-height: 19px; }
+.decision-probability > .track {
+    -fx-background-color: #071b21;
+    -fx-border-color: #174652;
+    -fx-border-radius: 2;
+    -fx-background-radius: 2;
+}
+.decision-probability > .bar { -fx-background-insets: 1; -fx-background-radius: 1; }
 .decision-probability.positive > .bar { -fx-background-color: #5cf2b5; }
 .decision-probability.negative > .bar { -fx-background-color: #ff5470; }
-.decision-probability.neutral > .bar { -fx-background-color: #3f7cff; }
-.decision-metric-row { -fx-padding: 4 0; -fx-border-color: transparent transparent #0f2931 transparent; }
+.decision-probability.neutral > .bar { -fx-background-color: #6e9bb8; }
+.probability-value { -fx-font-size: 17px; }
+.probability-value.positive { -fx-text-fill: #5cf2b5; }
+.probability-value.negative { -fx-text-fill: #ff5470; }
+.probability-value.neutral { -fx-text-fill: #8fb6ce; }
+.decision-engine-divider {
+    -fx-min-height: 1px;
+    -fx-pref-height: 1px;
+    -fx-max-height: 1px;
+    -fx-background-color: #174652;
+    -fx-padding: 2 0 0 0;
+}
+.decision-metric-row { -fx-padding: 6 0; -fx-border-color: transparent transparent #0f2931 transparent; }
+.decision-net-row { -fx-border-color: #1c6677 transparent #0f2931 transparent; }
+.decision-engine-card .decision-metric-row .decision-value { -fx-font-size: 16px; }
+.decision-setup-callout {
+    -fx-padding: 7 8;
+    -fx-background-color: #031116;
+    -fx-border-color: #174652;
+    -fx-border-radius: 4;
+    -fx-background-radius: 4;
+    -fx-min-height: 47px;
+}
+.decision-setup-accent {
+    -fx-background-color: #2de1ff;
+    -fx-background-radius: 2;
+    -fx-effect: dropshadow(gaussian, rgba(45,225,255,0.55), 7, 0.35, 0, 0);
+}
+.decision-setup-callout .decision-muted { -fx-text-fill: #69aec8; -fx-font-size: 9px; }
 .evidence-name { -fx-text-fill: #a6eff7; -fx-font-family: "Consolas"; -fx-font-size: 9px; -fx-font-weight: 800; }
 .evidence-detail { -fx-text-fill: #75949c; -fx-font-family: "Bahnschrift", "Segoe UI"; -fx-font-size: 10px; }
 .evidence-chain { -fx-padding: 2 0; }
@@ -430,6 +481,16 @@
 .decision-compact .decision-muted,
 .decision-compact .evidence-detail { -fx-font-size: 8px; }
 .decision-compact .flight-state { -fx-font-size: 16px; }
+.decision-compact .decision-state-card { -fx-padding: 5 7; -fx-min-height: 63px; }
+.decision-compact .decision-state-caption,
+.decision-compact .decision-state-card .decision-muted { -fx-font-size: 7px; }
+.decision-compact .probability-row { -fx-min-height: 22px; }
+.decision-compact .decision-probability { -fx-pref-height: 14px; -fx-min-height: 14px; }
+.decision-compact .probability-value { -fx-font-size: 13px; }
+.decision-compact .decision-metric-row { -fx-padding: 3 0; }
+.decision-compact .decision-engine-card .decision-metric-row .decision-value { -fx-font-size: 12px; }
+.decision-compact .decision-setup-callout { -fx-padding: 4 5; -fx-min-height: 36px; }
+.decision-compact .decision-setup-callout .decision-muted { -fx-font-size: 7px; }
 .decision-compact .evidence-chain-row { -fx-min-height: 42px; -fx-padding: 1 0; }
 .decision-compact .evidence-time { -fx-font-size: 7px; }
 .decision-compact .trade-evidence-row { -fx-padding: 3 4; }

@@ -1,0 +1,30 @@
+package com.mashcorp.jarvis;
+
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+final class LiveDecisionWorkspaceTest {
+    @Test
+    void uncertaintyIsRenderedAsAnOperatorVerdict() {
+        assertEquals("UNAVAILABLE", LiveDecisionWorkspace.uncertaintyVerdict(false, 0.1));
+        assertEquals("LOW", LiveDecisionWorkspace.uncertaintyVerdict(true, 0.2));
+        assertEquals("MEDIUM", LiveDecisionWorkspace.uncertaintyVerdict(true, 0.5));
+        assertEquals("HIGH", LiveDecisionWorkspace.uncertaintyVerdict(true, 0.9));
+    }
+
+    @Test
+    void setupSummaryIsBoundedAndLabeled() {
+        String text = LiveDecisionWorkspace.setupText("bullish momentum near resistance; awaiting volume confirmation");
+        assertTrue(text.startsWith("SETUP: "));
+        assertTrue(text.contains("\n"));
+        assertTrue(text.length() <= 126);
+    }
+
+    @Test
+    void currentStateContextDoesNotRepeatEquivalentLabels() {
+        assertEquals("POOR LIQUIDITY", LiveDecisionWorkspace.stateContext("Poor liquidity", "poor liquidity"));
+        assertEquals("OPEN - TRENDING", LiveDecisionWorkspace.stateContext("Open", "Trending"));
+    }
+}
