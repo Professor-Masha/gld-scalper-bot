@@ -90,8 +90,9 @@ keeping market truth legible:
 
 - **Live Decision** shows the current GLD midpoint, bounded live trace, decision,
   calibrated model probabilities, rule strength, expected return, plausible
-  execution cost, net edge, uncertainty, evidence-to-order gates and session
-  performance.
+  execution cost, net edge, uncertainty, and session performance. Its evidence
+  gates appear on one connected market-data-to-execution rail with glowing,
+  state-colored nodes, human-readable gate names, details, and observation time.
 - **Evidence Radar** shows six directly measured values or explicit gate states.
   Its Market Pulse composition follows the operating mockup: a live header with
   update health, stacked GLD/context/decision modules, a circular six-axis radar

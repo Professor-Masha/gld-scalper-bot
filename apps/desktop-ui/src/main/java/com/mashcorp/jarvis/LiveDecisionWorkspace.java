@@ -113,7 +113,7 @@ public final class LiveDecisionWorkspace extends VBox {
         private final Label expectedCost = value("--");
         private final Label netEdge = value("--");
         private final Label uncertainty = value("--");
-        private final VBox evidenceChain = new VBox(7);
+        private final EvidenceOrderChain evidenceChain = new EvidenceOrderChain();
         private final List<Label> statistics = new ArrayList<>();
 
         LiveView() {
@@ -132,7 +132,7 @@ public final class LiveDecisionWorkspace extends VBox {
             currentState.getStyleClass().add("flight-state");
             currentState.setWrapText(true);
             marketContext.setWrapText(true);
-            VBox evidenceCard = card("EVIDENCE TO ORDER CHAIN", evidenceChain);
+            VBox evidenceCard = card("EVIDENCE  ->  ORDER CHAIN", evidenceChain);
             GridPane main = grid(38, 29, 33);
             main.addRow(0, priceCard, decisionCard, evidenceCard);
             main.getStyleClass().add("decision-flow");
@@ -169,7 +169,7 @@ public final class LiveDecisionWorkspace extends VBox {
             netEdge.setText(signedPercent(frame.expectedNetEdge()));
             netEdge.setStyle("-fx-text-fill:" + signedColor(frame.expectedNetEdge()) + ";");
             uncertainty.setText(frame.transformer().available() ? percent(frame.transformerUncertainty()) : "Unavailable");
-            evidenceChain.getChildren().setAll(frame.evidence().stream().map(LiveDecisionWorkspace::evidenceRow).toList());
+            evidenceChain.update(frame.evidence(), frame.quoteTimestamp());
             DecisionTelemetry.Performance p = frame.performance();
             statistics.get(0).setText(money(p.netPnl()));
             statistics.get(0).setStyle("-fx-text-fill:" + signedColor(p.netPnl()) + ";");
@@ -244,12 +244,12 @@ public final class LiveDecisionWorkspace extends VBox {
             }
             lifecycle.getChildren().setAll(lifecycleStages(active ? episode.status() : outcome == null ? "" : "closed", active, outcome != null));
             rationale.getChildren().setAll(
-                    evidenceRow(frame.evidence().get(0)),
-                    evidenceRow(frame.evidence().get(1)),
-                    evidenceRow(frame.evidence().get(2)),
-                    evidenceRow(frame.evidence().get(3)),
-                    evidenceRow(frame.evidence().get(4)),
-                    evidenceRow(frame.evidence().get(5)));
+                    tradeEvidenceRow(frame.evidence().get(0)),
+                    tradeEvidenceRow(frame.evidence().get(1)),
+                    tradeEvidenceRow(frame.evidence().get(2)),
+                    tradeEvidenceRow(frame.evidence().get(3)),
+                    tradeEvidenceRow(frame.evidence().get(4)),
+                    tradeEvidenceRow(frame.evidence().get(5)));
             if (active) {
                 double currentPnl = directionalPnl(episode.direction(), episode.entryPrice(), frame.midpoint(), episode.remainingQuantity());
                 metrics.get(0).setText(money(currentPnl));
@@ -299,7 +299,7 @@ public final class LiveDecisionWorkspace extends VBox {
         return nodes;
     }
 
-    private static VBox evidenceRow(DecisionTelemetry.Evidence item) {
+    private static VBox tradeEvidenceRow(DecisionTelemetry.Evidence item) {
         Circle dot = new Circle(5, switch (item.state()) {
             case PASS -> Color.web("#5cf2b5");
             case WARN -> Color.web("#ffbf69");
@@ -314,7 +314,7 @@ public final class LiveDecisionWorkspace extends VBox {
         VBox text = new VBox(1, title, detail);
         HBox row = new HBox(9, dot, text);
         row.setAlignment(Pos.TOP_LEFT);
-        row.getStyleClass().add("evidence-row");
+        row.getStyleClass().add("trade-evidence-row");
         HBox.setHgrow(text, Priority.ALWAYS);
         return new VBox(row);
     }

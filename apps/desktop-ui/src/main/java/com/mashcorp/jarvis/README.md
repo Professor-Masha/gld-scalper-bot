@@ -12,6 +12,7 @@ GatewayClient -> Python gateway`. No Java class has broker execution authority.
 | `JarvisApplication` | `workspace`, labels, `latestSnapshot`, `socket`, and `eventSequence` project backend truth. Dedicated startup, telemetry, read, graph, command, and research executors keep I/O off the UI thread. |
 | `DecisionTelemetry` | Validates and freezes the latest gateway snapshot into display-safe quote, prediction, economics, evidence, episode, outcome, and performance records. |
 | `LiveDecisionWorkspace` | Owns the Overview's Live Decision, Evidence Radar and Trade Anatomy tabs. Percentage-constrained grids keep all primary panels in one row, compact styles reduce density on narrow screens, and the latest frame survives reduced-motion-aware tab transitions. |
+| `EvidenceOrderChain` | Projects each immutable evidence gate onto one continuous market-data-to-execution rail with state-colored nodes, snapshot times, and human-readable gate titles. It has no command or broker methods. |
 | `DecisionPricePlot` | Keeps at most 160 timestamp-distinct midpoint observations and paints price/quote/episode markers on a lightweight canvas. |
 | `DecisionRadar` | Paints six measured or gate-backed axes. It never infers a missing model probability or writes application state. |
 | `MarketPulseWorkspace` | Composes the Evidence Radar operating deck: service header, GLD/context/decision rail, circular radar, typed live-frame event feed, four bounded telemetry plots, and governance legend. |
