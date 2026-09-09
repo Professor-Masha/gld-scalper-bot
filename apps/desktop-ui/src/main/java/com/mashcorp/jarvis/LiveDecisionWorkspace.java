@@ -63,6 +63,10 @@ public final class LiveDecisionWorkspace extends VBox {
         trade.update(frame);
     }
 
+    void updatePulseSeries(JsonNode series) {
+        evidence.updateSeries(series);
+    }
+
     public void setReducedMotion(boolean value) {
         reducedMotion = value;
     }
@@ -250,6 +254,10 @@ public final class LiveDecisionWorkspace extends VBox {
 
         void update(DecisionTelemetry frame) {
             pulse.update(frame);
+        }
+
+        void updateSeries(JsonNode series) {
+            pulse.updateSeries(series);
         }
     }
 

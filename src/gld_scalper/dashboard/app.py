@@ -516,6 +516,8 @@ def create_dashboard_app(project_root: Path = PROJECT_ROOT) -> FastAPI:
     async def equity(): return await asyncio.to_thread(service.telemetry.equity_curve)
     @app.get("/api/market-series")
     async def market_series(limit: int = 390): return await asyncio.to_thread(service.telemetry.market_series, limit)
+    @app.get("/api/pulse-series")
+    async def pulse_series(limit: int = 160): return await asyncio.to_thread(service.telemetry.pulse_series, limit)
     @app.get("/api/analytics")
     async def analytics(limit: int = 5000):
         return await asyncio.to_thread(PerformanceAnalytics(service.telemetry.database_path).build, limit)
@@ -567,6 +569,9 @@ def create_dashboard_app(project_root: Path = PROJECT_ROOT) -> FastAPI:
     async def v1_market_bars(timeframe: str = "1Min", limit: int = 500):
         if timeframe != "1Min": raise HTTPException(400, "The dashboard gateway currently exposes 1Min bars")
         return {"symbol": "GLD", "timeframe": timeframe, "bars": await asyncio.to_thread(service.telemetry.market_series, limit)}
+    @app.get("/api/v1/market/GLD/pulse-series")
+    async def v1_market_pulse_series(limit: int = 160):
+        return await asyncio.to_thread(service.telemetry.pulse_series, limit)
     @app.get("/api/v1/account")
     async def v1_account(): return (await asyncio.to_thread(service.telemetry.snapshot)).get("account") or {}
     @app.get("/api/v1/positions")

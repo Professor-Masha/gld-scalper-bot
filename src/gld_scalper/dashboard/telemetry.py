@@ -195,6 +195,64 @@ class TelemetryRepository:
             FROM bars WHERE symbol='GLD' AND timeframe='1Min'
             ORDER BY timestamp DESC,id DESC LIMIT ?""", (max(30,min(limit,2000)),))))
 
+    def pulse_series(self, limit: int = 160) -> dict[str, list[dict[str, Any]]]:
+        """Return bounded, chart-ready session evidence without synthesizing samples."""
+        bounded = max(30, min(limit, 390))
+        bars = _latest_session(self.market_series(390))
+        closes = [(row.get("timestamp"), float(row.get("close") or 0.0)) for row in bars]
+        closes = [(timestamp, close) for timestamp, close in closes if timestamp and close > 0]
+        opening_close = closes[0][1] if closes else 0.0
+        returns = [
+            {"timestamp": timestamp, "value": close / opening_close - 1.0}
+            for timestamp, close in closes if opening_close > 0
+        ]
+
+        quotes = _latest_session(list(reversed(self._query(
+            """SELECT timestamp,spread_pct FROM quotes WHERE symbol='GLD'
+               ORDER BY timestamp DESC,id DESC LIMIT ?""",
+            (2000,),
+        ))))
+        spreads = [
+            {"timestamp": row.get("timestamp"), "value": float(row.get("spread_pct")) * 10_000}
+            for row in quotes
+            if row.get("timestamp") and row.get("spread_pct") is not None
+            and 0 <= float(row.get("spread_pct")) <= 0.005
+        ]
+
+        signals = _latest_session(list(reversed(self._query(
+            """SELECT timestamp,feature_snapshot_json FROM signals WHERE symbol='GLD'
+               ORDER BY timestamp DESC,id DESC LIMIT ?""",
+            (2000,),
+        ))))
+        liquidity: list[dict[str, Any]] = []
+        for row in signals:
+            features = row.get("feature_snapshot_json")
+            features = features if isinstance(features, dict) else {}
+            value = features.get("liquidity_score", features.get("micro_liquidity_score"))
+            if row.get("timestamp") and value is not None and 0 <= float(value) <= 1:
+                liquidity.append({"timestamp": row.get("timestamp"), "value": float(value)})
+
+        outcomes = _latest_session(list(reversed(self._query(
+            """SELECT COALESCE(exit_time,entry_time) AS timestamp,net_pnl_after_costs
+               FROM trade_outcomes WHERE symbol='GLD'
+               ORDER BY COALESCE(exit_time,entry_time) DESC,id DESC LIMIT ?""",
+            (2000,),
+        ))))
+        cumulative = 0.0
+        pnl: list[dict[str, Any]] = []
+        for row in outcomes:
+            if not row.get("timestamp"):
+                continue
+            cumulative += float(row.get("net_pnl_after_costs") or 0.0)
+            pnl.append({"timestamp": row.get("timestamp"), "value": cumulative})
+
+        return {
+            "return": _downsample(returns, bounded),
+            "spread": _downsample(spreads, bounded),
+            "liquidity": _downsample(liquidity, bounded),
+            "pnl": _downsample(pnl, bounded),
+        }
+
     def diagnostics(self, limit: int = 100) -> dict[str, Any]:
         return {
             "stream": self._query("SELECT * FROM stream_diagnostics ORDER BY timestamp DESC,id DESC LIMIT ?", (limit,)),
@@ -283,3 +341,16 @@ def _metric(values: dict[str, Any], key: str) -> float | None:
         return float(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _latest_session(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not rows:
+        return []
+    latest = str(rows[-1].get("timestamp") or "")[:10]
+    return [row for row in rows if str(row.get("timestamp") or "")[:10] == latest]
+
+
+def _downsample(rows: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    if len(rows) <= limit:
+        return rows
+    return [rows[round(index * (len(rows) - 1) / (limit - 1))] for index in range(limit)]

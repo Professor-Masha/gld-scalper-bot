@@ -1,5 +1,6 @@
 package com.mashcorp.jarvis;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.control.Label;
@@ -23,7 +24,9 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
+import java.util.List;
 import java.util.Locale;
 
 /** Full read-only Market Pulse composition backed only by live gateway frames. */
@@ -59,10 +62,14 @@ final class MarketPulseWorkspace extends VBox {
     private final GridPane reasonGrid = tableGrid(47, 53);
     private final GridPane eventTable = tableGrid(24, 18, 48, 10);
     private final Deque<PulseEvent> events = new ArrayDeque<>();
-    private final PulseSparkline returnChart = new PulseSparkline("GLD RETURN (SESSION)", Color.web("#5cf2b5"));
-    private final PulseSparkline spreadChart = new PulseSparkline("SPREAD (BPS)", Color.web("#3f9cff"));
-    private final PulseSparkline liquidityChart = new PulseSparkline("LIQUIDITY (RELATIVE)", Color.web("#ffbf3f"));
-    private final PulseSparkline pnlChart = new PulseSparkline("CUMULATIVE NET P/L", Color.web("#ff5470"));
+    private final PulseSparkline returnChart = new PulseSparkline(
+            "GLD RETURN (INTRADAY)", Color.web("#5cf2b5"), PulseSparkline.ValueFormat.PERCENT);
+    private final PulseSparkline spreadChart = new PulseSparkline(
+            "SPREAD (BPS)", Color.web("#3198ff"), PulseSparkline.ValueFormat.BPS);
+    private final PulseSparkline liquidityChart = new PulseSparkline(
+            "LIQUIDITY (RELATIVE)", Color.web("#ffbf3f"), PulseSparkline.ValueFormat.RELATIVE);
+    private final PulseSparkline pnlChart = new PulseSparkline(
+            "CUMULATIVE NET P/L", Color.web("#ff5470"), PulseSparkline.ValueFormat.MONEY);
     private double openingMidpoint;
     private long frameCount;
     private String lastQuoteTimestamp = "";
@@ -191,7 +198,7 @@ final class MarketPulseWorkspace extends VBox {
         }
 
         Label legend = text("SIGNAL LEGEND     GREEN  RULE EVIDENCE     BLUE  CLASSICAL ML     PURPLE  TRANSFORMER");
-        Label governance = text("GLD  |  READ-ONLY VISUALIZATION  |  NO EXECUTION AUTHORITY");
+        Label governance = text("GLD  |  READ-ONLY VISUALIZATION  |  NO EXECUTION  |  FOR INFORMATIONAL USE");
         Region footerGap = new Region();
         HBox.setHgrow(footerGap, Priority.ALWAYS);
         HBox footer = new HBox(10, legend, footerGap, governance);
@@ -241,11 +248,33 @@ final class MarketPulseWorkspace extends VBox {
         recordEvents(frame);
         renderEventTable();
 
-        returnChart.update(returnPct, Double.isFinite(returnPct) ? String.format(Locale.US, "%+.2f%%", returnPct * 100) : "--");
-        spreadChart.update(spreadBps, Double.isFinite(spreadBps) ? String.format(Locale.US, "%.2f", spreadBps) : "--");
+        returnChart.update(returnPct, Double.isFinite(returnPct)
+                ? String.format(Locale.US, "%+.2f%%", returnPct * 100) : "--", frame.quoteTimestamp());
+        spreadChart.update(spreadBps, Double.isFinite(spreadBps)
+                ? String.format(Locale.US, "%.2f", spreadBps) : "--", frame.quoteTimestamp());
         liquidityChart.update(frame.liquidityScore(), frame.liquidityScore() > 0
-                ? String.format(Locale.US, "%.2f", frame.liquidityScore()) : "--");
-        pnlChart.update(frame.performance().netPnl(), money(frame.performance().netPnl()));
+                ? String.format(Locale.US, "%.2f", frame.liquidityScore()) : "--", frame.quoteTimestamp());
+        pnlChart.update(frame.performance().netPnl(), money(frame.performance().netPnl()), frame.quoteTimestamp());
+    }
+
+    void updateSeries(JsonNode series) {
+        returnChart.replaceSamples(series(series, "return"));
+        spreadChart.replaceSamples(series(series, "spread"));
+        liquidityChart.replaceSamples(series(series, "liquidity"));
+        pnlChart.replaceSamples(series(series, "pnl"));
+    }
+
+    private static List<PulseSparkline.Sample> series(JsonNode root, String name) {
+        List<PulseSparkline.Sample> result = new ArrayList<>();
+        JsonNode values = root.path(name);
+        if (!values.isArray()) return result;
+        for (JsonNode value : values) {
+            double number = value.path("value").asDouble(Double.NaN);
+            if (Double.isFinite(number)) {
+                result.add(new PulseSparkline.Sample(value.path("timestamp").asText(""), number));
+            }
+        }
+        return result;
     }
 
     private void renderReasons(DecisionTelemetry frame) {

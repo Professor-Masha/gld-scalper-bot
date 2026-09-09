@@ -232,6 +232,8 @@ public final class JarvisApplication extends Application {
     }
 
     private void scheduleInterfaceTasks() {
+        scheduler.scheduleWithFixedDelay(
+                () -> readWorkers.execute(this::refreshPulseSeries), 1, 60, TimeUnit.SECONDS);
         scheduler.schedule(() -> readWorkers.execute(this::refreshReadiness), 3, TimeUnit.SECONDS);
         scheduler.scheduleWithFixedDelay(() -> Platform.runLater(() -> currentRefresh.run()), 10, 10, TimeUnit.SECONDS);
         scheduler.scheduleWithFixedDelay(() -> readWorkers.execute(this::refreshReadiness), 30, 30, TimeUnit.SECONDS);
@@ -705,6 +707,15 @@ public final class JarvisApplication extends Application {
         navigationButtons.add(button);
         navigationLabels.add(text);
         nav.getChildren().add(button);
+    }
+
+    private void refreshPulseSeries() {
+        try {
+            JsonNode series = gateway.get("/api/v1/market/GLD/pulse-series?limit=160");
+            Platform.runLater(() -> decisionWorkspace.updatePulseSeries(series));
+        } catch (Exception exc) {
+            System.err.println("Pulse history unavailable: " + safeMessage(exc));
+        }
     }
 
     private void updateNavigationMode(boolean compact) {

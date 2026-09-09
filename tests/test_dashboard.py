@@ -186,6 +186,54 @@ def test_telemetry_reads_performance_without_writing(tmp_path: Path) -> None:
     assert snapshot["active_episodes"][0]["details_json"]["stop_price"] == pytest.approx(217.8)
 
 
+def test_pulse_series_uses_recorded_session_evidence(tmp_path: Path) -> None:
+    settings = Settings(database_url=f"sqlite:///{tmp_path / 'pulse.db'}")
+    database = Database(settings=settings)
+    database.init_db()
+    database.conn.executemany(
+        """INSERT INTO bars(symbol,timeframe,timestamp,open,high,low,close)
+           VALUES ('GLD','1Min',?,?,?,?,?)""",
+        [
+            ("2026-09-10T13:30:00+00:00", 100, 100, 100, 100),
+            ("2026-09-10T13:31:00+00:00", 100, 101, 100, 101),
+            ("2026-09-10T13:32:00+00:00", 101, 101, 100.5, 100.5),
+        ],
+    )
+    database.conn.executemany(
+        """INSERT INTO quotes(symbol,timestamp,bid_price,ask_price,spread_pct)
+           VALUES ('GLD',?,?,?,?)""",
+        [
+            ("2026-09-10T13:30:10+00:00", 99.99, 100.01, 0.0001),
+            ("2026-09-10T13:31:10+00:00", 100.98, 101.02, 0.0002),
+        ],
+    )
+    database.conn.executemany(
+        """INSERT INTO signals(timestamp,symbol,decision,feature_snapshot_json)
+           VALUES (?,'GLD','NO_TRADE',?)""",
+        [
+            ("2026-09-10T13:30:15+00:00", '{"liquidity_score":0.4}'),
+            ("2026-09-10T13:31:15+00:00", '{"liquidity_score":0.7}'),
+        ],
+    )
+    database.conn.executemany(
+        """INSERT INTO trade_outcomes(symbol,direction,entry_time,exit_time,net_pnl_after_costs)
+           VALUES ('GLD','LONG',?,?,?)""",
+        [
+            ("2026-09-10T13:30:00+00:00", "2026-09-10T13:31:00+00:00", 2.0),
+            ("2026-09-10T13:31:00+00:00", "2026-09-10T13:32:00+00:00", -1.0),
+        ],
+    )
+    database.conn.commit()
+    database.close()
+
+    series = TelemetryRepository(settings.database_path).pulse_series()
+
+    assert [point["value"] for point in series["return"]] == pytest.approx([0, 0.01, 0.005])
+    assert [point["value"] for point in series["spread"]] == pytest.approx([1, 2])
+    assert [point["value"] for point in series["liquidity"]] == pytest.approx([0.4, 0.7])
+    assert [point["value"] for point in series["pnl"]] == pytest.approx([2, 1])
+
+
 def test_telemetry_exposes_model_validation_evidence(tmp_path: Path) -> None:
     settings = Settings(database_url=f"sqlite:///{tmp_path / 'validation.db'}")
     database = Database(settings=settings)
@@ -289,6 +337,7 @@ def test_dashboard_app_is_local_and_serves_expected_routes(tmp_path: Path) -> No
     assert "/" in paths
     assert "/api/snapshot" in paths
     assert "/api/market-series" in paths
+    assert "/api/v1/market/GLD/pulse-series" in paths
     assert "/api/analytics" in paths
     assert "/api/model-validation" in paths
     assert "/api/memory-graph" in paths
