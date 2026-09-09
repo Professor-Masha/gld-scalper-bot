@@ -326,16 +326,7 @@ public final class JarvisApplication extends Application {
             return;
         }
         decisionWorkspace.setReducedMotion(reducedMotion);
-        Label context = new Label("GLD / ALGORITHMIC TRADING / REAL-TIME DECISIONING");
-        context.getStyleClass().add("page-context");
-        Label heading = new Label("LIVE DECISION FLIGHT DECK");
-        heading.getStyleClass().add("page-title");
-        Region rule = new Region();
-        rule.getStyleClass().add("page-rule");
-        HBox.setHgrow(rule, Priority.ALWAYS);
-        HBox header = new HBox(16, new VBox(2, context, heading), rule);
-        header.setAlignment(Pos.CENTER_LEFT);
-        VBox operationalPage = new VBox(9, header, decisionWorkspace);
+        VBox operationalPage = new VBox(decisionWorkspace);
         operationalPage.getStyleClass().addAll("page", "overview-page");
         VBox.setVgrow(decisionWorkspace, Priority.ALWAYS);
         overviewPage = operationalPage;

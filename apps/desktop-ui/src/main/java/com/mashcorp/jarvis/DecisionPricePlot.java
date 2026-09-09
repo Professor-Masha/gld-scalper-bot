@@ -21,10 +21,14 @@ final class DecisionPricePlot extends StackPane {
     DecisionPricePlot() {
         getStyleClass().add("decision-price-plot");
         getChildren().add(canvas);
-        canvas.widthProperty().bind(widthProperty());
-        canvas.heightProperty().bind(heightProperty());
-        widthProperty().addListener((ignored, before, after) -> draw());
-        heightProperty().addListener((ignored, before, after) -> draw());
+        setMaxHeight(720);
+        widthProperty().addListener((ignored, before, after) -> resizeAndDraw());
+        heightProperty().addListener((ignored, before, after) -> resizeAndDraw());
+    }
+
+    private void resizeAndDraw() {
+        CanvasSurface.resize(canvas, getWidth(), getHeight());
+        draw();
     }
 
     void update(DecisionTelemetry next) {
@@ -99,7 +103,7 @@ final class DecisionPricePlot extends StackPane {
         graphics.fillOval(right - 4, currentY - 4, 8, 8);
         graphics.fillText(String.format(Locale.US, "%.2f", frame.midpoint()), right + 8, currentY + 4);
         graphics.setFill(Color.web("#63838b"));
-        graphics.fillText("LIVE SNAPSHOTS " + values.size() + "/160", left, height - 6);
+        graphics.fillText("HISTORY " + values.size() + " OF 160 SAMPLES", left, height - 6);
     }
 
     private static void horizontal(GraphicsContext graphics, double value, double minimum, double maximum,

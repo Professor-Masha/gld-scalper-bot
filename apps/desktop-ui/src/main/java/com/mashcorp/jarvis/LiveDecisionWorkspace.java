@@ -182,46 +182,16 @@ public final class LiveDecisionWorkspace extends VBox {
     }
 
     private static final class EvidenceView extends VBox {
-        private final DecisionRadar radar = new DecisionRadar();
-        private final VBox feed = new VBox(6);
-        private final Label headline = value("WAITING");
-        private final Label explanation = muted("Evidence has not arrived.");
-        private final Label marketPrice = value("--");
-        private final Label marketQuote = muted("Waiting for quote");
-        private final Label marketSession = muted("Session unavailable");
-        private final Label marketRegime = muted("Regime unavailable");
-        private final Label marketLiquidity = muted("Liquidity unavailable");
+        private final MarketPulseWorkspace pulse = new MarketPulseWorkspace();
 
         EvidenceView() {
             getStyleClass().add("decision-view");
-            setSpacing(10);
-            radar.setMinSize(220, 220);
-            VBox contextCard = card("GLD MARKET CONTEXT", marketPrice, marketQuote,
-                    section("SESSION AND REGIME"), marketSession, marketRegime, marketLiquidity);
-            VBox radarCard = card("MARKET PULSE", radar);
-            VBox feedCard = card("LIVE EVIDENCE FEED", headline, explanation, feed);
-            headline.getStyleClass().add("flight-state");
-            explanation.setWrapText(true);
-            GridPane main = grid(22, 46, 32);
-            main.addRow(0, contextCard, radarCard, feedCard);
-            VBox.setVgrow(main, Priority.ALWAYS);
-            getChildren().add(main);
+            getChildren().add(pulse);
+            VBox.setVgrow(pulse, Priority.ALWAYS);
         }
 
         void update(DecisionTelemetry frame) {
-            radar.update(frame);
-            marketPrice.setText(frame.midpoint() > 0 ? money(frame.midpoint()) : "--");
-            marketQuote.setText(frame.bid() > 0
-                    ? String.format(Locale.US, "Bid %.2f / Ask %.2f", frame.bid(), frame.ask())
-                    : "Live quote unavailable");
-            marketSession.setText("Market: " + frame.marketState());
-            marketRegime.setText("Regime: " + frame.regime());
-            marketLiquidity.setText("Spread: " + (Double.isFinite(frame.spreadPct())
-                    ? String.format(Locale.US, "%.3f%%", frame.spreadPct() * 100) : "invalid"));
-            headline.setText(frame.decision() + " / " + frame.marketState());
-            headline.setStyle("-fx-text-fill:" + decisionColor(frame.decision()) + ";");
-            explanation.setText(frame.summary());
-            feed.getChildren().setAll(frame.evidence().stream().map(LiveDecisionWorkspace::evidenceRow).toList());
+            pulse.update(frame);
         }
     }
 

@@ -17,6 +17,9 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.Base64;
+import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /** Starts the Python gateway as an isolated child and never receives broker credentials. */
 public final class GatewayRuntime implements AutoCloseable {
@@ -46,6 +49,7 @@ public final class GatewayRuntime implements AutoCloseable {
                 java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.WRITE);
         instanceLock = lockChannel.tryLock();
         if (instanceLock == null) { lockChannel.close(); throw new IOException("The JavaFX dashboard is already open for this project"); }
+        stopRecordedGateway(logRoot.resolve("javafx_gateway.pid"));
         Path gatewayLog = prepareGatewayLog(logRoot);
         gatewayLogPath = gatewayLog;
         ProcessBuilder builder = new ProcessBuilder(
@@ -132,6 +136,32 @@ public final class GatewayRuntime implements AutoCloseable {
                     .withZone(ZoneOffset.UTC).format(Instant.now());
             return logRoot.resolve("javafx_gateway." + stamp + "-" + ProcessHandle.current().pid() + ".log");
         }
+    }
+
+    private static void stopRecordedGateway(Path pidFile) throws IOException, InterruptedException {
+        if (!Files.isRegularFile(pidFile)) return;
+        String payload = Files.readString(pidFile, StandardCharsets.US_ASCII);
+        Matcher matcher = Pattern.compile("\\\"pid\\\"\\s*:\\s*(\\d+)").matcher(payload);
+        if (!matcher.find()) return;
+        long pid = Long.parseLong(matcher.group(1));
+        ProcessHandle handle = ProcessHandle.of(pid).orElse(null);
+        if (handle == null || !handle.isAlive()) {
+            Files.deleteIfExists(pidFile);
+            return;
+        }
+        String commandLine = handle.info().commandLine().orElse("");
+        if (!isDashboardGatewayCommand(commandLine)) return;
+        handle.destroy();
+        for (int attempt = 0; attempt < 30 && handle.isAlive(); attempt++) Thread.sleep(100);
+        if (handle.isAlive()) handle.destroyForcibly();
+        Files.deleteIfExists(pidFile);
+    }
+
+    static boolean isDashboardGatewayCommand(String commandLine) {
+        String value = commandLine == null ? "" : commandLine.toLowerCase(Locale.ROOT);
+        return value.contains("gld_scalper.main")
+                && value.contains("dashboard")
+                && value.contains("--no-browser");
     }
 
     private static Path locateProjectRoot() {

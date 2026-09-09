@@ -49,6 +49,11 @@ disabled, writes a concise diagnostic to `logs/dashboard/javafx_launcher.log`,
 and schedules an early background retry. WebSocket telemetry and the periodic
 readiness task replace the fallback as soon as the gateway responds.
 
+The native 3D Memory Graph camera has one bounded zoom state. Mouse-wheel zoom
+is clamped between safe near and far distances, responsive resizing uses the
+same clamp, and double-clicking the graph restores the default camera and
+rotation. Repeated scrolling therefore cannot enlarge the graph indefinitely.
+
 ## Files
 
 | File | Responsibility |
@@ -66,7 +71,7 @@ readiness task replace the fallback as soon as the gateway responds.
 | `StartupOverlay.java` | Immediate, phase-backed 0-100% startup presentation and failure state. |
 | `ReadinessSnapshot.java` | Pure projection of the gateway readiness contract into human-facing states. |
 | `ReadinessStrip.java` | Persistent interface, trading, market, and research-AI status display. |
-| `DecisionCore3D.java` | Native 3D open-ring rendering, color/size encoding, live-evidence pulses, selection, drag, and zoom. It consumes bounded JSON and has no database or broker dependency. |
+| `DecisionCore3D.java` | Native 3D open-ring rendering, color/size encoding, live-evidence pulses, selection, drag, bounded zoom, and double-click camera reset. It consumes bounded JSON and has no database or broker dependency. |
 | `MemoryGraphWorkspace.java` | Read-only graph filters, node inspector, cache status, and chronological training-lineage timeline. |
 | `HudBackdrop.java` | Lightweight canvas grid and corner registration marks behind the native command deck. |
 | `JobWorkspace.java` | Scope presets, artifact discovery/browsing, multi-candidate forms, typed starts/stops, and five-second job logs. |
@@ -88,7 +93,11 @@ keeping market truth legible:
   execution cost, net edge, uncertainty, evidence-to-order gates and session
   performance.
 - **Evidence Radar** shows six directly measured values or explicit gate states.
-  It does not convert a bullish rules score into a pretend ML probability.
+  Its Market Pulse composition follows the operating mockup: a live header with
+  update health, stacked GLD/context/decision modules, a circular six-axis radar
+  with colored callouts, a timestamped typed event feed, four bounded telemetry
+  charts, and a signal/governance legend. Missing values remain `Unavailable`;
+  the view never substitutes mockup numbers for gateway evidence.
 - **Trade Anatomy** follows one root episode through observed, confirmed,
   submitted, filled, managing and exit stages, then shows after-cost economics
   and the recorded close reason.
@@ -132,6 +141,18 @@ housekeeping and cannot block a healthy gateway. Startup failures include the
 final active gateway log lines on the boot screen. `JARVIS_PROJECT_ROOT`
 selects the project; `JARVIS_PYTHON` is an optional development interpreter
 override. Neither variable should contain credentials.
+
+`DecisionPricePlot`, `DecisionRadar`, and the Market Pulse sparklines resize
+through `CanvasSurface`. Logical canvas dimensions are finite and capped at
+2048 pixels per axis, preventing transient layout expansion or high-DPI texture
+pressure from requesting an invalid Prism render target. The displayed
+`HISTORY n OF 160 SAMPLES` text is a bounded rolling buffer indicator, not
+download progress.
+
+If JavaFX exits abnormally, the recorded Python gateway may briefly survive.
+At the next launch, `GatewayRuntime` examines only the PID it previously wrote
+and terminates it only when the process command line identifies the managed
+`gld_scalper.main dashboard --no-browser` child.
 
 The app uses separate startup, scheduler, telemetry, general-read, graph-read,
 operator-command, and long-research workers. A slow Memory Graph request cannot

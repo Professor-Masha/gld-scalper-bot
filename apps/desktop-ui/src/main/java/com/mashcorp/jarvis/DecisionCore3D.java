@@ -26,6 +26,11 @@ import java.util.function.Consumer;
 
 /** Lightweight native 3D decision core. It visualizes state; it never computes orders. */
 public final class DecisionCore3D {
+    static final double MIN_CAMERA_Z = -900;
+    static final double MAX_CAMERA_Z = -380;
+    private static final double DEFAULT_CAMERA_Z = -520;
+    private static final double MIN_ZOOM_OFFSET = -250;
+    private static final double MAX_ZOOM_OFFSET = 140;
     private final Group orbitA = orbit(148, 42, Color.web("#5cf2b5"));
     private final Group orbitB = orbit(112, 32, Color.web("#2de1ff"));
     private final Group orbitC = orbit(78, 24, Color.web("#ffbf69"));
@@ -35,6 +40,9 @@ public final class DecisionCore3D {
     private final Group graphLayer = new Group();
     private final Group world;
     private final SubScene scene;
+    private final PerspectiveCamera camera = new PerspectiveCamera(true);
+    private final Rotate yaw = new Rotate(0, Rotate.Y_AXIS);
+    private final Rotate pitch = new Rotate(0, Rotate.X_AXIS);
     private final RotateTransition spinA;
     private final RotateTransition spinB;
     private final RotateTransition spinC;
@@ -42,6 +50,7 @@ public final class DecisionCore3D {
     private final FadeTransition haloBreathe;
     private double dragX;
     private double dragY;
+    private double zoomOffset;
     private Consumer<String> selectionListener = node -> {};
     private final Map<String, Sphere> renderedNodes = new HashMap<>();
     private final Map<String, Cylinder> renderedEdges = new HashMap<>();
@@ -78,21 +87,33 @@ public final class DecisionCore3D {
                 new AmbientLight(Color.web("#29424c")), pointLight(), rimLight());
         scene = new SubScene(world, 520, 310, true, javafx.scene.SceneAntialiasing.BALANCED);
         scene.setFill(Color.web("#010608"));
-        PerspectiveCamera camera = new PerspectiveCamera(true);
-        camera.setTranslateZ(-520);
+        camera.setTranslateZ(DEFAULT_CAMERA_Z);
         camera.setNearClip(0.1);
         camera.setFarClip(4000);
         scene.setCamera(camera);
-        scene.widthProperty().addListener((observable, before, width) -> camera.setTranslateZ(-520 * Math.max(1, scene.getHeight() / Math.max(100, width.doubleValue()))));
-        Rotate yaw = new Rotate(0, Rotate.Y_AXIS), pitch = new Rotate(0, Rotate.X_AXIS);
+        scene.widthProperty().addListener((observable, before, width) -> applyCameraDistance());
+        scene.heightProperty().addListener((observable, before, height) -> applyCameraDistance());
         world.getTransforms().addAll(pitch, yaw);
-        scene.setOnMousePressed(event -> { dragX = event.getSceneX(); dragY = event.getSceneY(); });
+        scene.setOnMousePressed(event -> {
+            if (event.getClickCount() == 2) {
+                zoomOffset = 0;
+                yaw.setAngle(0);
+                pitch.setAngle(0);
+                applyCameraDistance();
+            }
+            dragX = event.getSceneX();
+            dragY = event.getSceneY();
+        });
         scene.setOnMouseDragged(event -> {
             yaw.setAngle(yaw.getAngle() + (event.getSceneX() - dragX) * 0.5);
             pitch.setAngle(pitch.getAngle() - (event.getSceneY() - dragY) * 0.5);
             dragX = event.getSceneX(); dragY = event.getSceneY();
         });
-        scene.setOnScroll(event -> { camera.setTranslateZ(Math.max(-900, Math.min(-380, camera.getTranslateZ() + event.getDeltaY()))); event.consume(); });
+        scene.setOnScroll(event -> {
+            zoomOffset = clampZoomOffset(zoomOffset + event.getDeltaY() * 0.35);
+            applyCameraDistance();
+            event.consume();
+        });
 
         spinA = spin(orbitA, 18, Rotate.Y_AXIS);
         spinB = spin(orbitB, 12, Rotate.Z_AXIS);
@@ -110,6 +131,23 @@ public final class DecisionCore3D {
             else { if (!reducedMotion) { spinA.play(); spinB.play(); spinC.play(); edgePulse.start(); } }
         });
         edgePulse.start();
+    }
+
+    private void applyCameraDistance() {
+        camera.setTranslateZ(cameraDistance(scene.getWidth(), scene.getHeight(), zoomOffset));
+    }
+
+    static double clampZoomOffset(double value) {
+        if (!Double.isFinite(value)) return 0;
+        return Math.max(MIN_ZOOM_OFFSET, Math.min(MAX_ZOOM_OFFSET, value));
+    }
+
+    static double cameraDistance(double width, double height, double offset) {
+        double safeWidth = Math.max(100, Double.isFinite(width) ? width : 100);
+        double safeHeight = Math.max(100, Double.isFinite(height) ? height : 100);
+        double aspectCorrection = Math.max(1, Math.min(1.25, safeHeight / safeWidth));
+        double distance = DEFAULT_CAMERA_Z * aspectCorrection + clampZoomOffset(offset);
+        return Math.max(MIN_CAMERA_Z, Math.min(MAX_CAMERA_Z, distance));
     }
 
     public SubScene node() {

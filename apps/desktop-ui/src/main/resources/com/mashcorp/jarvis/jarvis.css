@@ -415,6 +415,63 @@
 .decision-compact .lifecycle-title { -fx-font-size: 8px; }
 .decision-narrow .decision-mode-button { -fx-padding: 7 8; -fx-font-size: 8px; }
 
+.market-pulse-workspace { -fx-background-color: transparent; }
+.pulse-header {
+    -fx-padding: 7 12;
+    -fx-background-color: #020a0d;
+    -fx-border-color: #176274;
+    -fx-border-radius: 4;
+    -fx-background-radius: 4;
+}
+.pulse-card, .pulse-chart {
+    -fx-padding: 8;
+    -fx-background-color: #020a0d;
+    -fx-border-color: #167087;
+    -fx-border-radius: 5;
+    -fx-background-radius: 5;
+    -fx-min-width: 0;
+    -fx-min-height: 0;
+}
+.pulse-title, .pulse-section, .pulse-chart-title {
+    -fx-text-fill: #54d8eb;
+    -fx-font-family: "Consolas";
+    -fx-font-size: 11px;
+    -fx-font-weight: 800;
+}
+.pulse-header .pulse-title { -fx-font-family: "Bahnschrift"; -fx-font-size: 20px; }
+.pulse-section { -fx-padding: 6 0 1 0; -fx-font-size: 9px; }
+.pulse-text, .pulse-field-name, .pulse-field-value {
+    -fx-text-fill: #8ebbc4;
+    -fx-font-family: "Consolas";
+    -fx-font-size: 9px;
+}
+.pulse-value { -fx-text-fill: #edfaff; -fx-font-family: "Consolas"; -fx-font-size: 23px; -fx-font-weight: 800; }
+.pulse-decision-value { -fx-font-size: 18px; }
+.pulse-field-name, .pulse-field-value { -fx-padding: 2 0; -fx-border-color: transparent transparent #0e2b33 transparent; }
+.pulse-charts { -fx-min-height: 115px; -fx-pref-height: 125px; -fx-max-height: 145px; }
+.pulse-chart { -fx-spacing: 4; }
+.pulse-chart-title, .pulse-chart-value { -fx-font-family: "Consolas"; -fx-font-size: 9px; -fx-font-weight: 800; }
+.pulse-footer { -fx-padding: 5 8; -fx-border-color: #17414d transparent transparent transparent; }
+.event-cell {
+    -fx-padding: 4 5;
+    -fx-font-family: "Consolas";
+    -fx-font-size: 9px;
+    -fx-border-color: transparent transparent #11323b transparent;
+}
+.event-heading { -fx-text-fill: #74c9d8; -fx-font-weight: 800; }
+.event-time, .event-detail { -fx-text-fill: #91b9c2; }
+.event-type-quote { -fx-text-fill: #2de1ff; }
+.event-type-model { -fx-text-fill: #4aa2ff; }
+.event-type-transformer { -fx-text-fill: #bd79ff; }
+.event-type-risk { -fx-text-fill: #ff657f; }
+.decision-compact .pulse-header { -fx-padding: 4 7; }
+.decision-compact .pulse-header .pulse-title { -fx-font-size: 14px; }
+.decision-compact .pulse-card, .decision-compact .pulse-chart { -fx-padding: 5; }
+.decision-compact .pulse-text, .decision-compact .pulse-field-name,
+.decision-compact .pulse-field-value, .decision-compact .event-cell { -fx-font-size: 7px; }
+.decision-compact .pulse-value { -fx-font-size: 16px; }
+.decision-compact .pulse-charts { -fx-min-height: 82px; -fx-pref-height: 88px; -fx-max-height: 95px; }
+
 .memory-workspace { -fx-background-color: transparent; }
 .memory-filters {
     -fx-padding: 9 12;

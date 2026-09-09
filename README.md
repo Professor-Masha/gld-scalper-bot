@@ -488,7 +488,7 @@ Alpaca order.
 
 | View | Operational responsibility |
 |---|---|
-| Overview | Three synchronized single-viewport operational views: **Live Decision** follows quote, decision, model probability, economic edge, evidence gates and session results; **Evidence Radar** compares market context, measured rule strength, price-action/liquidity/risk gates, classical ML and Transformer evidence; **Trade Anatomy** follows one root episode from observation through final after-cost outcome. |
+| Overview | Three synchronized single-viewport operational views: **Live Decision** follows quote, decision, model probability, economic edge, evidence gates and session results; **Evidence Radar** uses the Market Pulse layout with an operational header, stacked quote/context/decision rail, circular six-axis callout radar, typed event feed, and bounded return/spread/liquidity/P&L charts; **Trade Anatomy** follows one root episode from observation through final after-cost outcome. |
 | Market | Native GLD close-price line chart from the gateway's latest one-minute bars, refreshed every ten seconds. |
 | Performance | Equity curve, after-cost P/L, win rate, holding time, and closed root outcomes. |
 | Trades | Auditable root trading episodes rather than duplicated partial-exit tranches. |
