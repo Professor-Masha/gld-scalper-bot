@@ -533,10 +533,13 @@ immutable `DecisionTelemetry` projection of the latest gateway frame:
    exit prices, gross and net P/L, costs, MFE, MAE, profit giveback and close reason.
 
 The price canvas accumulates only timestamp-distinct live snapshots in a bounded
-in-memory window. The radar and charts perform no SQLite queries, feature
-calculation, model inference or broker work on the JavaFX thread. When the bot is
-shown on a narrow display, percentage-based grids retain the mockup's left-to-right
-information hierarchy while navigation collapses to a numbered rail with tooltips.
+in-memory window. Its session scale can expand for genuine extremes but never
+contracts around the rolling window, scroll/zoom gestures are consumed, and the
+unmanaged backing canvas is clipped to the GLD card. The radar and charts perform
+no SQLite queries, feature calculation, model inference or broker work on the
+JavaFX thread. When the bot is shown on a narrow display, percentage-based grids
+retain the mockup's left-to-right information hierarchy while navigation collapses
+to a numbered rail with tooltips.
 Cards never wrap underneath the radar or decision engine. When the bot is
 offline or a value is invalid, the interface says `Unavailable` or `--` instead
 of inventing a score. Memory Graph remains the historical model/trade lineage

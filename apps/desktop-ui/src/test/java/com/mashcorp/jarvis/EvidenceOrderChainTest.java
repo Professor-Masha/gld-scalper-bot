@@ -14,6 +14,7 @@ final class EvidenceOrderChainTest {
 
     @Test
     void timestampsFailClosed() {
+        assertEquals("10:30:00", EvidenceOrderChain.timestamp("2026-09-09T14:30:00Z"));
         assertEquals("--", EvidenceOrderChain.timestamp(""));
         assertEquals("--", EvidenceOrderChain.timestamp("not-a-timestamp"));
     }

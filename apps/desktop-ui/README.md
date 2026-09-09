@@ -88,11 +88,13 @@ The **Model validation** analytics mode reads `/api/v1/models/validation`. It co
 The default workspace follows the visual language of an operations console while
 keeping market truth legible:
 
-- **Live Decision** shows the current GLD midpoint, bounded live trace, decision,
+- **Live Decision** shows the current GLD midpoint, fixed-viewport live trace, decision,
   calibrated model probabilities, rule strength, expected return, plausible
   execution cost, net edge, uncertainty, and session performance. Its evidence
   gates appear on one connected market-data-to-execution rail with glowing,
   state-colored nodes, human-readable gate names, details, and observation time.
+  The price scale may expand for a new session extreme but never contracts around
+  the rolling sample window, and the non-interactive canvas is clipped to its card.
   The Decision Engine follows the operating mockup's hierarchy: a framed current
   state, full-width probability bars, separated after-cost economics, a readable
   uncertainty verdict, and a bounded setup callout. Every value still comes from
@@ -150,9 +152,11 @@ override. Neither variable should contain credentials.
 `DecisionPricePlot`, `DecisionRadar`, and the Market Pulse sparklines resize
 through `CanvasSurface`. Logical canvas dimensions are finite and capped at
 2048 pixels per axis, preventing transient layout expansion or high-DPI texture
-pressure from requesting an invalid Prism render target. The displayed
-`HISTORY n OF 160 SAMPLES` text is a bounded rolling buffer indicator, not
-download progress.
+pressure from requesting an invalid Prism render target. The price canvas is
+excluded from layout measurement and clipped to the GLD card, so a stale backing
+texture cannot expand or paint across adjacent panels. The displayed
+`LIVE HISTORY n / 160` text is a bounded rolling buffer indicator, not download
+progress.
 
 If JavaFX exits abnormally, the recorded Python gateway may briefly survive.
 At the next launch, `GatewayRuntime` examines only the PID it previously wrote

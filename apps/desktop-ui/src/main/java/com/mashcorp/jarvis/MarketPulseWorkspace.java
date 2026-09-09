@@ -130,7 +130,7 @@ final class MarketPulseWorkspace extends VBox {
     void update(DecisionTelemetry frame) {
         frameCount++;
         boolean fresh = frame.evidence().get(0).state() == DecisionTelemetry.EvidenceState.PASS;
-        clock.setText(frame.quoteTimestamp().isBlank() ? "Timestamp unavailable" : localTime(frame.quoteTimestamp()));
+        clock.setText(frame.quoteTimestamp().isBlank() ? "Timestamp unavailable" : marketTime(frame.quoteTimestamp()));
         liveState.setText(fresh ? "DATA -> EVIDENCE -> DECISION   LIVE" : "DATA LINK DEGRADED");
         liveState.setStyle("-fx-text-fill:" + (fresh ? "#5cf2b5" : "#ffbf69") + ";");
         long seconds = Math.max(0, Duration.between(openedAt, Instant.now()).toSeconds());
@@ -208,7 +208,7 @@ final class MarketPulseWorkspace extends VBox {
         eventCell(eventTable, 3, 0, "LATENCY", "event-heading");
         int row = 1;
         for (PulseEvent event : events) {
-            eventCell(eventTable, 0, row, localTime(event.timestamp()), "event-time");
+            eventCell(eventTable, 0, row, marketTime(event.timestamp()), "event-time");
             eventCell(eventTable, 1, row, event.type(), "event-type-" + event.style());
             eventCell(eventTable, 2, row, event.detail(), "event-detail");
             eventCell(eventTable, 3, row, event.latency(), "event-time");
@@ -296,9 +296,10 @@ final class MarketPulseWorkspace extends VBox {
         return label;
     }
 
-    private static String localTime(String timestamp) {
+    static String marketTime(String timestamp) {
         try {
-            return DateTimeFormatter.ofPattern("HH:mm:ss.SSS").withZone(ZoneId.systemDefault()).format(Instant.parse(timestamp));
+            return DateTimeFormatter.ofPattern("HH:mm:ss.SSS")
+                    .withZone(ZoneId.of("America/New_York")).format(Instant.parse(timestamp));
         } catch (Exception ignored) {
             return timestamp == null || timestamp.isBlank() ? "--" : timestamp;
         }

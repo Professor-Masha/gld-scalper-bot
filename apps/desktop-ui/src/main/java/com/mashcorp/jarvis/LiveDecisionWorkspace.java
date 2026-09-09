@@ -102,7 +102,11 @@ public final class LiveDecisionWorkspace extends VBox {
     private static final class LiveView extends VBox {
         private final DecisionPricePlot plot = new DecisionPricePlot();
         private final Label quote = value("--");
+        private final Label quoteChange = value("--");
         private final Label quoteDetail = muted("Waiting for GLD quote");
+        private final Circle deckDot = new Circle(5, Color.web("#607780"));
+        private final Label deckMarket = muted("MARKET STATUS UNKNOWN");
+        private final Label deckClock = muted("TIMESTAMP UNAVAILABLE");
         private final Label currentState = new Label("NO DATA");
         private final Label marketContext = muted("Waiting for decision evidence");
         private final Label setupSummary = muted("SETUP: WAITING FOR LIVE EVIDENCE");
@@ -119,8 +123,41 @@ public final class LiveDecisionWorkspace extends VBox {
         LiveView() {
             getStyleClass().add("decision-view");
             setSpacing(10);
-            VBox priceCard = card("GLD LIVE PRICE", quote, quoteDetail, plot);
+            Label deckTitle = new Label("LIVE DECISION FLIGHT DECK");
+            deckTitle.getStyleClass().add("flight-deck-title");
+            Label deckSubtitle = muted("GLD  //  ALGORITHMIC TRADING  //  REAL-TIME DECISIONING");
+            VBox deckIdentity = new VBox(1, deckTitle, deckSubtitle);
+            Region deckSpacer = new Region();
+            HBox.setHgrow(deckSpacer, Priority.ALWAYS);
+            HBox marketStatus = new HBox(7, deckDot, deckMarket);
+            marketStatus.setAlignment(Pos.CENTER_LEFT);
+            VBox deckStatus = new VBox(2, marketStatus, deckClock);
+            deckStatus.setAlignment(Pos.CENTER_RIGHT);
+            VBox discipline = new VBox(1, muted("DISCIPLINE"), muted("DATA"), muted("ADVANTAGE"));
+            discipline.getStyleClass().add("flight-deck-discipline");
+            HBox deckHeader = new HBox(14, deckIdentity, deckSpacer, deckStatus, discipline);
+            deckHeader.setAlignment(Pos.CENTER_LEFT);
+            deckHeader.getStyleClass().add("flight-deck-header");
+
+            Label symbol = new Label("GLD");
+            symbol.getStyleClass().add("gld-symbol");
+            Label instrument = muted("SPDR GOLD SHARES");
+            instrument.getStyleClass().add("gld-instrument");
+            Region instrumentSpacer = new Region();
+            HBox.setHgrow(instrumentSpacer, Priority.ALWAYS);
+            Label interval = muted("1m  |  LIVE");
+            HBox instrumentHeader = new HBox(10, symbol, instrument, instrumentSpacer, interval);
+            instrumentHeader.setAlignment(Pos.CENTER_LEFT);
+            instrumentHeader.getStyleClass().add("gld-instrument-header");
+            quote.getStyleClass().add("gld-price");
+            quoteChange.getStyleClass().add("gld-price-change");
+            HBox quoteHeader = new HBox(12, quote, quoteChange);
+            quoteHeader.setAlignment(Pos.BASELINE_LEFT);
+            VBox priceCard = new VBox(5, instrumentHeader, quoteHeader, quoteDetail, plot);
+            priceCard.getStyleClass().addAll("decision-card", "gld-price-card");
+            priceCard.setMaxSize(Double.MAX_VALUE, Double.MAX_VALUE);
             plot.setMinHeight(150);
+            VBox.setVgrow(plot, Priority.ALWAYS);
             Label stateCaption = muted("CURRENT STATE");
             stateCaption.getStyleClass().add("decision-state-caption");
             VBox stateCard = new VBox(3, stateCaption, currentState, marketContext);
@@ -146,25 +183,36 @@ public final class LiveDecisionWorkspace extends VBox {
             GridPane main = grid(38, 29, 33);
             main.addRow(0, priceCard, decisionCard, evidenceCard);
             main.getStyleClass().add("decision-flow");
-            GridPane strip = grid(16.67, 16.67, 16.67, 16.67, 16.67, 16.65);
+            GridPane strip = grid(20, 20, 20, 20, 20);
             strip.getStyleClass().add("performance-strip");
-            String[] names = {"NET P/L", "WIN RATE", "PROFIT FACTOR", "DRAWDOWN", "EPISODES", "AVG HOLD"};
+            String[] names = {"SESSION P/L", "WIN RATE", "PROFIT FACTOR", "DRAWDOWN", "FAST-PATH p95"};
             for (String name : names) {
                 Label number = value("--");
                 statistics.add(number);
                 strip.add(stat(name, number), statistics.size() - 1, 0);
             }
+            VBox performanceCard = card("LIVE PERFORMANCE (TODAY)", strip);
+            performanceCard.getStyleClass().add("performance-card");
             VBox.setVgrow(main, Priority.ALWAYS);
-            getChildren().addAll(main, strip);
+            getChildren().addAll(deckHeader, main, performanceCard);
         }
 
         void update(DecisionTelemetry frame) {
             plot.update(frame);
-            quote.setText(frame.midpoint() > 0 ? money(frame.midpoint()) : "--");
+            quote.setText(frame.midpoint() > 0 ? String.format(Locale.US, "%.2f", frame.midpoint()) : "--");
+            double change = plot.sessionChange();
+            double sessionReturn = plot.sessionReturn();
+            quoteChange.setText(Double.isFinite(change) && Double.isFinite(sessionReturn)
+                    ? String.format(Locale.US, "%+.2f (%+.2f%%)", change, sessionReturn * 100) : "--");
+            quoteChange.setStyle("-fx-text-fill:" + signedColor(change) + ";");
             quoteDetail.setText(frame.bid() > 0 && Double.isFinite(frame.spreadPct())
                     ? String.format(Locale.US, "Bid %.2f / Ask %.2f / Spread %.3f%%",
                     frame.bid(), frame.ask(), frame.spreadPct() * 100)
                     : frame.bid() > 0 ? "Quote spread is outside plausible GLD bounds" : "Live quote unavailable");
+            boolean liveMarket = frame.evidence().get(0).state() == DecisionTelemetry.EvidenceState.PASS;
+            deckDot.setFill(Color.web(liveMarket ? "#19f7a7" : "#ffbf3f"));
+            deckMarket.setText(liveMarket ? "MARKETS LIVE" : frame.marketState().toUpperCase(Locale.ROOT));
+            deckClock.setText(marketTimestamp(frame.quoteTimestamp()));
             currentState.setText(frame.decision().toUpperCase(Locale.ROOT));
             currentState.setStyle("-fx-text-fill:" + decisionColor(frame.decision()) + ";");
             marketContext.setText(stateContext(frame.marketState(), frame.regime()));
@@ -187,8 +235,7 @@ public final class LiveDecisionWorkspace extends VBox {
             statistics.get(1).setText(p.trades() == 0 ? "--" : percent(p.winRate()));
             statistics.get(2).setText(Double.isNaN(p.profitFactor()) ? "--" : String.format(Locale.US, "%.2f", p.profitFactor()));
             statistics.get(3).setText(percent(p.drawdownPct()));
-            statistics.get(4).setText(Integer.toString(p.trades()));
-            statistics.get(5).setText(duration(p.averageHoldSeconds()));
+            statistics.get(4).setText("--");
         }
     }
 
@@ -487,9 +534,20 @@ public final class LiveDecisionWorkspace extends VBox {
         if (timestamp == null || timestamp.isBlank()) return "unknown time";
         try {
             return java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss")
-                    .withZone(java.time.ZoneId.systemDefault()).format(java.time.Instant.parse(timestamp));
+                    .withZone(java.time.ZoneId.of("America/New_York")).format(java.time.Instant.parse(timestamp));
         } catch (Exception ignored) {
             return timestamp;
+        }
+    }
+
+    static String marketTimestamp(String timestamp) {
+        if (timestamp == null || timestamp.isBlank()) return "TIMESTAMP UNAVAILABLE";
+        try {
+            return java.time.format.DateTimeFormatter.ofPattern("EEE MMM dd, yyyy  HH:mm:ss 'ET'", Locale.US)
+                    .withZone(java.time.ZoneId.of("America/New_York"))
+                    .format(java.time.Instant.parse(timestamp)).toUpperCase(Locale.ROOT);
+        } catch (Exception ignored) {
+            return "TIMESTAMP UNAVAILABLE";
         }
     }
 

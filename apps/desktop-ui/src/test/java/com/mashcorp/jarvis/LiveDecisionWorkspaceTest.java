@@ -27,4 +27,10 @@ final class LiveDecisionWorkspaceTest {
         assertEquals("POOR LIQUIDITY", LiveDecisionWorkspace.stateContext("Poor liquidity", "poor liquidity"));
         assertEquals("OPEN - TRENDING", LiveDecisionWorkspace.stateContext("Open", "Trending"));
     }
+
+    @Test
+    void marketTimestampUsesTheExchangeTimezone() {
+        assertTrue(LiveDecisionWorkspace.marketTimestamp("2026-09-09T14:30:00Z").endsWith("10:30:00 ET"));
+        assertEquals("TIMESTAMP UNAVAILABLE", LiveDecisionWorkspace.marketTimestamp("invalid"));
+    }
 }

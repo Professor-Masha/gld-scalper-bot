@@ -22,7 +22,7 @@ import java.util.Locale;
 /** Read-only, connected projection of evidence gates from market data to execution. */
 final class EvidenceOrderChain extends StackPane {
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm:ss")
-            .withLocale(Locale.US).withZone(ZoneId.systemDefault());
+            .withLocale(Locale.US).withZone(ZoneId.of("America/New_York"));
     private final VBox rows = new VBox(2);
 
     EvidenceOrderChain() {

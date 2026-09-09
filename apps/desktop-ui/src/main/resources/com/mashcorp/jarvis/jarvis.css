@@ -322,6 +322,26 @@
 .decision-mode-button:selected { -fx-text-fill: #5cf2b5; -fx-background-color: #09231c; -fx-border-color: transparent transparent #5cf2b5 transparent; }
 .decision-view { -fx-padding: 0; }
 .decision-flow { -fx-alignment: TOP_LEFT; }
+.flight-deck-header {
+    -fx-padding: 7 12;
+    -fx-background-color: #020a0d;
+    -fx-border-color: #176274;
+    -fx-border-radius: 4;
+    -fx-background-radius: 4;
+    -fx-min-height: 58px;
+    -fx-max-height: 66px;
+}
+.flight-deck-title {
+    -fx-text-fill: #54d8eb;
+    -fx-font-family: "Bahnschrift", "Segoe UI Semibold";
+    -fx-font-size: 22px;
+    -fx-font-weight: 800;
+}
+.flight-deck-discipline {
+    -fx-padding: 0 0 0 14;
+    -fx-border-color: transparent transparent transparent #176274;
+}
+.flight-deck-discipline .decision-muted { -fx-text-fill: #54a9bc; -fx-font-size: 8px; }
 .decision-card {
     -fx-padding: 12;
     -fx-background-color: #020a0d;
@@ -333,6 +353,29 @@
     -fx-min-height: 0;
 }
 .decision-card:hover { -fx-border-color: #267083; }
+.gld-price-card { -fx-spacing: 4; }
+.gld-instrument-header {
+    -fx-padding: 0 0 5 0;
+    -fx-border-color: transparent transparent #176274 transparent;
+}
+.gld-symbol {
+    -fx-text-fill: #f1fbff;
+    -fx-font-family: "Bahnschrift", "Segoe UI Semibold";
+    -fx-font-size: 18px;
+    -fx-font-weight: 800;
+}
+.gld-instrument { -fx-text-fill: #79b7c6; -fx-font-weight: 800; }
+.gld-price {
+    -fx-text-fill: #edfaff;
+    -fx-font-family: "Consolas";
+    -fx-font-size: 25px;
+    -fx-font-weight: 800;
+}
+.gld-price-change {
+    -fx-font-family: "Consolas";
+    -fx-font-size: 14px;
+    -fx-font-weight: 800;
+}
 .decision-card-title, .decision-section {
     -fx-text-fill: #54d8eb;
     -fx-font-family: "Consolas";
@@ -452,15 +495,16 @@
     -fx-background-radius: 3;
 }
 .performance-strip {
-    -fx-background-color: #02090c;
-    -fx-border-color: #17434f;
-    -fx-border-radius: 4;
-    -fx-background-radius: 4;
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
 }
+.performance-card { -fx-padding: 7 12; -fx-spacing: 4; -fx-min-height: 77px; -fx-max-height: 88px; }
+.performance-card .decision-card-title { -fx-font-size: 10px; }
 .performance-stat {
-    -fx-padding: 9 13;
+    -fx-padding: 4 13;
     -fx-border-color: transparent #102d35 transparent transparent;
 }
+.performance-card .performance-stat .decision-value { -fx-text-fill: #5cf2b5; -fx-font-size: 17px; }
 .trade-lifecycle { -fx-padding: 6 0 2 0; }
 .lifecycle-stage {
     -fx-padding: 8 12;
@@ -481,6 +525,16 @@
 .decision-compact .decision-muted,
 .decision-compact .evidence-detail { -fx-font-size: 8px; }
 .decision-compact .flight-state { -fx-font-size: 16px; }
+.decision-compact .flight-deck-header { -fx-padding: 4 7; -fx-min-height: 45px; -fx-max-height: 49px; }
+.decision-compact .flight-deck-title { -fx-font-size: 15px; }
+.decision-compact .flight-deck-header .decision-muted,
+.decision-compact .flight-deck-discipline .decision-muted { -fx-font-size: 6px; }
+.decision-compact .gld-symbol { -fx-font-size: 14px; }
+.decision-compact .gld-price { -fx-font-size: 18px; }
+.decision-compact .gld-price-change { -fx-font-size: 10px; }
+.decision-compact .performance-card { -fx-padding: 4 7; -fx-min-height: 60px; -fx-max-height: 66px; }
+.decision-compact .performance-stat { -fx-padding: 2 5; }
+.decision-compact .performance-card .performance-stat .decision-value { -fx-font-size: 12px; }
 .decision-compact .decision-state-card { -fx-padding: 5 7; -fx-min-height: 63px; }
 .decision-compact .decision-state-caption,
 .decision-compact .decision-state-card .decision-muted { -fx-font-size: 7px; }
