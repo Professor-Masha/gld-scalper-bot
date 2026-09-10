@@ -535,12 +535,12 @@
 .decision-compact .decision-card-title,
 .decision-compact .decision-section { -fx-font-size: 9px; }
 .decision-compact .decision-muted,
-.decision-compact .evidence-detail { -fx-font-size: 8px; }
+.decision-compact .evidence-detail { -fx-font-size: 9px; }
 .decision-compact .flight-state { -fx-font-size: 16px; }
 .decision-compact .flight-deck-header { -fx-padding: 4 7; -fx-min-height: 45px; -fx-max-height: 49px; }
 .decision-compact .flight-deck-title { -fx-font-size: 15px; }
 .decision-compact .flight-deck-header .decision-muted,
-.decision-compact .flight-deck-discipline .decision-muted { -fx-font-size: 6px; }
+.decision-compact .flight-deck-discipline .decision-muted { -fx-font-size: 8px; }
 .decision-compact .gld-symbol { -fx-font-size: 14px; }
 .decision-compact .gld-price { -fx-font-size: 18px; }
 .decision-compact .gld-price-change { -fx-font-size: 10px; }
@@ -549,21 +549,21 @@
 .decision-compact .performance-card .performance-stat .decision-value { -fx-font-size: 12px; }
 .decision-compact .decision-state-card { -fx-padding: 5 7; -fx-min-height: 63px; }
 .decision-compact .decision-state-caption,
-.decision-compact .decision-state-card .decision-muted { -fx-font-size: 7px; }
+.decision-compact .decision-state-card .decision-muted { -fx-font-size: 8px; }
 .decision-compact .probability-row { -fx-min-height: 22px; }
 .decision-compact .decision-probability { -fx-pref-height: 14px; -fx-min-height: 14px; }
 .decision-compact .probability-value { -fx-font-size: 13px; }
 .decision-compact .decision-metric-row { -fx-padding: 3 0; }
 .decision-compact .decision-engine-card .decision-metric-row .decision-value { -fx-font-size: 12px; }
 .decision-compact .decision-setup-callout { -fx-padding: 4 5; -fx-min-height: 36px; }
-.decision-compact .decision-setup-callout .decision-muted { -fx-font-size: 7px; }
+.decision-compact .decision-setup-callout .decision-muted { -fx-font-size: 8px; }
 .decision-compact .evidence-chain-row { -fx-min-height: 42px; -fx-padding: 1 0; }
-.decision-compact .evidence-time { -fx-font-size: 7px; }
+.decision-compact .evidence-time { -fx-font-size: 8px; }
 .decision-compact .trade-evidence-row { -fx-padding: 3 4; }
 .decision-compact .performance-stat { -fx-padding: 6 7; }
 .decision-compact .lifecycle-stage { -fx-padding: 6 5; }
-.decision-compact .lifecycle-title { -fx-font-size: 8px; }
-.decision-narrow .decision-mode-button { -fx-padding: 7 8; -fx-font-size: 8px; }
+.decision-compact .lifecycle-title { -fx-font-size: 9px; }
+.decision-narrow .decision-mode-button { -fx-padding: 7 8; -fx-font-size: 9px; }
 
 .market-pulse-workspace { -fx-background-color: transparent; }
 .pulse-header {
@@ -648,7 +648,7 @@
 .decision-compact .pulse-header-status { -fx-min-width: 185px; }
 .decision-compact .pulse-header-status .pulse-text,
 .decision-compact .pulse-service .pulse-field-name,
-.decision-compact .pulse-service .pulse-field-value { -fx-font-size: 6px; }
+.decision-compact .pulse-service .pulse-field-value { -fx-font-size: 8px; }
 .decision-compact .pulse-title-divider { -fx-min-height: 16px; }
 .decision-compact .pulse-card, .decision-compact .pulse-chart { -fx-padding: 5; }
 .decision-compact .radar-card { -fx-padding: 2; }
@@ -657,25 +657,25 @@
 .decision-compact .market-decision-card { -fx-padding: 4; -fx-spacing: 1; }
 .decision-compact .market-quote-card > .pulse-title { -fx-font-size: 12px; }
 .decision-compact .market-quote-line { -fx-min-height: 20px; }
-.decision-compact .market-quote-change { -fx-font-size: 8px; }
+.decision-compact .market-quote-change { -fx-font-size: 10px; }
 .decision-compact .pulse-decision-status { -fx-min-height: 39px; -fx-spacing: 3; }
 .decision-compact .pulse-decision-value { -fx-font-size: 11px; }
-.decision-compact .pulse-decision-reason { -fx-font-size: 6px; }
-.decision-compact .market-decision-card .pulse-section { -fx-padding: 0; -fx-font-size: 7px; }
+.decision-compact .pulse-decision-reason { -fx-font-size: 8px; }
+.decision-compact .market-decision-card .pulse-section { -fx-padding: 0; -fx-font-size: 8px; }
 .decision-compact .pulse-left-rail .pulse-field-name,
 .decision-compact .pulse-left-rail .pulse-field-value { -fx-padding: 0; }
 .decision-compact .pulse-text, .decision-compact .pulse-field-name,
-.decision-compact .pulse-field-value, .decision-compact .event-cell { -fx-font-size: 7px; }
+.decision-compact .pulse-field-value, .decision-compact .event-cell { -fx-font-size: 9px; }
 .decision-compact .pulse-value { -fx-font-size: 16px; }
 .decision-compact .market-quote-card > .pulse-title { -fx-font-size: 12px; }
 .decision-compact .market-quote-line { -fx-min-height: 19px; }
-.decision-compact .market-quote-change { -fx-font-size: 8px; }
+.decision-compact .market-quote-change { -fx-font-size: 10px; }
 .decision-compact .pulse-decision-value { -fx-font-size: 12px; }
-.decision-compact .pulse-decision-reason { -fx-font-size: 7px; }
+.decision-compact .pulse-decision-reason { -fx-font-size: 8px; }
 .decision-compact .pulse-decision-status { -fx-min-height: 35px; }
 .decision-compact .decision-icon { -fx-scale-x: 0.72; -fx-scale-y: 0.72; }
 .decision-compact .pulse-left-rail { -fx-min-height: 510px; }
-.decision-compact .pulse-section { -fx-padding: 2 0 0 0; -fx-font-size: 7px; }
+.decision-compact .pulse-section { -fx-padding: 2 0 0 0; -fx-font-size: 8px; }
 .decision-compact .pulse-field-name,
 .decision-compact .pulse-field-value { -fx-padding: 1 0; }
 .decision-compact .pulse-charts { -fx-min-height: 82px; -fx-pref-height: 88px; -fx-max-height: 95px; }

@@ -378,7 +378,7 @@ final class DecisionRadar extends StackPane {
     }
 
     private static Font font(double size, FontWeight weight) {
-        return Font.font("Consolas", weight, Math.max(7, size));
+        return Font.font("Consolas", weight, Math.max(8, size));
     }
 
     private static String decisionColor(String decision) {

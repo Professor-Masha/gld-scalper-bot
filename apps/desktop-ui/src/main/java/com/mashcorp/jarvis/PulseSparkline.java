@@ -131,7 +131,7 @@ final class PulseSparkline extends VBox {
 
         if (samples.isEmpty()) {
             graphics.setFill(Color.web("#52747c"));
-            graphics.setFont(Font.font("Consolas", 7));
+            graphics.setFont(Font.font("Consolas", 8));
             graphics.setTextAlign(TextAlignment.CENTER);
             graphics.setTextBaseline(VPos.CENTER);
             graphics.fillText("AWAITING SESSION HISTORY", (left + right) / 2, (top + bottom) / 2);
@@ -176,7 +176,7 @@ final class PulseSparkline extends VBox {
 
     private void drawLabels(GraphicsContext graphics, List<Sample> points, double minimum, double maximum,
                             double left, double right, double top, double bottom, double width, double height) {
-        graphics.setFont(Font.font("Consolas", 7));
+        graphics.setFont(Font.font("Consolas", 8));
         graphics.setFill(Color.web("#6d9aa4"));
         graphics.setTextAlign(TextAlignment.LEFT);
         graphics.setTextBaseline(VPos.CENTER);
