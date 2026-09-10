@@ -678,6 +678,19 @@
 .decision-compact .pulse-section { -fx-padding: 2 0 0 0; -fx-font-size: 8px; }
 .decision-compact .pulse-field-name,
 .decision-compact .pulse-field-value { -fx-padding: 1 0; }
+.decision-compact .pulse-left-rail .pulse-title { -fx-font-size: 12px; }
+.decision-compact .pulse-left-rail .pulse-value { -fx-font-size: 18px; }
+.decision-compact .pulse-left-rail .pulse-decision-value { -fx-font-size: 14px; }
+.decision-compact .pulse-left-rail .pulse-decision-reason,
+.decision-compact .pulse-left-rail .pulse-section { -fx-font-size: 9px; }
+.decision-compact .pulse-left-rail .pulse-field-name,
+.decision-compact .pulse-left-rail .pulse-field-value {
+    -fx-font-size: 10px;
+    -fx-padding: 2 0;
+}
+.decision-narrow .market-quote-line { -fx-spacing: 4; }
+.decision-narrow .pulse-left-rail .pulse-value { -fx-font-size: 16px; }
+.decision-narrow .pulse-left-rail .market-quote-change { -fx-font-size: 8px; }
 .decision-compact .pulse-charts { -fx-min-height: 82px; -fx-pref-height: 88px; -fx-max-height: 95px; }
 
 .memory-workspace { -fx-background-color: transparent; }
