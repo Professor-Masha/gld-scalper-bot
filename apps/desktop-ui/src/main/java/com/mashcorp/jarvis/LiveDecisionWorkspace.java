@@ -7,6 +7,7 @@ import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressBar;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.control.ToggleButton;
 import javafx.scene.control.ToggleGroup;
 import javafx.scene.layout.ColumnConstraints;
@@ -14,6 +15,7 @@ import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
+import javafx.scene.layout.RowConstraints;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
@@ -26,7 +28,10 @@ import java.util.Locale;
 
 /** Read-only live decision, evidence, and trade-management workspace. */
 public final class LiveDecisionWorkspace extends VBox {
+    enum LayoutDensity { NORMAL, COMPACT, NARROW }
+
     private final StackPane viewHost = new StackPane();
+    private final ScrollPane viewScroll = new ScrollPane(viewHost);
     private final LiveView live = new LiveView();
     private final EvidenceView evidence = new EvidenceView();
     private final TradeView trade = new TradeView();
@@ -47,13 +52,15 @@ public final class LiveDecisionWorkspace extends VBox {
         modes.getStyleClass().add("decision-modes");
         viewHost.getChildren().add(live);
         viewHost.setMinSize(0, 0);
-        VBox.setVgrow(viewHost, Priority.ALWAYS);
-        getChildren().addAll(modes, viewHost);
-        widthProperty().addListener((observable, before, width) -> {
-            getStyleClass().removeAll("decision-compact", "decision-narrow");
-            if (width.doubleValue() < 930) getStyleClass().add("decision-compact");
-            if (width.doubleValue() < 720) getStyleClass().add("decision-narrow");
-        });
+        viewScroll.setFitToWidth(true);
+        viewScroll.setFitToHeight(true);
+        viewScroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        viewScroll.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        viewScroll.getStyleClass().add("decision-view-scroll");
+        VBox.setVgrow(viewScroll, Priority.ALWAYS);
+        getChildren().addAll(modes, viewScroll);
+        widthProperty().addListener((observable, before, width) -> updateLayoutDensity());
+        heightProperty().addListener((observable, before, height) -> updateLayoutDensity());
     }
 
     public void update(JsonNode snapshot) {
@@ -74,6 +81,20 @@ public final class LiveDecisionWorkspace extends VBox {
     void showLiveDecision() { select(liveMode, live); }
     void showEvidenceRadar() { select(evidenceMode, evidence); }
     void showTradeAnatomy() { select(tradeMode, trade); }
+
+    private void updateLayoutDensity() {
+        getStyleClass().removeAll("decision-compact", "decision-narrow");
+        LayoutDensity density = layoutDensity(getWidth(), getHeight());
+        if (density != LayoutDensity.NORMAL) getStyleClass().add("decision-compact");
+        if (density == LayoutDensity.NARROW) getStyleClass().add("decision-narrow");
+        viewHost.setMinHeight(density == LayoutDensity.NARROW ? 540 : 0);
+    }
+
+    static LayoutDensity layoutDensity(double width, double height) {
+        if (width < 720 || height < 520) return LayoutDensity.NARROW;
+        if (width < 930 || height < 760) return LayoutDensity.COMPACT;
+        return LayoutDensity.NORMAL;
+    }
 
     private void select(ToggleButton button, Node view) {
         button.setSelected(true);
@@ -411,6 +432,12 @@ public final class LiveDecisionWorkspace extends VBox {
             column.setFillWidth(true);
             grid.getColumnConstraints().add(column);
         }
+        RowConstraints row = new RowConstraints();
+        row.setPercentHeight(100);
+        row.setMinHeight(0);
+        row.setVgrow(Priority.ALWAYS);
+        row.setFillHeight(true);
+        grid.getRowConstraints().add(row);
         return grid;
     }
 

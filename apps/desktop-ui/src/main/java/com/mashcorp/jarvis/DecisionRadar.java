@@ -45,9 +45,14 @@ final class DecisionRadar extends StackPane {
     }
 
     private void resizeAndDraw() {
-        canvas.relocate(0, 0);
-        CanvasSurface.resize(canvas, getWidth(), getHeight());
+        double side = squareSide(getWidth(), getHeight());
+        canvas.relocate((getWidth() - side) / 2.0, (getHeight() - side) / 2.0);
+        CanvasSurface.resize(canvas, side, side);
         draw();
+    }
+
+    static double squareSide(double width, double height) {
+        return Math.max(1, Math.min(width, height));
     }
 
     void update(DecisionTelemetry value) {
@@ -70,7 +75,7 @@ final class DecisionRadar extends StackPane {
         double scale = Math.max(0.62, Math.min(1.20,
                 Math.min(width / DESIGN_WIDTH, height / DESIGN_HEIGHT)));
         double centerX = width * 0.5;
-        double centerY = height * 0.505;
+        double centerY = height * 0.5;
         double radius = Math.min(width * 0.365, height * 0.38);
 
         drawGrid(graphics, centerX, centerY, radius, scale);

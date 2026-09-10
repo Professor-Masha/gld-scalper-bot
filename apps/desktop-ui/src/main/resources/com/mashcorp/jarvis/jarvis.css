@@ -300,6 +300,17 @@
 .tooltip { -fx-background-color: #08171c; -fx-text-fill: #e5f8fb; -fx-border-color: #246274; -fx-background-radius: 4; -fx-border-radius: 4; }
 
 .decision-workspace { -fx-background-color: transparent; }
+.decision-view-scroll,
+.decision-view-scroll > .viewport {
+    -fx-background-color: transparent;
+}
+.decision-view-scroll {
+    -fx-padding: 0;
+    -fx-background-insets: 0;
+    -fx-border-color: transparent;
+}
+.decision-view-scroll > .corner { -fx-background-color: #02080b; }
+.decision-view-scroll .scroll-bar:vertical { -fx-pref-width: 6px; }
 .decision-modes {
     -fx-padding: 3;
     -fx-background-color: #02090c;
@@ -568,7 +579,7 @@
 .pulse-header-status { -fx-min-width: 255px; }
 .pulse-live-state { -fx-font-weight: 800; }
 .pulse-pipeline-state { -fx-text-fill: #5facc0; }
-.pulse-service { -fx-padding: 0 0 0 12; -fx-border-color: transparent transparent transparent #176274; }
+.pulse-service { -fx-padding: 0 8 0 12; -fx-border-color: transparent transparent transparent #176274; }
 .pulse-card, .pulse-chart {
     -fx-padding: 8;
     -fx-background-color: #020a0d;
@@ -611,7 +622,7 @@
 .pulse-left-scroll .scroll-bar:vertical .thumb { -fx-background-color: #176274; -fx-background-radius: 2px; }
 .pulse-left-scroll .scroll-bar:vertical .increment-button,
 .pulse-left-scroll .scroll-bar:vertical .decrement-button { -fx-padding: 0; }
-.pulse-left-rail { -fx-min-width: 0; -fx-min-height: 400px; }
+.pulse-left-rail { -fx-min-width: 0; -fx-min-height: 510px; }
 .pulse-left-rail .pulse-field-name, .pulse-left-rail .pulse-field-value { -fx-padding: 1 0; }
 .market-decision-card .pulse-section { -fx-padding: 2 0 0 0; }
 .pulse-field-name, .pulse-field-value { -fx-padding: 2 0; -fx-border-color: transparent transparent #0e2b33 transparent; }
@@ -663,7 +674,7 @@
 .decision-compact .pulse-decision-reason { -fx-font-size: 7px; }
 .decision-compact .pulse-decision-status { -fx-min-height: 35px; }
 .decision-compact .decision-icon { -fx-scale-x: 0.72; -fx-scale-y: 0.72; }
-.decision-compact .pulse-left-rail { -fx-min-height: 330px; }
+.decision-compact .pulse-left-rail { -fx-min-height: 510px; }
 .decision-compact .pulse-section { -fx-padding: 2 0 0 0; -fx-font-size: 7px; }
 .decision-compact .pulse-field-name,
 .decision-compact .pulse-field-value { -fx-padding: 1 0; }

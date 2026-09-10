@@ -16,7 +16,8 @@ final class LiveDecisionWorkspaceTest {
 
     @Test
     void setupSummaryIsBoundedAndLabeled() {
-        String text = LiveDecisionWorkspace.setupText("bullish momentum near resistance; awaiting volume confirmation");
+        String text = LiveDecisionWorkspace.setupText(
+                "bullish momentum near resistance; awaiting volume confirmation");
         assertTrue(text.startsWith("SETUP: "));
         assertTrue(text.contains("\n"));
         assertTrue(text.length() <= 126);
@@ -24,13 +25,29 @@ final class LiveDecisionWorkspaceTest {
 
     @Test
     void currentStateContextDoesNotRepeatEquivalentLabels() {
-        assertEquals("POOR LIQUIDITY", LiveDecisionWorkspace.stateContext("Poor liquidity", "poor liquidity"));
-        assertEquals("OPEN - TRENDING", LiveDecisionWorkspace.stateContext("Open", "Trending"));
+        assertEquals("POOR LIQUIDITY",
+                LiveDecisionWorkspace.stateContext("Poor liquidity", "poor liquidity"));
+        assertEquals("OPEN - TRENDING",
+                LiveDecisionWorkspace.stateContext("Open", "Trending"));
     }
 
     @Test
     void marketTimestampUsesTheExchangeTimezone() {
-        assertTrue(LiveDecisionWorkspace.marketTimestamp("2026-09-09T14:30:00Z").endsWith("10:30:00 ET"));
-        assertEquals("TIMESTAMP UNAVAILABLE", LiveDecisionWorkspace.marketTimestamp("invalid"));
+        assertTrue(LiveDecisionWorkspace.marketTimestamp(
+                "2026-09-09T14:30:00Z").endsWith("10:30:00 ET"));
+        assertEquals("TIMESTAMP UNAVAILABLE",
+                LiveDecisionWorkspace.marketTimestamp("invalid"));
+    }
+
+    @Test
+    void layoutDensityAccountsForWidthAndHeight() {
+        assertEquals(LiveDecisionWorkspace.LayoutDensity.NORMAL,
+                LiveDecisionWorkspace.layoutDensity(1500, 900));
+        assertEquals(LiveDecisionWorkspace.LayoutDensity.COMPACT,
+                LiveDecisionWorkspace.layoutDensity(1200, 700));
+        assertEquals(LiveDecisionWorkspace.LayoutDensity.COMPACT,
+                LiveDecisionWorkspace.layoutDensity(850, 800));
+        assertEquals(LiveDecisionWorkspace.LayoutDensity.NARROW,
+                LiveDecisionWorkspace.layoutDensity(850, 500));
     }
 }

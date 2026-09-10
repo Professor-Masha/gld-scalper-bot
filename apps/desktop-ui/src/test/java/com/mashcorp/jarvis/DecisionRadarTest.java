@@ -6,6 +6,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 final class DecisionRadarTest {
     @Test
+    void radarUsesTheSmallerDimensionForItsSquareDrawingSurface() {
+        assertEquals(640, DecisionRadar.squareSide(1120, 640));
+        assertEquals(640, DecisionRadar.squareSide(640, 1120));
+        assertEquals(1, DecisionRadar.squareSide(0, 640));
+    }
+
+    @Test
     void categoricalGateScoresMatchTheRadarLegend() {
         assertEquals(0.80, DecisionRadar.gateValue(DecisionTelemetry.EvidenceState.PASS));
         assertEquals(0.48, DecisionRadar.gateValue(DecisionTelemetry.EvidenceState.WARN));

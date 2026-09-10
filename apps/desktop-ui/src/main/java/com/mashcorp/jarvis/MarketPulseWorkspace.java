@@ -147,7 +147,10 @@ final class MarketPulseWorkspace extends VBox {
         railColumn.setPercentWidth(100);
         railColumn.setHgrow(Priority.ALWAYS);
         leftRailContent.getColumnConstraints().add(railColumn);
-        leftRailContent.getRowConstraints().addAll(row(31), row(25), row(44));
+        leftRailContent.getRowConstraints().addAll(
+                row(31, 145),
+                row(25, 125),
+                row(44, 215));
         leftRailContent.add(quoteCard, 0, 0);
         leftRailContent.add(contextCard, 0, 1);
         leftRailContent.add(decisionCard, 0, 2);
@@ -402,10 +405,10 @@ final class MarketPulseWorkspace extends VBox {
         addRow(grid, row, name, label);
     }
 
-    private static RowConstraints row(double height) {
+    private static RowConstraints row(double height, double minimumHeight) {
         RowConstraints row = new RowConstraints();
         row.setPercentHeight(height);
-        row.setMinHeight(0);
+        row.setMinHeight(minimumHeight);
         row.setVgrow(Priority.ALWAYS);
         return row;
     }
