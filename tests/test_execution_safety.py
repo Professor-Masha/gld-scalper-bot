@@ -93,6 +93,77 @@ def _settings(tmp_path, **overrides):
     )
 
 
+@pytest.mark.parametrize('stop_side,stop_qty,stop_status,expected', [
+    ('buy', 5, 'new', True), ('sell', 5, 'new', False),
+    ('buy', 4, 'new', False), ('buy', 5, 'held', False),
+    ('buy', 5, 'pending_cancel', False),
+])
+def test_tranche_direct_lookup_validates_stop_coverage(tmp_path, stop_side, stop_qty, stop_status, expected):
+    settings = _settings(tmp_path)
+    db = Database(settings=settings)
+    db.init_db()
+    now = datetime.now(timezone.utc)
+    episode = {'episode_id': 'GLD-COVER', 'symbol': 'GLD', 'direction': 'SHORT',
+               'source': 'minute', 'planned_qty': 5}
+    db.create_execution_episode(episode)
+    db.record_execution_episode_order('GLD-COVER', {
+        'order_key': 'entry', 'alpaca_order_id': 'entry', 'role': 'entry',
+        'intent_type': 'entry', 'qty': 5, 'filled_qty': 5, 'status': 'filled'})
+    stop = SimpleNamespace(id='stop', symbol='GLD', side=stop_side, type='stop',
+                           status=stop_status, qty=stop_qty, filled_qty=0)
+    parent = SimpleNamespace(id='entry', symbol='GLD', qty=5, filled_qty=5,
+                             filled_at=now-timedelta(seconds=20), legs=[stop])
+    client = FakeSafetyClient()
+    client.orders = [parent, stop]
+    coordinator = OrderIntentCoordinator(settings, client)
+    supervisor = ExecutionSafetySupervisor(settings, client, coordinator)
+    result = supervisor._protection_coverage(db, [episode], SimpleNamespace(qty=-5), [], now)
+    assert result['covered'] is expected
+    assert not result['grace']
+    assert result['broker_reads'][0]['response']['id'] == 'entry'
+    assert 'stop' in result['known_ids']
+    db.close()
+    coordinator.stop()
+
+
+def test_partial_fill_deadline_persists_and_full_fill_starts_activation_window(tmp_path):
+    settings = _settings(tmp_path)
+    db = Database(settings=settings)
+    db.init_db()
+    now = datetime.now(timezone.utc)
+    episode = {'episode_id': 'GLD-PARTIAL', 'symbol': 'GLD', 'direction': 'SHORT',
+               'source': 'minute', 'planned_qty': 5, 'opened_at': now-timedelta(minutes=2)}
+    db.create_execution_episode(episode)
+    db.record_execution_episode_order('GLD-PARTIAL', {
+        'order_key': 'entry', 'alpaca_order_id': 'entry', 'role': 'entry',
+        'intent_type': 'entry', 'qty': 5, 'filled_qty': 1, 'status': 'partially_filled'})
+    parent = SimpleNamespace(id='entry', qty=5, filled_qty=1, filled_at=now, legs=[])
+    client = FakeSafetyClient()
+    client.orders = [parent]
+    coordinator = OrderIntentCoordinator(settings, client)
+    supervisor = ExecutionSafetySupervisor(settings, client, coordinator)
+    first = supervisor._protection_coverage(db, [episode], SimpleNamespace(qty=-1), [], now)
+    assert first['grace']
+    assert first['tranches'][0]['state'] == 'partially_filled'
+    db.insert_execution_safety_event({'event_type': 'RECONCILIATION_GRACE',
+                                     'details': {'protection': first}})
+    parent.filled_qty = 2
+    parent.filled_at = now + timedelta(seconds=6)
+    expired = supervisor._protection_coverage(db, [episode], SimpleNamespace(qty=-2), [], parent.filled_at)
+    assert not expired['covered']
+    assert expired['tranches'][0]['first_fill'] == now.isoformat()
+    parent.filled_qty = 5
+    full = supervisor._protection_coverage(db, [episode], SimpleNamespace(qty=-5), [], parent.filled_at)
+    assert full['grace']
+    assert full['tranches'][0]['state'] == 'fully_filled'
+    db.insert_execution_safety_event({'event_type': 'RECONCILIATION_GRACE',
+                                     'details': {'protection': full}})
+    expired = supervisor._protection_coverage(db, [episode], SimpleNamespace(qty=-5), [], now+timedelta(seconds=12))
+    assert not expired['covered']
+    db.close()
+    coordinator.stop()
+
+
 def test_coordinator_deduplicates_entry_by_client_order_id(tmp_path):
     settings = _settings(tmp_path)
     Database(settings=settings).init_db()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import json
 import queue
 import threading
 import time
@@ -471,20 +472,14 @@ class ExecutionSafetySupervisor:
             database_count = len(atomic) if atomic else int(legacy["count"])
             database_direction = _single_direction(atomic) if atomic else str(legacy["direction"])
             internal_ids = self._internal_episode_provider() if self._internal_episode_provider else None
-            recent_episode_ids = _recent_execution_episode_ids(
-                atomic,
-                now,
-                self.settings.execution_bracket_grace_period_seconds,
-            )
-            protection_grace_active = bool(
-                position is not None
-                and recent_episode_ids
-                and not _has_active_protective_stop(open_orders)
-            )
+            coverage = self._protection_coverage(database, atomic, position, open_orders, now)
+            recent_episode_ids = set(coverage["grace_episodes"])
+            protection_grace_active = coverage["grace"]
             unknown = [
                 item
                 for item in open_orders
                 if not is_bot_managed_order(item, self.settings.bot_symbol, database)
+                and _text(_field(item, "id")) not in coverage["known_ids"]
                 and not (
                     protection_grace_active
                     and _order_matches_episode_ids(item, recent_episode_ids)
@@ -492,8 +487,7 @@ class ExecutionSafetySupervisor:
             ]
             protected = (
                 position is None
-                or _has_active_protective_stop(open_orders)
-                or protection_grace_active
+                or coverage["covered"]
             )
             reasons: list[str] = []
             if unknown:
@@ -549,6 +543,9 @@ class ExecutionSafetySupervisor:
                         "protection_grace_active": protection_grace_active,
                         "recent_episode_ids": sorted(recent_episode_ids),
                         "confirmation_check": record_failure,
+                        "protection": coverage,
+                        "broker_position": _jsonable(position),
+                        "broker_open_orders": [_jsonable(order) for order in open_orders],
                     },
                 }
             )
@@ -563,6 +560,106 @@ class ExecutionSafetySupervisor:
         else:
             self.state.freeze("reconciliation_mismatch")
         return snapshot
+
+    def _protection_coverage(self, database, episodes, position, orders, now):
+        previous = database.conn.execute(
+            "SELECT details_json FROM execution_safety_events WHERE event_type IN "
+            "('RECONCILIATION', 'RECONCILIATION_GRACE') ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        prior = json.loads(previous[0] or "{}") if previous else {}
+        prior = {item["id"]: item for item in prior.get("protection", {}).get("tranches", [])}
+        nodes = { _text(_field(o, "id")): o for o, _ in _flatten_order_nodes(orders) }
+        result = {"tranches": [], "known_ids": [], "grace_episodes": [],
+                  "broker_reads": [], "covered": position is None, "grace": False}
+        total_covered = 0.0
+        all_covered = True
+        for episode in episodes:
+            rows = database.conn.execute(
+                "SELECT * FROM execution_episode_orders WHERE episode_id=? AND role='entry'",
+                (episode["episode_id"],),
+            ).fetchall()
+            for row in rows:
+                stored = dict(row)
+                key = stored.get("alpaca_order_id") or stored["order_key"]
+                parent = nodes.get(key)
+                # Direct reads resolve child orders omitted from the open-order listing.
+                if stored.get("alpaca_order_id"):
+                    try:
+                        from alpaca.trading.requests import GetOrderByIdRequest
+                        parent = self.trading_client.get_order_by_id(
+                            key, filter=GetOrderByIdRequest(nested=True))
+                    except TypeError:
+                        try:
+                            parent = self.trading_client.get_order_by_id(key)
+                        except Exception as exc:
+                            result["broker_reads"].append({"id": key, "error": str(exc)})
+                    except Exception as exc:
+                        result["broker_reads"].append({"id": key, "error": str(exc)})
+                if parent is not None:
+                    result["broker_reads"].append({"id": key, "response": _jsonable(parent)})
+                filled = max(_float(stored.get("filled_qty")), _float(_field(parent, "filled_qty")))
+                planned = _float(_field(parent, "qty")) or _float(stored.get("qty"))
+                candidates = []
+                child_ids = {r[0] for r in database.conn.execute(
+                    "SELECT alpaca_order_id FROM execution_episode_orders WHERE parent_order_id=? "
+                    "UNION SELECT alpaca_order_id FROM orders WHERE parent_order_id=?",
+                    (key, key)) if r[0]}
+                for child in list(_field(parent, "legs", []) or []):
+                    child_ids.add(_text(_field(child, "id")))
+                    candidates.append(child)
+                for child_id in child_ids:
+                    try:
+                        child = self.trading_client.get_order_by_id(child_id)
+                        candidates = [o for o in candidates if _text(_field(o, "id")) != child_id]
+                        candidates.append(child)
+                        result["broker_reads"].append({"id": child_id, "response": _jsonable(child)})
+                    except Exception as exc:
+                        result["broker_reads"].append({"id": child_id, "error": str(exc)})
+                        if child_id in nodes:
+                            candidates.append(nodes[child_id])
+                result["known_ids"].extend([key, *child_ids])
+                closing_side = "sell" if episode["direction"].upper() == "LONG" else "buy"
+                stops = { _text(_field(o, "id")): o for o in candidates
+                    if _text(_field(o, "symbol")).upper() == self.settings.bot_symbol.upper()
+                    and _text(_field(o, "side")).lower() == closing_side
+                    and _text(_field(o, "type", _field(o, "order_type"))).lower() in {"stop", "stop_limit", "trailing_stop"}
+                    and _status(o) in {"new", "accepted", "partially_filled"} }
+                stop_qty = sum(max(0, _float(_field(o, "qty")) - _float(_field(o, "filled_qty"))) for o in stops.values())
+                exit_qty = sum(_float(_field(o, "filled_qty")) for o in
+                    {_text(_field(o, "id")): o for o in candidates}.values())
+                remaining = max(0, filled - exit_qty)
+                old = prior.get(key, {})
+                first_fill = old.get("first_fill")
+                if filled and not first_fill:
+                    recorded_fill = database.conn.execute(
+                        "SELECT MIN(timestamp) FROM fills WHERE order_id=?", (key,)
+                    ).fetchone()[0]
+                    first_fill = recorded_fill or _field(parent, "filled_at") or stored.get("updated_at") or now.isoformat()
+                    first_fill = ensure_utc(first_fill).isoformat()
+                full_fill = old.get("full_fill")
+                if filled and filled >= planned and not full_fill:
+                    full_fill = ensure_utc(_field(parent, "filled_at") or stored.get("updated_at") or now).isoformat()
+                state = "submitted" if not filled else "fully_filled" if filled >= planned else "partially_filled"
+                protected = remaining > 0 and stop_qty + 1e-8 >= remaining
+                if protected:
+                    state = "protection_confirmed"
+                anchor = full_fill or first_fill
+                grace = bool(remaining and not protected and anchor
+                    and 0 <= (now - ensure_utc(anchor)).total_seconds() <= self.settings.execution_bracket_grace_period_seconds)
+                # A partial fill has its own fixed deadline; later partials cannot extend it.
+                if grace and state == "partially_filled":
+                    grace = (now - ensure_utc(first_fill)).total_seconds() <= self.settings.execution_bracket_grace_period_seconds
+                result["tranches"].append({"id": key, "state": state, "filled_qty": filled,
+                    "remaining_qty": remaining, "stop_qty": stop_qty, "first_fill": first_fill,
+                    "full_fill": full_fill, "grace": grace})
+                if grace:
+                    result["grace_episodes"].append(episode["episode_id"])
+                all_covered = all_covered and (not remaining or protected or grace)
+                if protected or grace:
+                    total_covered += remaining
+        result["covered"] = position is None or (all_covered and total_covered + 1e-8 >= abs(_float(_field(position, "qty"))))
+        result["grace"] = bool(position is not None and result["covered"] and result["grace_episodes"])
+        return result
 
     def flatten_symbol(self, reason: str, *, release_freeze: bool = True) -> bool:
         freeze_reason = f"flatten:{reason}"
